@@ -22,6 +22,45 @@ export default function useLiff() {
   const [error, setError] = useState('');
   const [liffObject, setLiffObject] = useState(null);
 
+  // --- เพิ่มฟังก์ชัน refreshProfile ---
+  const refreshProfile = async () => {
+    setIsLoading(true);
+    setError("");
+    try {
+      let profileFromLiff = null;
+      const liff = (await import('@line/liff')).default;
+      const liffId = process.env.NEXT_PUBLIC_LIFF_ID;
+      if (!liffId) throw new Error("LIFF ID is not defined");
+      await liff.init({ liffId });
+      setLiffObject(liff);
+      if (liff.isInClient()) {
+        if (liff.isLoggedIn()) {
+          profileFromLiff = await liff.getProfile();
+          setLiffProfile(profileFromLiff);
+        } else {
+          liff.login();
+          return;
+        }
+      } else {
+        profileFromLiff = MOCK_PROFILE.liffProfile;
+        setLiffProfile(profileFromLiff);
+      }
+      if (profileFromLiff) {
+        const studentDocRef = doc(db, 'studentProfiles', profileFromLiff.userId);
+        const docSnap = await (await import('firebase/firestore')).getDoc(studentDocRef);
+        if (docSnap.exists()) {
+          setStudentDbProfile(docSnap.data());
+        } else {
+          setStudentDbProfile(null);
+        }
+      }
+      setIsLoading(false);
+    } catch (err) {
+      setError(`LIFF Error: ${err.message}`);
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
     let unsubscribeFromProfile = () => {};
 
@@ -88,5 +127,5 @@ export default function useLiff() {
     };
   }, []); // ทำงานแค่ครั้งเดียว
 
-  return { liffObject, liffProfile, studentDbProfile, isLoading, error, setStudentDbProfile };
+  return { liffObject, liffProfile, studentDbProfile, isLoading, error, setStudentDbProfile, refreshProfile };
 };

@@ -10,6 +10,24 @@ import {
 import { CSVLink } from "react-csv";
 import Papa from "papaparse";
 
+// Helper function to translate status to Thai
+const translateStatus = (status) => {
+  switch (status) {
+    case 'checked-in': return 'เช็คอินแล้ว';
+    case 'registered': return 'ลงทะเบียนแล้ว';
+    default: return status || '';
+  }
+};
+
+// Helper function to translate Thai status back to English for database
+const translateStatusToEn = (status) => {
+  switch (status) {
+    case 'เช็คอินแล้ว': return 'checked-in';
+    case 'ลงทะเบียนแล้ว': return 'registered';
+    default: return status || 'registered';
+  }
+};
+
 export default function SeatAssignmentPage({ params }) {
   const { id: activityId } = use(params);
 
@@ -69,11 +87,37 @@ export default function SeatAssignmentPage({ params }) {
       header: true,
       skipEmptyLines: true,
       complete: (results) => {
-        const validData = results.data.filter(row => row.nationalId);
+        console.log('CSV parsed data:', results.data); // Debug log
+        
+        // ตรวจสอบ headers ที่มีในไฟล์
+        const headers = results.meta.fields || [];
+        console.log('CSV headers:', headers); // Debug log
+        
+        // ตรวจสอบฟิลด์ที่จำเป็น (รองรับทั้งภาษาไทยและอังกฤษ)
+        const hasFullName = headers.includes('fullName') || headers.includes('ชื่อ-สกุล');
+        const hasNationalId = headers.includes('nationalId') || headers.includes('เลขบัตรประชาชน');
+        
+        if (!hasFullName || !hasNationalId) {
+          const missingFields = [];
+          if (!hasFullName) missingFields.push('ชื่อ-สกุล (fullName)');
+          if (!hasNationalId) missingFields.push('เลขบัตรประชาชน (nationalId)');
+          setMessage(`ไฟล์ CSV ขาดคอลัมน์ที่จำเป็น: ${missingFields.join(', ')}`);
+          return;
+        }
+        
+        // กรองข้อมูลที่มีฟิลด์จำเป็น (รองรับทั้งภาษาไทยและอังกฤษ)
+        const validData = results.data.filter(row => {
+          const fullName = row['ชื่อ-สกุล'] || row.fullName;
+          const nationalId = row['เลขบัตรประชาชน'] || row.nationalId;
+          return fullName && fullName.trim() !== '' && 
+                 nationalId && nationalId.trim() !== '';
+        });
+        
         if (validData.length > 0) {
+            setMessage(`พบข้อมูล ${validData.length} รายการที่ถูกต้อง`);
             handleConfirmImport(validData);
         } else {
-            setMessage("ไม่พบข้อมูลที่ถูกต้อง (ต้องมีคอลัมน์ 'nationalId') ในไฟล์ CSV");
+            setMessage("ไม่พบข้อมูลที่ถูกต้อง กรุณาตรวจสอบว่ามีข้อมูลในคอลัมน์ 'ชื่อ-สกุล' และ 'เลขบัตรประชาชน'");
         }
       },
       error: (err) => setMessage(`เกิดข้อผิดพลาดในการอ่านไฟล์: ${err.message}`)
@@ -94,19 +138,44 @@ export default function SeatAssignmentPage({ params }) {
       const currentRegistrantsMap = new Map(registrants.map(r => [r.nationalId, r]));
 
       for (const row of csvData) {
-        if (!row.nationalId || !row.fullName || !row.studentId) continue;
-        const existingReg = currentRegistrantsMap.get(row.nationalId);
+        // รองรับทั้งภาษาไทยและอังกฤษ
+        const fullName = row['ชื่อ-สกุล'] || row.fullName;
+        const nationalId = row['เลขบัตรประชาชน'] || row.nationalId;
+        const studentId = row['รหัสนักศึกษา'] || row.studentId;
+        const status = row['สถานะ'] || row.status;
+        const seatNumber = row['เลขที่นั่ง'] || row.seatNumber;
+        const lineUserId = row['LINE User ID'] || row.lineUserId;
+        
+        // ตรวจสอบข้อมูลที่จำเป็น
+        if (!nationalId?.trim() || !fullName?.trim()) {
+          console.warn('Skipping row due to missing required data:', row);
+          continue;
+        }
+        
+        const existingReg = currentRegistrantsMap.get(nationalId);
         if (existingReg) {
           const docRef = doc(db, 'registrations', existingReg.id);
-          batch.update(docRef, { fullName: row.fullName, studentId: row.studentId });
+          batch.update(docRef, { 
+            fullName: fullName.trim(), 
+            studentId: studentId?.trim() || '',
+            status: translateStatusToEn(status) || existingReg.status,
+            seatNumber: seatNumber?.trim() || null,
+            lineUserId: lineUserId?.trim() || null
+          });
           updatedCount++;
         } else {
           const newDocRef = doc(collection(db, 'registrations'));
           batch.set(newDocRef, {
-            fullName: row.fullName, studentId: row.studentId, nationalId: row.nationalId,
-            activityId: activityId, courseId: activity?.courseId || null,
-            status: 'registered', seatNumber: null,
-            registeredAt: serverTimestamp(), registeredBy: 'admin-import', lineUserId: null,
+            fullName: fullName.trim(), 
+            studentId: studentId?.trim() || '', 
+            nationalId: nationalId.trim(),
+            activityId: activityId, 
+            courseId: activity?.courseId || null,
+            status: translateStatusToEn(status) || 'registered', 
+            seatNumber: seatNumber?.trim() || null,
+            registeredAt: serverTimestamp(), 
+            registeredBy: 'admin-import', 
+            lineUserId: lineUserId?.trim() || null,
           });
           createdCount++;
         }
@@ -280,10 +349,22 @@ export default function SeatAssignmentPage({ params }) {
 
   // Prepare data and headers for CSV export
   const headersForCsv = [
-    { label: "ชื่อสกุล", key: "fullName" }, { label: "รหัสนักศึกษา", key: "studentId" },
-    { label: "เลขบัตรประชาชน", key: "nationalId" }, { label: "สถานะ", key: "status" },
-    { label: "เลขที่นั่ง", key: "seatNumber" }, { label: "ไอดีไลน์", key: "lineUserId" },
+    { label: "ชื่อ-สกุล", key: "fullName" }, 
+    { label: "รหัสนักศึกษา", key: "studentId" },
+    { label: "เลขบัตรประชาชน", key: "nationalId" }, 
+    { label: "สถานะ", key: "status" },
+    { label: "เลขที่นั่ง", key: "seatNumber" }, 
+    { label: "LINE User ID", key: "lineUserId" },
   ];
+
+  const dataForCsv = registrants.map((reg) => ({
+    fullName: reg.fullName || '',
+    studentId: reg.studentId || '',
+    nationalId: reg.nationalId || '',
+    status: translateStatus(reg.status),
+    seatNumber: reg.seatNumber || '',
+    lineUserId: reg.lineUserId || '',
+  }));
 
   return (
     <div className="bg-gray-50 min-h-screen p-4 md:p-8 font-sans">
@@ -300,9 +381,12 @@ export default function SeatAssignmentPage({ params }) {
           <div className="flex gap-2">
             <label htmlFor="csv-upload" className="px-4 py-2 bg-purple-600 text-white font-semibold rounded-lg cursor-pointer hover:bg-purple-700">นำเข้า CSV</label>
             <input type="file" id="csv-upload" accept=".csv" onChange={handleFileUpload} className="hidden" />
-            <CSVLink data={registrants} headers={headersForCsv} filename={`export_${activity?.name.replace(/\s+/g, '_') || 'activity'}.csv`} className="px-4 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700">ส่งออก CSV</CSVLink>
+            <CSVLink data={dataForCsv} headers={headersForCsv} filename={`export_${activity?.name.replace(/\s+/g, '_') || 'activity'}.csv`} className="px-4 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700">ส่งออก CSV</CSVLink>
           </div>
-          <p className="text-xs text-gray-500 text-center md:text-right">คอลัมน์ที่ต้องมี: `fullName`, `studentId`, `nationalId`</p>
+          <p className="text-xs text-gray-500 text-center md:text-right">
+            คอลัมน์ที่จำเป็น: <code>ชื่อ-สกุล</code>, <code>เลขบัตรประชาชน</code><br/>
+            คอลัมน์เสริม: <code>รหัสนักศึกษา</code>, <code>สถานะ</code>, <code>เลขที่นั่ง</code>, <code>LINE User ID</code>
+          </p>
         </div>
 
         {message && <p className="text-center mb-4 font-semibold text-blue-700">{message}</p>}
@@ -375,7 +459,7 @@ export default function SeatAssignmentPage({ params }) {
                         </td>
                         <td className="p-2">
                             <span className={`px-2 py-1 text-xs rounded-full ${reg.status === 'checked-in' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
-                                {reg.status}
+                                {translateStatus(reg.status)}
                             </span>
                         </td>
                         <td className="p-2">

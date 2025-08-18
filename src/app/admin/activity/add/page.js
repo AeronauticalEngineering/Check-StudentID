@@ -32,7 +32,7 @@ export default function AddActivityPage() {
       }
     } catch (error) {
       console.error("Error fetching courses: ", error);
-      setMessage("เกิดข้อผิดพลาดในการดึงข้อมูลหลักสูตร");
+      setMessage("เกิดข้อผิดพลาดในการดึงข้อมูลหมวดหมู่");
     }
   }, [selectedCourse]);
 
@@ -42,7 +42,7 @@ export default function AddActivityPage() {
 
   const handleSaveCourse = async () => {
     if (!newCourseName.trim()) {
-      alert("กรุณาใส่ชื่อหลักสูตร"); return;
+      alert("กรุณาใส่ชื่อหมวดหมู่"); return;
     }
     setIsSavingCourse(true);
     try {
@@ -53,7 +53,7 @@ export default function AddActivityPage() {
       setSelectedCourse(docRef.id);
       setIsModalOpen(false);
       setNewCourseName('');
-      setMessage("✅ เพิ่มหลักสูตรใหม่สำเร็จ!");
+      setMessage("✅ เพิ่มหลักหมวดหมู่สำเร็จ!");
     } catch (error) {
       console.error("Error adding course: ", error);
       alert(`เกิดข้อผิดพลาด: ${error.message}`);
@@ -94,16 +94,16 @@ export default function AddActivityPage() {
   // --- ส่วน JSX ที่แปลงเป็น Tailwind CSS ---
   return (
     <div className="bg-gray-50 min-h-screen">
-      {/* Modal สำหรับเพิ่มหลักสูตรใหม่ */}
+      {/* Modal สำหรับเพิ่มหลักหมวดหมู่ */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/60 flex justify-center items-center z-50">
           <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-md">
-            <h2 className="text-2xl font-bold mb-4">เพิ่มหลักสูตรใหม่</h2>
+            <h2 className="text-2xl font-bold mb-4">เพิ่มหลักหมวดหมู่</h2>
             <input
               type="text"
               value={newCourseName}
               onChange={(e) => setNewCourseName(e.target.value)}
-              placeholder="ชื่อหลักสูตร..."
+              placeholder="ชื่อหมวดหมู่..."
               className="w-full p-2 border border-gray-300 rounded-md mb-4"
             />
             <div className="flex justify-end gap-3">
@@ -124,11 +124,11 @@ export default function AddActivityPage() {
           <h1 className="text-3xl font-bold text-gray-800 mb-6">สร้างกิจกรรมใหม่</h1>
           <form onSubmit={handleSubmit} className="flex flex-col gap-5">
             <div>
-              <label htmlFor="course" className="block text-sm font-medium text-gray-700 mb-1">หลักสูตร</label>
+              <label htmlFor="course" className="block text-sm font-medium text-gray-700 mb-1">หมวดหมู่</label>
               <div className="flex items-center gap-2">
                 <select id="course" value={selectedCourse} onChange={(e) => setSelectedCourse(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
                   {courses.length === 0 
-                    ? <option>ไม่มีหลักสูตร</option> 
+                    ? <option>ไม่มีหมวดหมู่</option> 
                     : courses.map(course => <option key={course.id} value={course.id}>{course.name}</option>)
                   }
                 </select>
