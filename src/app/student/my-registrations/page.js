@@ -67,7 +67,7 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
                 {reg.status === 'checked-in' ? 'QR Code จบกิจกรรม' : 'QR Code เช็คอิน'}
               </button>
             )}
-             {reg.status === 'completed' && !hasEvaluated && (
+             {reg.status === 'completed' && !hasEvaluated && activity.type !== 'event-no-eval' && (
                 <Link href={`/student/evaluation/${reg.activityId}`} className="px-4 py-2 bg-yellow-500 text-white text-sm font-bold rounded-lg hover:bg-yellow-600">
                     ประเมินกิจกรรม
                 </Link>
@@ -204,7 +204,7 @@ export default function MyRegistrationsPage() {
     const activity = activities[reg.activityId];
     if (!activity) return false;
     // Keep completed but unevaluated activities in the upcoming list
-    if (reg.status === 'completed' && !evaluatedActivities.has(reg.activityId)) {
+    if (reg.status === 'completed' && !evaluatedActivities.has(reg.activityId) && activity.type !== 'event-no-eval') {
         return true;
     }
     if (!activity.activityDate?.toDate) return false;
@@ -216,12 +216,12 @@ export default function MyRegistrationsPage() {
     const activity = activities[reg.activityId];
     if (!activity) return true; 
     // Only move to history if it's evaluated
-    if (reg.status === 'completed' && !evaluatedActivities.has(reg.activityId)) {
+    if (reg.status === 'completed' && !evaluatedActivities.has(reg.activityId) && activity.type !== 'event-no-eval') {
         return false;
     }
     if (!activity.activityDate?.toDate) return true;
     const activityEndDate = new Date(activity.activityDate.toDate().getTime() + 3 * 60 * 60 * 1000);
-    return activityEndDate < now || (reg.status === 'completed' && evaluatedActivities.has(reg.activityId));
+    return activityEndDate < now || (reg.status === 'completed' && (evaluatedActivities.has(reg.activityId) || activity.type === 'event-no-eval'));
   });
 
   return (

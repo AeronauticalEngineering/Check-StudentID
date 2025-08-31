@@ -138,6 +138,7 @@ export default function AddActivityPage() {
               <label htmlFor="activityType" className="block text-sm font-medium text-gray-700 mb-1">ประเภทกิจกรรม</label>
               <select id="activityType" value={activityType} onChange={(e) => setActivityType(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
                 <option value="event">ปกติ</option>
+                <option value="event-no-eval">ปกติ (ไม่มีประเมิน)</option>
                 <option value="queue">เรียกคิว</option>
               </select>
             </div>

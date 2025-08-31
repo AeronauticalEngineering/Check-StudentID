@@ -308,7 +308,7 @@ export default function UniversalScannerPage() {
             }
             setMessage(successMessage);
 
-        } else { // Check-out mode
+        } else if (scanMode === 'check-out' && activity.type !== 'event-no-eval') {
             const regRef = doc(db, 'registrations', registration.id);
             await updateDoc(regRef, { status: 'completed', completedAt: serverTimestamp() });
             
@@ -330,6 +330,10 @@ export default function UniversalScannerPage() {
                 await fetch('/api/send-notification', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: lineUserId, flexMessage }) });
             }
             setMessage(`✅ ${registration.fullName} จบกิจกรรมแล้ว`);
+        } else {
+             const regRef = doc(db, 'registrations', registration.id);
+            await updateDoc(regRef, { status: 'completed', completedAt: serverTimestamp() });
+             setMessage(`✅ ${registration.fullName} จบกิจกรรมแล้ว`);
         }
         
         setTimeout(() => resetState(), 3000);

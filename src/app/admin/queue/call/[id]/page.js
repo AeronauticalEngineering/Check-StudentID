@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { db } from '../../../../../lib/firebase';
 import {
-  doc, getDoc, collection, query, where, onSnapshot, updateDoc, writeBatch, serverTimestamp, addDoc, deleteDoc, orderBy, limit
+  doc, getDoc, collection, query, where, onSnapshot, updateDoc, writeBatch, serverTimestamp, addDoc, deleteDoc, orderBy, limit, getDocs
 } from 'firebase/firestore';
 import { useParams } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
@@ -168,7 +168,7 @@ export default function QueueCallPage() {
                     throw new Error(errorResult.message || 'API Error');
                 }
             } else if (settings.onQueueCall && !lineUserId) {
-                alert('เรียกคิวสำเร็จ แต่ไม่สามารถส่งแจ้งเตือนได้เนื่องจากไม่พบ LINE User ID ของผู้ใช้');
+                alert('เรียกคิวสำเร็จ แต่ไม่พบ LINE ID ที่เชื่อมต่อกับผู้ใช้รายนี้');
             }
         } catch (error) {
             console.error("Error calling queue:", error);
