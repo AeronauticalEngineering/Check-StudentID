@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { db } from '../../../lib/firebase';
-import { collection, getDocs, query, orderBy } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 
 // ฟังก์ชันสำหรับจัดรูปแบบวันที่ให้อ่านง่าย
 const formatTimestamp = (timestamp) => {
@@ -18,23 +18,23 @@ export default function AdminHistoryPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const fetchLogs = async () => {
-      try {
-        // ดึงข้อมูลทั้งหมดจาก checkInLogs และเรียงตามเวลาล่าสุดก่อน
-        const q = query(collection(db, 'checkInLogs'), orderBy('timestamp', 'desc'));
-        const querySnapshot = await getDocs(q);
-        const logsData = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        setLogs(logsData);
-      } catch (error) {
-        console.error("Error fetching logs:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchLogs();
+    // ✅ Use onSnapshot for real-time updates
+    const q = query(collection(db, 'checkInLogs'), orderBy('timestamp', 'desc'));
+    
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const logsData = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setLogs(logsData);
+      setIsLoading(false);
+    }, (error) => {
+      console.error("Error fetching logs:", error);
+      setIsLoading(false);
+    });
+
+    // Cleanup subscription on component unmount
+    return () => unsubscribe();
   }, []);
 
   if (isLoading) {
@@ -60,7 +60,7 @@ export default function AdminHistoryPage() {
                       เช็คอิน <span className="text-blue-600">{log.studentName}</span>
                     </p>
                     <p className="text-sm text-gray-600">
-                      กิจกรรม: {log.activityName} (ที่นั่ง: {log.assignedSeat})
+                      กิจกรรม: {log.activityName} (ที่นั่ง/คิว: {log.assignedSeat})
                     </p>
                   </div>
                   <div className="text-right text-sm text-gray-500">

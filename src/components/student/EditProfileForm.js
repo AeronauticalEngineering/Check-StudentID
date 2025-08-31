@@ -56,14 +56,14 @@ export default function EditProfileForm({ currentProfile, liffProfile, onProfile
           </div>
           
           <div>
-            <label htmlFor="editStudentId" className="block text-sm font-medium text-gray-700">รหัสนักศึกษา (ไม่บังคับ)</label>
+            <label htmlFor="editStudentId" className="block text-sm font-medium text-gray-700">รหัสผู้สมัคร (ไม่บังคับ)</label>
             <input 
               id="editStudentId" 
               type="text" 
               value={studentId} 
               onChange={(e) => setStudentId(e.target.value)} 
               className="mt-1 w-full p-3 border border-gray-300 rounded-md" 
-              placeholder="กรุณากรอกรหัสนักศึกษา (หากมี)"
+              placeholder="กรุณากรอกรหัสผู้สมัคร (หากมี)"
             />
           </div>
           

@@ -81,7 +81,7 @@ export default function EditProfileModal({ currentProfile, liffProfile, onProfil
           
           <div>
             <label htmlFor="editStudentId" className="block text-sm font-medium text-gray-700 mb-1">
-              รหัสนักศึกษา (ไม่บังคับ)
+              รหัสผู้สมัคร (ไม่บังคับ)
             </label>
             <input 
               id="editStudentId" 
@@ -89,7 +89,7 @@ export default function EditProfileModal({ currentProfile, liffProfile, onProfil
               value={studentId} 
               onChange={(e) => setStudentId(e.target.value)} 
               className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
-              placeholder="กรุณากรอกรหัสนักศึกษา (หากมี)"
+              placeholder="กรุณากรอกรหัสผู้สมัคร (หากมี)"
             />
           </div>
           

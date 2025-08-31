@@ -1,12 +1,11 @@
 'use client';
 
-import { useState, useEffect, use } from 'react'; // 👈 เพิ่ม 'use' เข้าไป
+import { useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { db } from '../../../../../lib/firebase';
 import { doc, getDoc, updateDoc, deleteDoc, collection, getDocs, Timestamp } from 'firebase/firestore';
 
-// ... (ส่วนของฟังก์ชัน toDateInputString, toTimeInputString เหมือนเดิม) ...
 const toDateInputString = (date) => {
   const d = date.getDate().toString().padStart(2, '0');
   const m = (date.getMonth() + 1).toString().padStart(2, '0');
@@ -22,31 +21,28 @@ const toTimeInputString = (date) => {
 
 
 export default function EditActivityPage({ params }) {
-  // 👇 แก้ไขตรงนี้เพียงจุดเดียวตามคำแนะนำของ Next.js
   const { id: activityId } = use(params); 
-
   const router = useRouter();
 
-  // --- State ทั้งหมดเหมือนเดิม ---
-  const [courses, setCourses] = useState([]);
-  const [selectedCourse, setSelectedCourse] = useState('');
+  const [categories, setCategories] = useState([]);
+  const [selectedCategory, setSelectedCategory] = useState('');
   const [activityName, setActivityName] = useState('');
   const [capacity, setCapacity] = useState(50);
   const [activityDate, setActivityDate] = useState('');
   const [activityTime, setActivityTime] = useState('');
   const [location, setLocation] = useState('');
+  const [activityType, setActivityType] = useState('event');
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState('');
 
-  // --- Logic ทั้งหมดเหมือนเดิม ไม่มีการเปลี่ยนแปลง ---
   useEffect(() => {
     if (!activityId) return;
 
     const fetchData = async () => {
       try {
-        const coursesSnapshot = await getDocs(collection(db, 'courses'));
-        const coursesData = coursesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setCourses(coursesData);
+        const categoriesSnapshot = await getDocs(collection(db, 'categories'));
+        const categoriesData = categoriesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setCategories(categoriesData);
 
         const activityDocRef = doc(db, 'activities', activityId);
         const activitySnap = await getDoc(activityDocRef);
@@ -54,9 +50,10 @@ export default function EditActivityPage({ params }) {
         if (activitySnap.exists()) {
           const data = activitySnap.data();
           setActivityName(data.name);
-          setSelectedCourse(data.courseId);
+          setSelectedCategory(data.categoryId);
           setCapacity(data.capacity);
           setLocation(data.location);
+          setActivityType(data.type || 'event');
           if (data.activityDate) {
             const dateObj = data.activityDate.toDate();
             setActivityDate(toDateInputString(dateObj));
@@ -84,8 +81,12 @@ export default function EditActivityPage({ params }) {
       const dateTimeString = `${activityDate}T${activityTime}`;
       const firestoreTimestamp = Timestamp.fromDate(new Date(dateTimeString));
       const updatedData = {
-        name: activityName, courseId: selectedCourse, capacity: Number(capacity),
-        location: location, activityDate: firestoreTimestamp,
+        name: activityName,
+        categoryId: selectedCategory,
+        capacity: Number(capacity),
+        location: location,
+        type: activityType,
+        activityDate: firestoreTimestamp,
       };
       const activityDocRef = doc(db, 'activities', activityId);
       await updateDoc(activityDocRef, updatedData);
@@ -117,7 +118,6 @@ export default function EditActivityPage({ params }) {
 
   if (isLoading) return <div className="text-center p-10">กำลังโหลดข้อมูลกิจกรรม...</div>;
   
-  // --- ส่วน JSX เหมือนเดิมทุกประการ ---
   return (
     <div className="bg-gray-50 min-h-screen p-4 md:p-8">
       <main className="max-w-3xl mx-auto">
@@ -132,11 +132,17 @@ export default function EditActivityPage({ params }) {
             </Link>
           </div>
           <form onSubmit={handleUpdate} className="flex flex-col gap-5">
-            {/* Form content */}
             <div>
-              <label htmlFor="course" className="block text-sm font-medium text-gray-700 mb-1">หลักสูตร</label>
-              <select id="course" value={selectedCourse} onChange={(e) => setSelectedCourse(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md">
-                {courses.map(course => <option key={course.id} value={course.id}>{course.name}</option>)}
+              <label htmlFor="category" className="block text-sm font-medium text-gray-700 mb-1">หมวดหมู่</label>
+              <select id="category" value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md">
+                {categories.map(cat => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
+              </select>
+            </div>
+             <div>
+              <label htmlFor="activityType" className="block text-sm font-medium text-gray-700 mb-1">ประเภทกิจกรรม</label>
+              <select id="activityType" value={activityType} onChange={(e) => setActivityType(e.target.value)} required className="w-full p-2 border border-gray-300 rounded-md">
+                <option value="event">ปกติ</option>
+                <option value="queue">เรียกคิว</option>
               </select>
             </div>
             <div>

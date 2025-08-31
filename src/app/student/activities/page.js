@@ -97,7 +97,7 @@ export default function ActivitiesListPage() {
             const count = registrationsCount[activity.id] || 0;
             const isFull = count >= activity.capacity;
             const isAlmostFull = !isFull && count / activity.capacity >= 0.9;
-            const isRegistered = userRegistrations.has(activity.id); // ตรวจสอบว่าลงทะเบียนแล้วหรือไม่
+            const isRegistered = userRegistrations.has(activity.id);
 
             return (
               <div key={activity.id} className="bg-white rounded-lg shadow-lg overflow-hidden flex flex-col transition-transform hover:scale-105">
@@ -120,7 +120,11 @@ export default function ActivitiesListPage() {
                   </div>
                 </div>
                 <div className="bg-gray-50 p-4 mt-auto">
-                  {isRegistered ? (
+                  {activity.type === 'queue' ? (
+                    <div className="w-full text-center px-4 py-2 font-semibold rounded-lg bg-blue-100 text-blue-700 border border-blue-300">
+                      กิจกรรมสำหรับผู้ถูกคัดเลือก
+                    </div>
+                  ) : isRegistered ? (
                     <div className="w-full text-center px-4 py-2 font-semibold rounded-lg bg-green-100 text-green-700 border border-green-300">
                       ✓ เข้าร่วมแล้ว
                     </div>

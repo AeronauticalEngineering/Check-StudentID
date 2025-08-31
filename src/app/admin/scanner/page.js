@@ -3,11 +3,30 @@
 import { useState, useEffect, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { db } from '../../../lib/firebase';
-import { 
-  doc, getDoc, updateDoc, addDoc, collection, 
-  serverTimestamp, query, where, getDocs 
+import {
+  doc, getDoc, updateDoc, collection,
+  serverTimestamp, query, where, getDocs, runTransaction, Timestamp, limit, addDoc
 } from 'firebase/firestore';
-import { createCheckInSuccessFlex } from '../../../lib/flexMessageTemplates';
+import { createCheckInSuccessFlex, createEvaluationRequestFlex, createQueueCheckInSuccessFlex } from '../../../lib/flexMessageTemplates';
+
+// --- ฟังก์ชันสำหรับแปลสถานะ ---
+const translateStatus = (status) => {
+  switch (status) {
+    case 'checked-in':
+      return 'เช็คอินแล้ว';
+    case 'registered':
+      return 'ลงทะเบียนแล้ว';
+    case 'completed':
+      return 'จบกิจกรรมแล้ว';
+    case 'cancelled':
+      return 'ยกเลิกแล้ว';
+    case 'waitlisted':
+      return 'รอคิว';
+    default:
+      return status || 'N/A';
+  }
+};
+
 
 const CameraIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
@@ -15,282 +34,376 @@ const CameraIcon = () => (
     </svg>
 );
 
-export default function AdminScannerPage() {
-  const [mode, setMode] = useState('scan'); 
+export default function UniversalScannerPage() {
+  const [scanMode, setScanMode] = useState('check-in');
+  const [searchMode, setSearchMode] = useState('scan');
   const [activities, setActivities] = useState([]);
-  const [selectedActivity, setSelectedActivity] = useState('');
+  const [courses, setCourses] = useState({});
+  const [courseOptions, setCourseOptions] = useState([]);
+  const [selectedActivity, setSelectedActivity] = useState(null);
   const [nationalIdInput, setNationalIdInput] = useState('');
-  const [scannerState, setScannerState] = useState('idle'); 
-  const [registrationData, setRegistrationData] = useState(null);
-  const [activityData, setActivityData] = useState(null);
-  const [courseName, setCourseName] = useState('');
+  const [scannerState, setScannerState] = useState('idle');
+  const [foundData, setFoundData] = useState(null);
   const [seatNumberInput, setSeatNumberInput] = useState('');
   const [message, setMessage] = useState('');
   const qrScannerRef = useRef(null);
 
   useEffect(() => {
-    qrScannerRef.current = new Html5Qrcode("reader");
-    return () => {
-      if (qrScannerRef.current?.isScanning) {
-        qrScannerRef.current.stop().catch(err => console.error("Cleanup stop failed", err));
-      }
-    };
-  }, []);
-  
-  useEffect(() => {
-    const fetchActivities = async () => {
-      const activitiesSnapshot = await getDocs(collection(db, 'activities'));
-      const activitiesList = activitiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setActivities(activitiesList);
-    };
-    fetchActivities();
-  }, []);
+    const fetchData = async () => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const activitiesQuery = query(collection(db, 'activities'), where("activityDate", ">=", Timestamp.fromDate(today)));
+      const categoriesQuery = collection(db, 'categories');
+      const coursesQuery = collection(db, 'courseOptions');
 
-  const handleStartScanner = async () => {
-    if (!qrScannerRef.current) return;
-    resetState();
-    setScannerState('scanning');
-    try {
-      await qrScannerRef.current.start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        handleScanSuccess,
-        () => {}
-      );
-    } catch (err) {
-      console.error("Failed to start scanner", err);
-      if (err.name === "NotAllowedError") {
-        setMessage("คุณปฏิเสธการเข้าถึงกล้อง กรุณาอนุญาตในตั้งค่าเบราว์เซอร์");
-      } else {
-        setMessage(`ไม่สามารถเปิดกล้องได้: ${err.name}`);
-      }
-      setScannerState('idle');
-    }
-  };
+      const [activitiesSnapshot, categoriesSnapshot, coursesSnapshot] = await Promise.all([
+        getDocs(activitiesQuery),
+        getDocs(categoriesQuery),
+        getDocs(coursesQuery)
+      ]);
 
-  const handleScanSuccess = async (decodedText) => {
-    if (scannerState === 'found' || scannerState === 'submitting') return;
-    
-    if (qrScannerRef.current?.isScanning) {
-      await qrScannerRef.current.stop();
-    }
-    
-    setScannerState('submitting');
-    setMessage(`กำลังตรวจสอบ ID: ${decodedText}`);
-
-    try {
-      const regRef = doc(db, 'registrations', decodedText);
-      const regSnap = await getDoc(regRef);
-      if (regSnap.exists()) {
-        await processFoundRegistration({ id: regSnap.id, ...regSnap.data() });
-      } else {
-        throw new Error('ไม่พบข้อมูลการลงทะเบียน');
-      }
-    } catch (err) {
-      setMessage(`❌ ${err.message}`);
-      setTimeout(() => { resetState(); setScannerState('idle'); }, 3000);
-    }
-  };
-
-  const handleSearchById = async (e) => {
-    e.preventDefault();
-    if (!selectedActivity || !nationalIdInput) {
-      setMessage("กรุณาเลือกกิจกรรมและกรอกเลขบัตรประชาชน");
-      return;
-    }
-    setScannerState('submitting');
-    resetState();
-    setMessage('กำลังค้นหา...');
-    try {
-      const q = query(
-        collection(db, 'registrations'),
-        where("activityId", "==", selectedActivity),
-        where("nationalId", "==", nationalIdInput.trim())
-      );
-      const snapshot = await getDocs(q);
-      if (snapshot.empty) throw new Error('ไม่พบข้อมูลนักเรียนในกิจกรรมนี้');
+      const activitiesData = activitiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      activitiesData.sort((a, b) => b.activityDate.seconds - a.activityDate.seconds);
+      setActivities(activitiesData);
       
-      await processFoundRegistration({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() });
-    } catch (err) {
-      setMessage(`❌ ${err.message}`);
-      setScannerState('idle');
-      setTimeout(() => setMessage(''), 3000);
+      const categoriesMap = {};
+      categoriesSnapshot.forEach(doc => { categoriesMap[doc.id] = doc.data().name; });
+      setCourses(categoriesMap);
+      
+      setCourseOptions(coursesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    };
+    fetchData();
+  }, []);
+
+  const findLineUserId = async (nationalId) => {
+    if (!nationalId) return null;
+    const profileQuery = query(collection(db, 'studentProfiles'), where("nationalId", "==", nationalId), limit(1));
+    const profileSnapshot = await getDocs(profileQuery);
+    if (!profileSnapshot.empty) {
+        return profileSnapshot.docs[0].data().lineUserId;
     }
+    return null;
   };
 
-  const processFoundRegistration = async (regData) => {
-    setRegistrationData(regData);
-
-    if (regData.seatNumber) {
-        setSeatNumberInput(regData.seatNumber);
-    }
-
-    const actRef = doc(db, 'activities', regData.activityId);
-    const actSnap = await getDoc(actRef);
-    if (actSnap.exists()) {
-        const actData = actSnap.data();
-        setActivityData(actData);
-        
-        if (actData.courseId) {
-            const courseRef = doc(db, 'courses', actData.courseId);
-            const courseSnap = await getDoc(courseRef);
-            if(courseSnap.exists()) {
-                setCourseName(courseSnap.data().name);
-            }
+  const stopScanner = async () => {
+    if (qrScannerRef.current && qrScannerRef.current.isScanning) {
+        try {
+            await qrScannerRef.current.stop();
+        } catch (err) {
+            console.warn("Scanner stop failed.", err);
         }
     }
-    
-    setScannerState('found');
-    setMessage('');
   };
 
-  const handleConfirmCheckIn = async (e) => {
-    e.preventDefault();
-    if (!registrationData || !seatNumberInput.trim()) {
-      setMessage("กรุณากำหนดเลขที่นั่ง"); return;
-    }
-    setScannerState('submitting');
-    setMessage('กำลังบันทึกข้อมูล...');
-    try {
-      const regRef = doc(db, 'registrations', registrationData.id);
-      // อัปเดต status และ seatNumber พร้อมกันเสมอ
-      await updateDoc(regRef, { 
-        status: 'checked-in', 
-        seatNumber: seatNumberInput.trim() 
-      });
-      
-      const logData = {
-        adminId: 'Admin_01',
-        registrationId: registrationData.id,
-        studentName: registrationData.fullName,
-        activityName: activityData.name,
-        assignedSeat: seatNumberInput.trim(),
-        timestamp: serverTimestamp()
-      };
-      await addDoc(collection(db, 'checkInLogs'), logData);
-      
-      if (registrationData.lineUserId) {
-          const flexMessage = createCheckInSuccessFlex({
-            courseName: courseName,
-            activityName: activityData.name,
-            fullName: registrationData.fullName,
-            studentId: registrationData.studentId,
-            seatNumber: seatNumberInput.trim(),
-          });
-
-          await fetch('/api/send-notification', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ userId: registrationData.lineUserId, flexMessage: flexMessage })
-          });
-      }
-
-      setMessage(`✅ ยืนยันสำเร็จ! ที่นั่ง ${seatNumberInput.trim()}`);
-      setTimeout(() => {
-        resetState();
-        setScannerState('idle');
-      }, 2000);
-    } catch (err) {
-      setMessage(`เกิดข้อผิดพลาด: ${err.message}`);
-      setScannerState('found');
-    }
-  };
-  
   const resetState = () => {
-    setRegistrationData(null);
-    setActivityData(null);
-    setCourseName('');
+    stopScanner();
+    setFoundData(null);
     setSeatNumberInput('');
     setMessage('');
-    if (mode === 'manual') setNationalIdInput('');
+    setNationalIdInput('');
+    setScannerState('idle');
+  };
+  
+  const handleActivityChange = (e) => {
+      const activity = activities.find(a => a.id === e.target.value);
+      setSelectedActivity(activity);
+      resetState();
+  };
+  
+  const handleModeChange = (newMode, modeType) => {
+    stopScanner().then(() => {
+        if (modeType === 'scan') setScanMode(newMode);
+        if (modeType === 'search') setSearchMode(newMode);
+        resetState();
+    });
   };
 
-  const StatusBadge = ({ status }) => {
-    const isCheckedIn = status === 'checked-in';
-    const bgColor = isCheckedIn ? 'bg-green-500' : 'bg-yellow-500';
-    return <span className={`px-3 py-1 text-sm text-white rounded-full ${bgColor}`}>{isCheckedIn ? 'เช็คอินแล้ว' : 'ลงทะเบียน'}</span>;
+  const processId = async (registrationId) => {
+    setScannerState('submitting');
+    try {
+        const regRef = doc(db, 'registrations', registrationId);
+        const regDoc = await getDoc(regRef);
+
+        if (!regDoc.exists() || regDoc.data().activityId !== selectedActivity.id) {
+            throw new Error('QR Code หรือข้อมูลไม่ถูกต้องสำหรับกิจกรรมนี้');
+        }
+        
+        const registrationData = { id: regDoc.id, ...regDoc.data() };
+
+        if (scanMode === 'check-in' && registrationData.status === 'checked-in') {
+            const queueInfo = registrationData.displayQueueNumber ? ` (${registrationData.displayQueueNumber})` : '';
+            setMessage(`✅ ${registrationData.fullName} ได้เช็คอินแล้ว${queueInfo}`);
+            setScannerState('idle');
+            setTimeout(() => resetState(), 3000);
+            return;
+        }
+        if (registrationData.status === 'completed') {
+            setMessage(`✅ ${registrationData.fullName} ได้จบกิจกรรมไปแล้ว`);
+            setScannerState('idle');
+            setTimeout(() => resetState(), 3000);
+            return;
+        }
+
+        setFoundData({ registration: registrationData, activity: selectedActivity });
+        if (registrationData.seatNumber) setSeatNumberInput(registrationData.seatNumber);
+        setMessage('');
+        setScannerState('found');
+
+    } catch(err) {
+        setMessage(`❌ ${err.message}`);
+        setScannerState('idle');
+    }
   };
+
+  const handleStartScanner = () => {
+    if (!selectedActivity) {
+      setMessage('กรุณาเลือกกิจกรรมก่อน');
+      return;
+    }
+    
+    stopScanner().then(() => {
+        resetState();
+        setTimeout(() => {
+            setScannerState('scanning');
+            qrScannerRef.current = new Html5Qrcode("reader");
+            qrScannerRef.current.start(
+                { facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 250 } },
+                (decodedText) => {
+                    stopScanner();
+                    processId(decodedText);
+                }, () => {}
+            ).catch(err => {
+                setMessage(`ไม่สามารถเปิดกล้องได้: ${err.name}`);
+                setScannerState('idle');
+            });
+        }, 100);
+    });
+  };
+  
+  const handleManualSearch = async (e) => {
+    e.preventDefault();
+    await handleModeChange(searchMode, 'search');
+    setScannerState('submitting');
+    try {
+      const q = query(collection(db, 'registrations'), where("activityId", "==", selectedActivity.id), where("nationalId", "==", nationalIdInput.trim()));
+      const snapshot = await getDocs(q);
+      if (snapshot.empty) throw new Error('ไม่พบข้อมูลนักเรียนในกิจกรรมนี้');
+      processId(snapshot.docs[0].id);
+    } catch (err) {
+      setMessage(`❌ ${err.message}`);
+      setScannerState('idle');
+    }
+  };
+
+  const handleConfirm = async (e) => {
+    e.preventDefault();
+    setScannerState('submitting');
+    
+    try {
+        const settingsRef = doc(db, 'systemSettings', 'notifications');
+        const settingsSnap = await getDoc(settingsRef);
+        const settings = settingsSnap.exists() ? settingsSnap.data() : { onCheckIn: true, onCheckOut: true };
+
+        const { registration, activity } = foundData;
+        const lineUserId = registration.lineUserId || await findLineUserId(registration.nationalId);
+
+        if (scanMode === 'check-in') {
+            let successMessage = `✅ เช็คอิน ${registration.fullName} สำเร็จ!`;
+            let flexMessage = null;
+            let finalQueueData;
+
+            if (activity.type === 'queue') {
+                if (registration.displayQueueNumber) {
+                     const result = await runTransaction(db, async (transaction) => {
+                        const regRef = doc(db, 'registrations', registration.id);
+                        const q = query(collection(db, 'registrations'), where("activityId", "==", activity.id), where("course", "==", registration.course), where("status", "==", "checked-in"));
+                        const checkedInSnapshot = await getDocs(q);
+                        const nextQueueNumber = checkedInSnapshot.size + 1;
+
+                        transaction.update(regRef, {
+                            status: 'checked-in',
+                            queueNumber: nextQueueNumber
+                        });
+                        return { ...registration, queueNumber: nextQueueNumber };
+                    });
+                    finalQueueData = result;
+                    successMessage = `✅ สำเร็จ! ${finalQueueData.fullName} ได้รับคิว ${finalQueueData.displayQueueNumber} (${finalQueueData.course})`;
+                } else {
+                     const result = await runTransaction(db, async (transaction) => {
+                        const regRef = doc(db, 'registrations', registration.id);
+                        const regDoc = await transaction.get(regRef);
+                        if (!regDoc.exists()) throw new Error("ไม่พบข้อมูล");
+                        const regData = regDoc.data();
+                        if (!regData.course) throw new Error('นักเรียนยังไม่ได้ถูกกำหนดหลักสูตร');
+                        const q = query(collection(db, 'registrations'), where("activityId", "==", selectedActivity.id), where("course", "==", regData.course), where("status", "==", "checked-in"));
+                        const checkedInSnapshot = await getDocs(q);
+                        const nextQueueNumber = checkedInSnapshot.size + 1;
+
+                        const courseInfo = courseOptions.find(c => c.name === regData.course);
+                        const prefix = courseInfo?.shortName || '';
+                        const displayQueueNumber = `${prefix}${nextQueueNumber}`;
+                        
+                        transaction.update(regRef, { 
+                            status: 'checked-in', 
+                            queueNumber: nextQueueNumber,
+                            displayQueueNumber: displayQueueNumber
+                        });
+                        
+                        return { ...regData, queueNumber: nextQueueNumber, displayQueueNumber };
+                    });
+                    finalQueueData = result;
+                    successMessage = `✅ สำเร็จ! ${finalQueueData.fullName} ได้รับคิว ${finalQueueData.displayQueueNumber} (${finalQueueData.course})`;
+                }
+
+                await addDoc(collection(db, 'checkInLogs'), {
+                    activityId: activity.id,
+                    activityName: activity.name,
+                    studentName: finalQueueData.fullName,
+                    nationalId: finalQueueData.nationalId,
+                    status: 'checked-in',
+                    assignedSeat: `คิว ${finalQueueData.displayQueueNumber}`,
+                    timestamp: serverTimestamp(),
+                    adminId: 'admin'
+                });
+
+                flexMessage = createQueueCheckInSuccessFlex({
+                    activityName: activity.name,
+                    fullName: finalQueueData.fullName,
+                    course: finalQueueData.course,
+                    timeSlot: finalQueueData.timeSlot,
+                    queueNumber: finalQueueData.displayQueueNumber
+                });
+
+            } else { // Event type check-in
+                if (!seatNumberInput.trim()) {
+                    setMessage("กรุณากำหนดเลขที่นั่ง");
+                    setScannerState('found');
+                    return;
+                }
+                const regRef = doc(db, 'registrations', registration.id);
+                await updateDoc(regRef, { status: 'checked-in', seatNumber: seatNumberInput.trim() });
+
+                await addDoc(collection(db, 'checkInLogs'), {
+                    activityId: activity.id,
+                    activityName: activity.name,
+                    studentName: registration.fullName,
+                    nationalId: registration.nationalId,
+                    status: 'checked-in',
+                    assignedSeat: seatNumberInput.trim(),
+                    timestamp: serverTimestamp(),
+                    adminId: 'admin'
+                });
+
+                flexMessage = createCheckInSuccessFlex({
+                    courseName: courses[activity.categoryId] || 'ทั่วไป',
+                    activityName: activity.name,
+                    fullName: registration.fullName,
+                    studentId: registration.studentId,
+                    seatNumber: seatNumberInput.trim()
+                });
+            }
+
+            if (settings.onCheckIn && lineUserId && flexMessage) {
+                await fetch('/api/send-notification', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: lineUserId, flexMessage }) });
+            }
+            setMessage(successMessage);
+
+        } else { // Check-out mode
+            const regRef = doc(db, 'registrations', registration.id);
+            await updateDoc(regRef, { status: 'completed', completedAt: serverTimestamp() });
+            
+            await addDoc(collection(db, 'checkInLogs'), {
+                activityId: activity.id,
+                activityName: activity.name,
+                studentName: registration.fullName,
+                nationalId: registration.nationalId,
+                status: 'completed',
+                timestamp: serverTimestamp(),
+                adminId: 'admin'
+            });
+
+            if (settings.onCheckOut && lineUserId) {
+                const flexMessage = createEvaluationRequestFlex({
+                    activityId: registration.activityId,
+                    activityName: activity.name,
+                });
+                await fetch('/api/send-notification', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: lineUserId, flexMessage }) });
+            }
+            setMessage(`✅ ${registration.fullName} จบกิจกรรมแล้ว`);
+        }
+        
+        setTimeout(() => resetState(), 3000);
+    } catch (err) {
+        setMessage(`เกิดข้อผิดพลาด: ${err.message}`);
+        setScannerState('found');
+    }
+  };
+
 
   return (
     <div className="max-w-xl mx-auto p-4 md:p-8 font-sans">
       <div className="bg-white p-6 rounded-lg shadow-2xl min-h-[500px] flex flex-col items-center">
-
-        <div className="flex justify-center border border-gray-300 rounded-lg p-1 bg-gray-100 mb-6 w-full">
-            <button onClick={() => { setMode('scan'); resetState(); setScannerState('idle'); }} className={`w-1/2 py-2 rounded-md transition-colors ${mode === 'scan' ? 'bg-primary text-white shadow' : 'text-gray-600'}`}>
-              สแกน QR Code
-            </button>
-            <button onClick={() => { setMode('manual'); resetState(); setScannerState('idle'); }} className={`w-1/2 py-2 rounded-md transition-colors ${mode === 'manual' ? 'bg-primary text-white shadow' : 'text-gray-600'}`}>
-              ค้นหาด้วยตนเอง
-            </button>
+        <div className="w-full mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">เลือกกิจกรรม</label>
+            <select onChange={handleActivityChange} defaultValue="" required className="w-full p-2 border rounded">
+                <option value="" disabled>-- กรุณาเลือกกิจกรรม --</option>
+                {activities.map(act => <option key={act.id} value={act.id}>{act.name}</option>)}
+            </select>
         </div>
 
-        {mode === 'scan' && (
-          <div className="w-full flex flex-col items-center">
-            {scannerState === 'idle' && (
-              <button onClick={handleStartScanner} className="flex flex-col items-center text-primary hover:text-blue-800 transition-colors">
-                <CameraIcon />
-                <span className="text-xl font-semibold">เริ่มสแกน</span>
-              </button>
-            )}
-            <div id="reader" className={`${scannerState === 'scanning' ? 'block' : 'hidden'} w-full max-w-sm border-2 border-gray-300 rounded-lg overflow-hidden`}></div>
-            {scannerState === 'scanning' && <p className="mt-4 text-gray-500">กรุณาหันกล้องไปที่ QR Code</p>}
-          </div>
-        )}
-        
-        {mode === 'manual' && scannerState === 'idle' && (
-            <form onSubmit={handleSearchById} className="w-full space-y-4 animate-fade-in">
-              <div>
-                <label htmlFor="activity-select" className="block text-sm font-medium text-gray-700">1. เลือกกิจกรรม</label>
-                <select id="activity-select" value={selectedActivity} onChange={(e) => setSelectedActivity(e.target.value)} required className="mt-1 block w-full p-2 border border-gray-300 rounded-md">
-                  <option value="">-- กรุณาเลือกกิจกรรม --</option>
-                  {activities.map(act => <option key={act.id} value={act.id}>{act.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label htmlFor="nationalId" className="block text-sm font-medium text-gray-700">2. กรอกเลขบัตรประชาชน</label>
-                <input type="tel" id="nationalId" value={nationalIdInput} onChange={(e) => setNationalIdInput(e.target.value)} required pattern="\d{13}" placeholder="กรอกเลข 13 หลัก" className="mt-1 block w-full p-2 border border-gray-300 rounded-md"/>
-              </div>
-              <button type="submit" disabled={scannerState === 'submitting'} className="w-full py-2 bg-purple-600 text-white font-semibold rounded-md hover:bg-purple-700">
-                {scannerState === 'submitting' ? 'กำลังค้นหา...' : 'ค้นหา'}
-              </button>
-            </form>
-        )}
+        {selectedActivity && (
+            <>
+                <div className="flex justify-center border rounded-lg p-1 bg-gray-100 mb-4 w-full">
+                    <button onClick={() => handleModeChange('check-in', 'scan')} className={`w-1/2 py-2 rounded-md ${scanMode === 'check-in' ? 'bg-green-600 text-white' : ''}`}>เช็คอิน</button>
+                    <button onClick={() => handleModeChange('check-out', 'scan')} className={`w-1/2 py-2 rounded-md ${scanMode === 'check-out' ? 'bg-red-600 text-white' : ''}`}>จบกิจกรรม</button>
+                </div>
+                
+                <div className="flex justify-center border rounded-lg p-1 bg-gray-100 mb-6 w-full">
+                    <button onClick={() => handleModeChange('scan', 'search')} className={`w-1/2 py-2 rounded-md ${searchMode === 'scan' ? 'bg-primary text-white' : ''}`}>สแกน</button>
+                    <button onClick={() => handleModeChange('manual', 'search')} className={`w-1/2 py-2 rounded-md ${searchMode === 'manual' ? 'bg-primary text-white' : ''}`}>ค้นหา</button>
+                </div>
 
-        {/* 👇 **การเปลี่ยนแปลง**: ลบเงื่อนไข && registrationData.status !== 'checked-in' ออก */}
-        {(scannerState === 'found' || scannerState === 'submitting') && registrationData && (
-          <div className="w-full animate-fade-in">
-            <h2 className="text-2xl font-bold mb-4">ข้อมูลผู้ลงทะเบียน</h2>
-            <div className="space-y-2 text-gray-700 bg-gray-50 p-4 rounded-lg border">
-              <p><strong>ชื่อ-สกุล:</strong> {registrationData.fullName}</p>
-              <p><strong>กิจกรรม:</strong> {activityData?.name}</p>
-              <p className="flex items-center gap-2"><strong>สถานะ:</strong> <StatusBadge status={registrationData.status} /></p>
-            </div>
-            <hr className="my-4"/>
-            <form onSubmit={handleConfirmCheckIn} className="space-y-3">
-              <label htmlFor="seatNumber" className="block text-sm font-medium text-gray-700">
-                กำหนด/แก้ไขเลขที่นั่ง
-              </label>
-              <input 
-                type="text" 
-                id="seatNumber" 
-                value={seatNumberInput} 
-                onChange={(e) => setSeatNumberInput(e.target.value)} 
-                required 
-                placeholder="เช่น A1, B12" 
-                className="w-full p-2 border border-gray-300 rounded-md" 
-              />
-              <button 
-                type="submit" 
-                disabled={scannerState === 'submitting'} 
-                className="w-full py-3 bg-primary text-white font-semibold rounded-md hover:bg-blue-700 disabled:bg-blue-300"
-              >
-                {scannerState === 'submitting' ? 'กำลังดำเนินการ...' : 'ยืนยัน / อัปเดตข้อมูล'}
-              </button>
-            </form>
-          </div>
-        )}
+                {message && <p className="mb-4 text-center font-bold">{message}</p>}
 
-        {message && <p className="mt-4 text-center font-bold text-lg text-red-600">{message}</p>}
+                {searchMode === 'scan' && (
+                    <>
+                        <div id="reader" style={{ display: scannerState === 'scanning' ? 'block' : 'none' }} className="w-full max-w-sm border-2"></div>
+                        {scannerState === 'idle' && (
+                           <button onClick={handleStartScanner} className="flex flex-col items-center text-primary"><CameraIcon /><span className="text-xl">เริ่มสแกน</span></button>
+                        )}
+                    </>
+                )}
+                
+                {searchMode === 'manual' && scannerState === 'idle' && (
+                    <form onSubmit={handleManualSearch} className="w-full space-y-4">
+                      <input type="tel" value={nationalIdInput} onChange={e => setNationalIdInput(e.target.value)} required pattern="\d{13}" placeholder="เลขบัตรประชาชน 13 หลัก" className="w-full p-2 border rounded"/>
+                      <button type="submit" className="w-full py-2 bg-purple-600 text-white font-semibold rounded">ค้นหา</button>
+                    </form>
+                )}
+
+                {scannerState === 'found' && foundData && (
+                  <div className="w-full">
+                    <h2 className="text-2xl font-bold mb-4">ข้อมูลผู้ลงทะเบียน</h2>
+                    <div className="p-4 bg-gray-50 rounded border">
+                      <p><strong>ชื่อ:</strong> {foundData.registration.fullName}</p>
+                      {/* --- จุดที่แก้ไข: ใช้ฟังก์ชันแปลภาษา --- */}
+                      <p><strong>สถานะ:</strong> {translateStatus(foundData.registration.status)}</p>
+                    </div>
+                    <form onSubmit={handleConfirm} className="mt-4">
+                      {scanMode === 'check-in' && selectedActivity.type !== 'queue' && (
+                          <div>
+                            <label>เลขที่นั่ง</label>
+                            <input type="text" value={seatNumberInput} onChange={e => setSeatNumberInput(e.target.value)} required className="w-full p-2 border rounded"/>
+                          </div>
+                      )}
+                      <button type="submit" className={`w-full py-3 mt-2 text-white font-semibold rounded ${scanMode === 'check-in' ? 'bg-green-600' : 'bg-red-600'}`}>
+                        {scanMode === 'check-in' ? 'ยืนยันเช็คอิน' : 'ยืนยันจบกิจกรรม'}
+                      </button>
+                    </form>
+                  </div>
+                )}
+            </>
+        )}
       </div>
     </div>
   );

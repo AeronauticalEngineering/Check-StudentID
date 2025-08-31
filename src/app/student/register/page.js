@@ -15,7 +15,7 @@ function RegistrationComponent() {
   const activityIdFromUrl = searchParams.get('activityId');
 
   const [activity, setActivity] = useState(null);
-  const [courseName, setCourseName] = useState('');
+  const [categoryName, setCategoryName] = useState('');
   const [registration, setRegistration] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState('');
@@ -23,16 +23,16 @@ function RegistrationComponent() {
   useEffect(() => {
     if (!liffProfile || !activityIdFromUrl) return;
 
-    const fetchActivityAndCourse = async () => {
+    const fetchActivityAndCategory = async () => {
       const activityDoc = await getDoc(doc(db, 'activities', activityIdFromUrl));
       if (activityDoc.exists()) {
         const actData = activityDoc.data();
         setActivity({ id: activityDoc.id, ...actData });
 
-        if(actData.courseId) {
-            const courseDoc = await getDoc(doc(db, 'courses', actData.courseId));
-            if(courseDoc.exists()) {
-                setCourseName(courseDoc.data().name);
+        if(actData.categoryId) {
+            const categoryDoc = await getDoc(doc(db, 'categories', actData.categoryId));
+            if(categoryDoc.exists()) {
+                setCategoryName(categoryDoc.data().name);
             }
         }
       }
@@ -50,7 +50,7 @@ function RegistrationComponent() {
       }
     };
 
-    fetchActivityAndCourse();
+    fetchActivityAndCategory();
     checkExistingRegistration();
   }, [liffProfile, activityIdFromUrl]);
 
@@ -69,7 +69,7 @@ function RegistrationComponent() {
       studentId: studentDbProfile.studentId,
       nationalId: studentDbProfile.nationalId,
       activityId: activityIdFromUrl,
-      courseId: activity?.courseId,
+      categoryId: activity?.categoryId,
       lineUserId: liffProfile.userId,
       status: 'registered',
       seatNumber: null,
@@ -80,7 +80,7 @@ function RegistrationComponent() {
       const docRef = await addDoc(collection(db, 'registrations'), registrationData);
       
       const flexMessage = createRegistrationSuccessFlex({
-          courseName: courseName,
+          categoryName: categoryName,
           activityName: activity?.name,
           fullName: studentDbProfile.fullName,
           studentId: studentDbProfile.studentId
@@ -140,7 +140,7 @@ function RegistrationComponent() {
           <p><strong>กิจกรรม:</strong> {activity?.name || 'กำลังโหลด...'}</p>
           <hr/>
           <p><strong>ชื่อ-สกุล:</strong> {studentDbProfile.fullName}</p>
-          <p><strong>รหัสนักศึกษา:</strong> {studentDbProfile.studentId}</p>
+          <p><strong>รหัสผู้สมัคร:</strong> {studentDbProfile.studentId}</p>
         </div>
         <p className="text-xs text-gray-500 mt-4">กรุณาตรวจสอบข้อมูลด้านบนให้ถูกต้อง หากต้องการแก้ไขโปรดไปที่หน้า &quot;การลงทะเบียนของฉัน&quot;</p>
         

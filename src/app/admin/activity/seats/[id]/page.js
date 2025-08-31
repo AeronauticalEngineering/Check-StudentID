@@ -1,52 +1,75 @@
 'use client';
 
-import { useState, useEffect, use, useCallback } from 'react';
+import { useState, useEffect, useCallback, use } from 'react';
 import Link from 'next/link';
 import { db } from '../../../../../lib/firebase';
 import {
   doc, getDoc, updateDoc, collection, query,
-  where, getDocs, writeBatch, serverTimestamp, deleteDoc
+  where, getDocs, writeBatch, serverTimestamp, deleteDoc, addDoc, onSnapshot, limit, orderBy
 } from 'firebase/firestore';
-import { CSVLink } from "react-csv";
 import Papa from "papaparse";
+import { CSVLink } from "react-csv";
 
 // Helper function to translate status to Thai
 const translateStatus = (status) => {
   switch (status) {
     case 'checked-in': return 'เช็คอินแล้ว';
     case 'registered': return 'ลงทะเบียนแล้ว';
+    case 'cancelled': return 'ยกเลิกแล้ว';
+    case 'waitlisted': return 'รอคิว';
+    case 'completed': return 'สำเร็จแล้ว';
     default: return status || '';
-  }
-};
-
-// Helper function to translate Thai status back to English for database
-const translateStatusToEn = (status) => {
-  switch (status) {
-    case 'เช็คอินแล้ว': return 'checked-in';
-    case 'ลงทะเบียนแล้ว': return 'registered';
-    default: return status || 'registered';
   }
 };
 
 export default function SeatAssignmentPage({ params }) {
   const { id: activityId } = use(params);
-
   const [activity, setActivity] = useState(null);
   const [registrants, setRegistrants] = useState([]);
-  const [seatInputs, setSeatInputs] = useState({});
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState('');
-  const [savingStates, setSavingStates] = useState({});
-  const [isBulkLoading, setIsBulkLoading] = useState(false);
-  const [editingRegistrant, setEditingRegistrant] = useState(null);
-  const [editForm, setEditForm] = useState({
-    fullName: '',
-    studentId: '',
-    nationalId: ''
+  
+  const [form, setForm] = useState({
+  fullName: '', studentId: '', nationalId: '', course: '', timeSlot: '', displayQueueNumber: '', status: 'registered'
   });
 
-  // Function to fetch the latest data for the page
+  const [editStates, setEditStates] = useState({});
+  const [originalEditStates, setOriginalEditStates] = useState({});
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [courseOptions, setCourseOptions] = useState([]);
+  const [timeSlotOptions, setTimeSlotOptions] = useState([]);
+
+  const findLineUserId = async (nationalId) => {
+    if (!nationalId) return null;
+    const profileQuery = query(collection(db, 'studentProfiles'), where("nationalId", "==", nationalId), limit(1));
+    const profileSnapshot = await getDocs(profileQuery);
+    if (!profileSnapshot.empty) {
+        return profileSnapshot.docs[0].data().lineUserId;
+    }
+    return null;
+  };
+
+  useEffect(() => {
+    const unsubCourses = onSnapshot(query(collection(db, 'courseOptions'), orderBy('name')), (snapshot) => {
+        setCourseOptions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+    
+    // --- จุดที่แก้ไข ---
+    // เพิ่ม query และ orderBy('name') เพื่อเรียงเวลาจากน้อยไปมาก
+    const timeSlotsQuery = query(collection(db, 'timeSlotOptions'), orderBy('name'));
+    const unsubTimeSlots = onSnapshot(timeSlotsQuery, (snapshot) => {
+        setTimeSlotOptions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    return () => {
+        unsubCourses();
+        unsubTimeSlots();
+    };
+  }, []);
+
   const fetchData = useCallback(async () => {
+    // ... (โค้ดส่วนนี้เหมือนเดิม)
+    setIsLoading(true);
     try {
       const activityDoc = await getDoc(doc(db, 'activities', activityId));
       if (activityDoc.exists()) {
@@ -59,11 +82,21 @@ export default function SeatAssignmentPage({ params }) {
       registrantsData.sort((a, b) => (a.fullName || '').localeCompare(b.fullName || ''));
       setRegistrants(registrantsData);
 
-      const initialInputs = {};
+      const initialEdits = {};
       registrantsData.forEach(r => {
-        initialInputs[r.id] = r.seatNumber || '';
+        initialEdits[r.id] = { 
+          fullName: r.fullName || '',
+          studentId: r.studentId || '',
+          nationalId: r.nationalId || '',
+          seatNumber: r.seatNumber || '', 
+          course: r.course || '', 
+          timeSlot: r.timeSlot || '',
+          status: r.status || 'registered',
+          displayQueueNumber: r.displayQueueNumber || ''
+        };
       });
-      setSeatInputs(initialInputs);
+      setEditStates(initialEdits);
+      setOriginalEditStates(JSON.parse(JSON.stringify(initialEdits)));
 
     } catch (error) {
       console.error("เกิดข้อผิดพลาดในการดึงข้อมูล:", error);
@@ -74,455 +107,399 @@ export default function SeatAssignmentPage({ params }) {
   }, [activityId]);
 
   useEffect(() => {
-    setIsLoading(true);
     fetchData();
-  }, [activityId, fetchData]);
+  }, [fetchData]);
 
-  // Handle CSV file upload and parsing
+  // ... (ฟังก์ชัน handle ต่างๆ เช่น handleInputChange, handleUpdateAll ฯลฯ เหมือนเดิมทั้งหมด)
+  const handleInputChange = (registrantId, field, value) => {
+    setEditStates(prev => ({
+      ...prev,
+      [registrantId]: { ...prev[registrantId], [field]: value }
+    }));
+  };
+
+  const handleUpdateAll = async () => {
+    setIsLoading(true);
+    setMessage('กำลังบันทึกข้อมูลทั้งหมด...');
+    try {
+      const batch = writeBatch(db);
+      registrants.forEach(reg => {
+        const registrantDocRef = doc(db, 'registrations', reg.id);
+        const updatedData = editStates[reg.id];
+        batch.update(registrantDocRef, updatedData);
+      });
+      await batch.commit();
+      
+      setMessage('✅ บันทึกข้อมูลทั้งหมดสำเร็จ!');
+      setIsEditMode(false);
+      fetchData(); // Refresh data
+      setTimeout(() => setMessage(''), 3000);
+    } catch (error) {
+       setMessage(`เกิดข้อผิดพลาด: ${error.message}`);
+    } finally {
+        setIsLoading(false);
+    }
+  };
+  
+  const handleCancelAll = () => {
+    setEditStates(originalEditStates); // Revert to original data
+    setIsEditMode(false);
+  };
+  
+  const handleAddParticipant = async (e) => {
+      e.preventDefault();
+      const { fullName, nationalId, course, timeSlot, studentId, displayQueueNumber } = form;
+      if (!fullName || !nationalId || (activity?.type === 'queue' && (!course || !timeSlot))) {
+          setMessage('กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน');
+          return;
+      }
+
+    try {
+      const lineUserId = await findLineUserId(nationalId);
+      await addDoc(collection(db, 'registrations'), {
+        activityId,
+        courseId: activity?.courseId || null,
+        fullName,
+        studentId: studentId || null,
+        nationalId,
+        course: course || null,
+        timeSlot: timeSlot || null,
+        status: form.status || 'registered',
+        registeredBy: 'admin_manual_add',
+        registeredAt: serverTimestamp(),
+        lineUserId: lineUserId,
+        displayQueueNumber: displayQueueNumber || null,
+      });
+          setMessage('เพิ่มรายชื่อสำเร็จ!');
+      setForm({ fullName: '', studentId: '', nationalId: '', course: '', timeSlot: '', displayQueueNumber: '', status: 'registered' });
+          fetchData();
+      } catch (error) {
+          setMessage(`เกิดข้อผิดพลาด: ${error.message}`);
+      }
+  };
+
+  const handleDeleteRegistrant = async (registrantId) => {
+    if (window.confirm('คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลนี้?')) {
+      try {
+        await deleteDoc(doc(db, 'registrations', registrantId));
+        setMessage('ลบข้อมูลสำเร็จ');
+        fetchData();
+      } catch (error) {
+        setMessage(`เกิดข้อผิดพลาดในการลบ: ${error.message}`);
+      }
+    }
+  };
+
+  // Delete all registrants for this activity (with confirmation and chunked batches)
+  const handleDeleteAll = async () => {
+    if (!window.confirm('คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลทั้งหมดสำหรับกิจกรรมนี้? การกระทำนี้ไม่สามารถกู้คืนได้.')) return;
+    setIsLoading(true);
+    setMessage('กำลังลบข้อมูลทั้งหมด...');
+    try {
+      const q = query(collection(db, 'registrations'), where('activityId', '==', activityId));
+      const snapshot = await getDocs(q);
+      if (snapshot.empty) {
+        setMessage('ไม่มีข้อมูลให้ลบ');
+        setIsLoading(false);
+        setTimeout(() => setMessage(''), 3000);
+        return;
+      }
+
+      const docs = snapshot.docs;
+      const chunkSize = 400; // keep under Firestore limits
+      for (let i = 0; i < docs.length; i += chunkSize) {
+        const batch = writeBatch(db);
+        const chunk = docs.slice(i, i + chunkSize);
+        chunk.forEach(d => batch.delete(doc(db, 'registrations', d.id)));
+        await batch.commit();
+      }
+
+      setMessage('✅ ลบข้อมูลทั้งหมดสำเร็จ');
+      fetchData();
+      setTimeout(() => setMessage(''), 3000);
+    } catch (error) {
+      setMessage(`❌ เกิดข้อผิดพลาดในการลบทั้งหมด: ${error.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleFileUpload = (e) => {
-    if (!e.target.files.length) return;
     const file = e.target.files[0];
+    if (!file) return;
 
     Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: (results) => {
-        console.log('CSV parsed data:', results.data); // Debug log
-        
-        // ตรวจสอบ headers ที่มีในไฟล์
-        const headers = results.meta.fields || [];
-        console.log('CSV headers:', headers); // Debug log
-        
-        // ตรวจสอบฟิลด์ที่จำเป็น (รองรับทั้งภาษาไทยและอังกฤษ)
-        const hasFullName = headers.includes('fullName') || headers.includes('ชื่อ-สกุล');
-        const hasNationalId = headers.includes('nationalId') || headers.includes('เลขบัตรประชาชน');
-        
-        if (!hasFullName || !hasNationalId) {
-          const missingFields = [];
-          if (!hasFullName) missingFields.push('ชื่อ-สกุล (fullName)');
-          if (!hasNationalId) missingFields.push('เลขบัตรประชาชน (nationalId)');
-          setMessage(`ไฟล์ CSV ขาดคอลัมน์ที่จำเป็น: ${missingFields.join(', ')}`);
-          return;
+        header: true,
+        skipEmptyLines: true,
+        complete: async (results) => {
+            const newRegistrants = results.data;
+            setMessage(`กำลังนำเข้าข้อมูล ${newRegistrants.length} รายการ...`);
+            
+            try {
+                const batch = writeBatch(db);
+                for (const reg of newRegistrants) {
+                    if (reg.fullName && reg.nationalId) {
+                        const lineUserId = await findLineUserId(reg.nationalId);
+                        const newRegRef = doc(collection(db, 'registrations'));
+            batch.set(newRegRef, {
+                            activityId,
+                            courseId: activity?.courseId || null,
+                            fullName: reg.fullName,
+                            studentId: reg.studentId || null,
+                            nationalId: reg.nationalId,
+              course: reg.course || null,
+              timeSlot: reg.timeSlot || null,
+              status: reg.status || 'registered',
+                            registeredBy: 'admin_csv_import',
+                            registeredAt: serverTimestamp(),
+                            lineUserId: lineUserId,
+                            displayQueueNumber: reg.displayQueueNumber || null,
+                        });
+                    }
+                }
+                await batch.commit();
+                setMessage(`✅ นำเข้าข้อมูล ${newRegistrants.length} รายการสำเร็จ!`);
+                fetchData();
+            } catch (error) {
+                setMessage(`❌ เกิดข้อผิดพลาดในการนำเข้า: ${error.message}`);
+            }
+        },
+        error: (error) => {
+            setMessage(`❌ เกิดข้อผิดพลาดในการอ่านไฟล์ CSV: ${error.message}`);
         }
-        
-        // กรองข้อมูลที่มีฟิลด์จำเป็น (รองรับทั้งภาษาไทยและอังกฤษ)
-        const validData = results.data.filter(row => {
-          const fullName = row['ชื่อ-สกุล'] || row.fullName;
-          const nationalId = row['เลขบัตรประชาชน'] || row.nationalId;
-          return fullName && fullName.trim() !== '' && 
-                 nationalId && nationalId.trim() !== '';
-        });
-        
-        if (validData.length > 0) {
-            setMessage(`พบข้อมูล ${validData.length} รายการที่ถูกต้อง`);
-            handleConfirmImport(validData);
-        } else {
-            setMessage("ไม่พบข้อมูลที่ถูกต้อง กรุณาตรวจสอบว่ามีข้อมูลในคอลัมน์ 'ชื่อ-สกุล' และ 'เลขบัตรประชาชน'");
-        }
-      },
-      error: (err) => setMessage(`เกิดข้อผิดพลาดในการอ่านไฟล์: ${err.message}`)
-    });
-    e.target.value = null;
-  };
-
-  // Handle the "upsert" logic for importing CSV data
-  const handleConfirmImport = async (csvData) => {
-    if (!window.confirm(`พบ ${csvData.length} รายการ จะทำการอัปเดตข้อมูลนักเรียนที่มีอยู่และเพิ่มนักเรียนใหม่ ดำเนินการต่อหรือไม่?`)) return;
-
-    setIsBulkLoading(true);
-    setMessage('กำลังนำเข้าข้อมูล...');
-    try {
-      const batch = writeBatch(db);
-      let updatedCount = 0;
-      let createdCount = 0;
-      const currentRegistrantsMap = new Map(registrants.map(r => [r.nationalId, r]));
-
-      for (const row of csvData) {
-        // รองรับทั้งภาษาไทยและอังกฤษ
-        const fullName = row['ชื่อ-สกุล'] || row.fullName;
-        const nationalId = row['เลขบัตรประชาชน'] || row.nationalId;
-        const studentId = row['รหัสนักศึกษา'] || row.studentId;
-        const status = row['สถานะ'] || row.status;
-        const seatNumber = row['เลขที่นั่ง'] || row.seatNumber;
-        const lineUserId = row['LINE User ID'] || row.lineUserId;
-        
-        // ตรวจสอบข้อมูลที่จำเป็น
-        if (!nationalId?.trim() || !fullName?.trim()) {
-          console.warn('Skipping row due to missing required data:', row);
-          continue;
-        }
-        
-        const existingReg = currentRegistrantsMap.get(nationalId);
-        if (existingReg) {
-          const docRef = doc(db, 'registrations', existingReg.id);
-          batch.update(docRef, { 
-            fullName: fullName.trim(), 
-            studentId: studentId?.trim() || '',
-            status: translateStatusToEn(status) || existingReg.status,
-            seatNumber: seatNumber?.trim() || null,
-            lineUserId: lineUserId?.trim() || null
-          });
-          updatedCount++;
-        } else {
-          const newDocRef = doc(collection(db, 'registrations'));
-          batch.set(newDocRef, {
-            fullName: fullName.trim(), 
-            studentId: studentId?.trim() || '', 
-            nationalId: nationalId.trim(),
-            activityId: activityId, 
-            courseId: activity?.courseId || null,
-            status: translateStatusToEn(status) || 'registered', 
-            seatNumber: seatNumber?.trim() || null,
-            registeredAt: serverTimestamp(), 
-            registeredBy: 'admin-import', 
-            lineUserId: lineUserId?.trim() || null,
-          });
-          createdCount++;
-        }
-      }
-      await batch.commit();
-      setMessage(`นำเข้าสำเร็จ! เพิ่ม ${createdCount} คน, อัปเดต ${updatedCount} คน`);
-      fetchData();
-    } catch (err) {
-      console.error("เกิดข้อผิดพลาดในการนำเข้า:", err);
-      setMessage(`นำเข้าล้มเหลว: ${err.message}`);
-    } finally {
-      setIsBulkLoading(false);
-    }
-  };
-
-  // Handle changes to individual seat input fields
-  const handleSeatInputChange = (registrantId, value) => {
-    setSeatInputs(prev => ({ ...prev, [registrantId]: value }));
-  };
-
-  // Save an individual seat number
-  const handleAssignSeat = async (registrantId) => {
-    setSavingStates(prev => ({ ...prev, [registrantId]: true }));
-    const seatToAssign = seatInputs[registrantId]?.trim() || null;
-    try {
-      const registrantDocRef = doc(db, 'registrations', registrantId);
-      await updateDoc(registrantDocRef, { seatNumber: seatToAssign });
-      setRegistrants(prev => prev.map(r =>
-        r.id === registrantId ? { ...r, seatNumber: seatToAssign } : r
-      ));
-    } catch (error) {
-      console.error("เกิดข้อผิดพลาดในการกำหนดที่นั่ง:", error);
-      alert('ไม่สามารถบันทึกเลขที่นั่งได้');
-    } finally {
-      setSavingStates(prev => ({ ...prev, [registrantId]: false }));
-    }
-  };
-
-  // Delete an individual registrant
-  const handleDeleteRegistrant = async (registrantId, registrantName) => {
-    if (!window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบ "${registrantName}" ออกจากกิจกรรมนี้?`)) return;
-    try {
-        const docRef = doc(db, 'registrations', registrantId);
-        await deleteDoc(docRef);
-        setRegistrants(prev => prev.filter(r => r.id !== registrantId));
-        setMessage(`ลบ ${registrantName} สำเร็จแล้ว`);
-    } catch (err) {
-        console.error("เกิดข้อผิดพลาดในการลบ:", err);
-        setMessage(`เกิดข้อผิดพลาดในการลบ: ${err.message}`);
-    }
-  };
-
-  // Save all seat changes at once
-  const handleSaveAllSeats = async () => {
-    if (!window.confirm("คุณต้องการบันทึกการเปลี่ยนแปลงเลขที่นั่งทั้งหมดหรือไม่?")) return;
-    setIsBulkLoading(true);
-    setMessage('กำลังบันทึกที่นั่งทั้งหมด...');
-    try {
-      const batch = writeBatch(db);
-      let changesCount = 0;
-      registrants.forEach(reg => {
-        const newSeat = seatInputs[reg.id]?.trim() || null;
-        if (newSeat !== (reg.seatNumber || null)) {
-          const docRef = doc(db, 'registrations', reg.id);
-          batch.update(docRef, { seatNumber: newSeat });
-          changesCount++;
-        }
-      });
-      if (changesCount > 0) {
-        await batch.commit();
-        setMessage(`✅ บันทึกการเปลี่ยนแปลง ${changesCount} รายการสำเร็จ!`);
-        fetchData();
-      } else {
-        setMessage("ไม่มีการเปลี่ยนแปลงเลขที่นั่ง");
-      }
-    } catch (err) {
-      setMessage(`เกิดข้อผิดพลาดในการบันทึก: ${err.message}`);
-    } finally {
-      setIsBulkLoading(false);
-      setTimeout(() => setMessage(''), 3000);
-    }
-  };
-
-  // Delete all registrants for this activity
-  const handleDeleteAll = async () => {
-    const confirmationText = "ลบทั้งหมด";
-    const promptMessage = `นี่เป็นการกระทำที่ไม่สามารถย้อนกลับได้! หากคุณแน่ใจว่าต้องการลบผู้ลงทะเบียนทั้งหมด ${registrants.length} คน, กรุณาพิมพ์ "${confirmationText}" เพื่อยืนยัน`;
-    if (window.prompt(promptMessage) !== confirmationText) {
-      alert("การยืนยันไม่ถูกต้อง การลบถูกยกเลิก");
-      return;
-    }
-    setIsBulkLoading(true);
-    setMessage('กำลังลบผู้ลงทะเบียนทั้งหมด...');
-    try {
-      const batch = writeBatch(db);
-      registrants.forEach(reg => {
-        batch.delete(doc(db, 'registrations', reg.id));
-      });
-      await batch.commit();
-      setMessage(`✅ ลบผู้ลงทะเบียนทั้งหมด ${registrants.length} คนสำเร็จแล้ว`);
-      setRegistrants([]);
-    } catch (err) {
-      setMessage(`เกิดข้อผิดพลาดในการลบ: ${err.message}`);
-    } finally {
-      setIsBulkLoading(false);
-    }
-  };
-
-  // Handle edit button click
-  const handleEditClick = (registrant) => {
-    setEditingRegistrant(registrant.id);
-    setEditForm({
-      fullName: registrant.fullName || '',
-      studentId: registrant.studentId || '',
-      nationalId: registrant.nationalId || ''
     });
   };
 
-  // Handle cancel edit
-  const handleCancelEdit = () => {
-    setEditingRegistrant(null);
-    setEditForm({ fullName: '', studentId: '', nationalId: '' });
-  };
-
-  // Handle form input changes
-  const handleEditFormChange = (field, value) => {
-    setEditForm(prev => ({ ...prev, [field]: value }));
-  };
-
-  // Save edited registrant data
-  const handleSaveEdit = async (registrantId) => {
-    if (!editForm.fullName.trim() || !editForm.studentId.trim() || !editForm.nationalId.trim()) {
-      alert('กรุณากรอกข้อมูลให้ครบถ้วน');
-      return;
-    }
-
-    setSavingStates(prev => ({ ...prev, [registrantId]: true }));
-    try {
-      const registrantDocRef = doc(db, 'registrations', registrantId);
-      await updateDoc(registrantDocRef, {
-        fullName: editForm.fullName.trim(),
-        studentId: editForm.studentId.trim(),
-        nationalId: editForm.nationalId.trim()
-      });
-
-      // Update local state
-      setRegistrants(prev => prev.map(r =>
-        r.id === registrantId 
-          ? { 
-              ...r, 
-              fullName: editForm.fullName.trim(),
-              studentId: editForm.studentId.trim(),
-              nationalId: editForm.nationalId.trim()
-            } 
-          : r
-      ));
-
-      setEditingRegistrant(null);
-      setEditForm({ fullName: '', studentId: '', nationalId: '' });
-      setMessage('✅ แก้ไขข้อมูลสำเร็จแล้ว');
-      setTimeout(() => setMessage(''), 3000);
-    } catch (error) {
-      console.error("เกิดข้อผิดพลาดในการแก้ไขข้อมูล:", error);
-      setMessage(`เกิดข้อผิดพลาดในการแก้ไขข้อมูล: ${error.message}`);
-    } finally {
-      setSavingStates(prev => ({ ...prev, [registrantId]: false }));
-    }
-  };
-
-  if (isLoading) return <div className="text-center p-10 font-sans">กำลังโหลดข้อมูลผู้เข้าร่วม...</div>;
-
-  // Prepare data and headers for CSV export
-  const headersForCsv = [
-    { label: "ชื่อ-สกุล", key: "fullName" }, 
-    { label: "รหัสนักศึกษา", key: "studentId" },
-    { label: "เลขบัตรประชาชน", key: "nationalId" }, 
-    { label: "สถานะ", key: "status" },
-    { label: "เลขที่นั่ง", key: "seatNumber" }, 
-    { label: "LINE User ID", key: "lineUserId" },
+  const csvExportHeaders = [
+    { label: "fullName", key: "fullName" },
+    { label: "studentId", key: "studentId" },
+    { label: "nationalId", key: "nationalId" },
+    { label: "status", key: "status" },
+    { label: "course", key: "course" },
+    { label: "timeSlot", key: "timeSlot" },
+    { label: "displayQueueNumber", key: "displayQueueNumber" },
   ];
 
-  const dataForCsv = registrants.map((reg) => ({
-    fullName: reg.fullName || '',
-    studentId: reg.studentId || '',
-    nationalId: reg.nationalId || '',
-    status: translateStatus(reg.status),
-    seatNumber: reg.seatNumber || '',
-    lineUserId: reg.lineUserId || '',
+  const csvExportData = registrants.map(reg => ({
+      fullName: reg.fullName || '',
+      studentId: reg.studentId || '',
+      nationalId: reg.nationalId || '',
+      status: reg.status || 'registered',
+      course: reg.course || '',
+      timeSlot: reg.timeSlot || '',
+      displayQueueNumber: reg.displayQueueNumber || '',
   }));
+
+  if (isLoading) return <div className="text-center p-10 font-sans">กำลังโหลด...</div>;
 
   return (
     <div className="bg-gray-50 min-h-screen p-4 md:p-8 font-sans">
       <main className="max-w-7xl mx-auto">
+        {/* ... JSX for header and forms ... */}
         <div className="flex justify-between items-center mb-4">
           <div>
-            <h1 className="text-3xl font-bold text-gray-800">จัดการที่นั่งและรายชื่อ</h1>
+            <h1 className="text-3xl font-bold text-gray-800">จัดการข้อมูลนักเรียน</h1>
             <p className="text-gray-600">{activity?.name}</p>
           </div>
           <Link href="/admin/activity" className="text-sm text-blue-600 hover:underline">&larr; กลับไปหน้าแดชบอร์ด</Link>
         </div>
-
-        <div className="bg-white p-4 rounded-lg shadow-md mb-6 flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="flex gap-2">
-            <label htmlFor="csv-upload" className="px-4 py-2 bg-purple-600 text-white font-semibold rounded-lg cursor-pointer hover:bg-purple-700">นำเข้า CSV</label>
-            <input type="file" id="csv-upload" accept=".csv" onChange={handleFileUpload} className="hidden" />
-            <CSVLink data={dataForCsv} headers={headersForCsv} filename={`export_${activity?.name.replace(/\s+/g, '_') || 'activity'}.csv`} className="px-4 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700">ส่งออก CSV</CSVLink>
-          </div>
-          <p className="text-xs text-gray-500 text-center md:text-right">
-            คอลัมน์ที่จำเป็น: <code>ชื่อ-สกุล</code>, <code>เลขบัตรประชาชน</code><br/>
-            คอลัมน์เสริม: <code>รหัสนักศึกษา</code>, <code>สถานะ</code>, <code>เลขที่นั่ง</code>, <code>LINE User ID</code>
-          </p>
-        </div>
-
+        
         {message && <p className="text-center mb-4 font-semibold text-blue-700">{message}</p>}
 
-        {registrants.length > 0 && (
-          <div className="bg-white p-4 rounded-lg shadow-md mb-6 flex flex-col md:flex-row justify-between items-center gap-4">
-            <p className="text-sm text-gray-600">จัดการข้อมูลทั้งหมด ({registrants.length} รายการ)</p>
-            <div className="flex gap-2">
-              <button onClick={handleSaveAllSeats} disabled={isBulkLoading} className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:bg-gray-400">{isBulkLoading ? '...' : 'บันทึกที่นั่งทั้งหมด'}</button>
-              <button onClick={handleDeleteAll} disabled={isBulkLoading} className="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-800 disabled:bg-gray-400">{isBulkLoading ? '...' : 'ลบทั้งหมด'}</button>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <div className="bg-white p-4 rounded-lg shadow-md">
+                <h2 className="text-xl font-semibold mb-4">นำเข้าและส่งออกข้อมูล</h2>
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                           นำเข้าไฟล์ CSV (Header: fullName, studentId, nationalId, course, timeSlot, displayQueueNumber)
+                        </label>
+                        <input 
+                            type="file" 
+                            accept=".csv" 
+                            onChange={handleFileUpload}
+                            className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                        />
+                    </div>
+                    <div>
+                        <CSVLink
+                            data={csvExportData}
+                            headers={csvExportHeaders}
+                            filename={`registrants_${activityId}.csv`}
+                            className="w-full text-center block px-4 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700"
+                        >
+                            Export ข้อมูลทั้งหมดเป็น CSV
+                        </CSVLink>
+                    </div>
+                </div>
             </div>
+            <div className="bg-white p-4 rounded-lg shadow-md">
+                <h2 className="text-xl font-semibold mb-4">เพิ่มนักเรียนรายบุคคล</h2>
+                <form onSubmit={handleAddParticipant} className="space-y-3">
+                    <input type="text" value={form.fullName} onChange={e => setForm({...form, fullName: e.target.value})} placeholder="ชื่อ-สกุล*" className="p-2 border rounded w-full" required />
+                    <input type="text" value={form.studentId} onChange={e => setForm({...form, studentId: e.target.value})} placeholder="รหัสผู้สมัคร" className="p-2 border rounded w-full" />
+                    <input type="text" value={form.nationalId} onChange={e => setForm({...form, nationalId: e.target.value})} placeholder="เลขบัตรประชาชน*" className="p-2 border rounded w-full" required pattern="\d{13}" />
+          <div>
+            <label className="block text-sm text-gray-600 mb-1">สถานะ</label>
+            <select value={form.status} onChange={e => setForm({...form, status: e.target.value})} className="p-2 border rounded w-full">
+              <option value="registered">ลงทะเบียนแล้ว</option>
+              <option value="checked-in">เช็คอินแล้ว</option>
+              <option value="waitlisted">รอคิว</option>
+              <option value="cancelled">ยกเลิกแล้ว</option>
+              <option value="completed">สำเร็จแล้ว</option>
+            </select>
           </div>
-        )}
+                    {activity?.type === 'queue' && (
+                        <>
+                            <select value={form.course} onChange={e => setForm({...form, course: e.target.value})} className="p-2 border rounded w-full" required>
+                                <option value="">เลือกหลักสูตร*</option>
+                                {courseOptions.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                            </select>
+                            <select value={form.timeSlot} onChange={e => setForm({...form, timeSlot: e.target.value})} className="p-2 border rounded w-full" required>
+                                <option value="">เลือกช่วงเวลา*</option>
+                                {timeSlotOptions.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                            </select>
+                             <input type="text" value={form.displayQueueNumber} onChange={e => setForm({...form, displayQueueNumber: e.target.value})} placeholder="กำหนดคิว (ถ้ามี)" className="p-2 border rounded w-full" />
+                        </>
+                    )}
+                    <button type="submit" className="w-full px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700">เพิ่ม</button>
+                </form>
+            </div>
+        </div>
 
         <div className="bg-white rounded-lg shadow-md overflow-x-auto">
+          <div className="p-4 flex justify-end items-center gap-3">
+            {isEditMode ? (
+              <>
+                <button onClick={handleUpdateAll} disabled={isLoading} className="px-4 py-2 bg-green-600 text-white font-semibold rounded-md hover:bg-green-700 disabled:bg-green-300">
+                  {isLoading ? 'กำลังบันทึก...' : 'บันทึกข้อมูลทั้งหมด'}
+                </button>
+                 <button onClick={handleCancelAll} className="px-4 py-2 bg-gray-500 text-white font-semibold rounded-md hover:bg-gray-600">
+                  ยกเลิก
+                </button>
+              </>
+            ) : (
+                 <button onClick={() => setIsEditMode(true)} className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-md hover:bg-blue-700">
+                  แก้ไขข้อมูลทั้งหมด
+                </button>
+            )}
+            <button onClick={handleDeleteAll} disabled={isLoading} className="px-4 py-2 bg-red-600 text-white font-semibold rounded-md hover:bg-red-700 disabled:bg-red-300">
+              {isLoading ? 'กำลังลบ...' : 'ลบข้อมูลทั้งหมด'}
+            </button>
+          </div>
           <table className="w-full text-left text-sm">
-            <thead className="bg-gray-100 sticky top-0">
+            <thead className="bg-gray-100">
                 <tr>
                     <th className="p-2">#</th>
                     <th className="p-2">ชื่อ-สกุล</th>
-                    <th className="p-2">รหัส นศ.</th>
+                    <th className="p-2">รหัสผู้สมัคร</th>
                     <th className="p-2">เลขบัตร ปชช.</th>
                     <th className="p-2">สถานะ</th>
-                    <th className="p-2">เลขที่นั่ง</th>
+                    {activity?.type === 'queue' ? (
+                        <>
+                            <th className="p-2">หลักสูตร</th>
+                            <th className="p-2">ช่วงเวลา</th>
+                            <th className="p-2">คิว</th>
+                        </>
+                    ) : (
+                        <th className="p-2">เลขที่นั่ง</th>
+                    )}
                     <th className="p-2">จัดการ</th>
                 </tr>
             </thead>
             <tbody>
-                {registrants.map((reg, index) => (
-                    <tr key={reg.id} className="border-b hover:bg-gray-50">
+                {registrants.map((reg, index) => {
+                    const isEditing = isEditMode;
+                    return (
+                    <tr key={reg.id} className={`border-b ${isEditing ? 'bg-yellow-50' : 'hover:bg-gray-50'}`}>
                         <td className="p-2">{index + 1}</td>
-                        <td className="p-2 font-medium">
-                            {editingRegistrant === reg.id ? (
-                                <input
-                                    type="text"
-                                    value={editForm.fullName}
-                                    onChange={(e) => handleEditFormChange('fullName', e.target.value)}
-                                    className="p-1 border border-gray-300 rounded w-full"
-                                    placeholder="ชื่อ-สกุล"
-                                />
-                            ) : (
-                                reg.fullName
-                            )}
+                        <td className="p-2">
+                           {isEditing ? (
+                                <input type="text" value={editStates[reg.id]?.fullName || ''} onChange={(e) => handleInputChange(reg.id, 'fullName', e.target.value)} className="p-1 border rounded w-full min-w-[150px]"/>
+                           ) : (
+                                <span>{reg.fullName}</span>
+                           )}
                         </td>
                         <td className="p-2">
-                            {editingRegistrant === reg.id ? (
-                                <input
-                                    type="text"
-                                    value={editForm.studentId}
-                                    onChange={(e) => handleEditFormChange('studentId', e.target.value)}
-                                    className="p-1 border border-gray-300 rounded w-full"
-                                    placeholder="รหัสนักศึกษา"
-                                />
-                            ) : (
-                                reg.studentId
-                            )}
+                           {isEditing ? (
+                                <input type="text" value={editStates[reg.id]?.studentId || ''} onChange={(e) => handleInputChange(reg.id, 'studentId', e.target.value)} className="p-1 border rounded w-full min-w-[100px]"/>
+                           ) : (
+                                <span>{reg.studentId}</span>
+                           )}
+                        </td>
+                         <td className="p-2">
+                           {isEditing ? (
+                                <input type="text" value={editStates[reg.id]?.nationalId || ''} onChange={(e) => handleInputChange(reg.id, 'nationalId', e.target.value)} className="p-1 border rounded w-full min-w-[120px]"/>
+                           ) : (
+                                <span>{reg.nationalId}</span>
+                           )}
                         </td>
                         <td className="p-2">
-                            {editingRegistrant === reg.id ? (
-                                <input
-                                    type="text"
-                                    value={editForm.nationalId}
-                                    onChange={(e) => handleEditFormChange('nationalId', e.target.value)}
-                                    className="p-1 border border-gray-300 rounded w-full"
-                                    placeholder="เลขบัตรประชาชน"
-                                />
-                            ) : (
-                                reg.nationalId
-                            )}
+                          {isEditing ? (
+                            <select value={editStates[reg.id]?.status || 'registered'} onChange={(e) => handleInputChange(reg.id, 'status', e.target.value)} className="p-1 border rounded min-w-[140px]">
+                                <option value="registered">ลงทะเบียนแล้ว</option>
+                                <option value="checked-in">เช็คอินแล้ว</option>
+                                <option value="waitlisted">รอคิว</option>
+                                <option value="cancelled">ยกเลิกแล้ว</option>
+                                <option value="completed">สำเร็จแล้ว</option>
+                            </select>
+                          ) : (
+                            <span>{translateStatus(reg.status)}</span>
+                          )}
                         </td>
-                        <td className="p-2">
-                            <span className={`px-2 py-1 text-xs rounded-full ${reg.status === 'checked-in' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
-                                {translateStatus(reg.status)}
-                            </span>
-                        </td>
-                        <td className="p-2">
-                            <div className="flex items-center gap-2">
-                                <input
-                                    type="text"
-                                    placeholder="ที่นั่ง"
-                                    value={seatInputs[reg.id] || ''}
-                                    onChange={(e) => handleSeatInputChange(reg.id, e.target.value)}
-                                    className="p-2 border border-gray-300 rounded-md w-24"
-                                />
-                                <button
-                                    onClick={() => handleAssignSeat(reg.id)}
-                                    disabled={savingStates[reg.id]}
-                                    className="px-3 py-2 bg-gray-600 text-white text-xs font-semibold rounded-md hover:bg-gray-700 disabled:bg-gray-400"
-                                >
-                                    {savingStates[reg.id] ? '...' : 'บันทึก'}
-                                </button>
-                            </div>
-                        </td>
-                        <td className="p-2">
-                            <div className="flex items-center gap-2">
-                                {editingRegistrant === reg.id ? (
-                                    <>
-                                        <button
-                                            onClick={() => handleSaveEdit(reg.id)}
-                                            disabled={savingStates[reg.id]}
-                                            className="text-green-600 hover:text-green-800 text-sm font-semibold"
-                                        >
-                                            {savingStates[reg.id] ? '...' : 'บันทึก'}
-                                        </button>
-                                        <button
-                                            onClick={handleCancelEdit}
-                                            className="text-gray-500 hover:text-gray-700 text-sm font-semibold"
-                                        >
-                                            ยกเลิก
-                                        </button>
-                                    </>
+                        {activity?.type === 'queue' ? (
+                            <>
+                                <td className="p-2">
+                                    {isEditing ? (
+                                        <select value={editStates[reg.id]?.course || ''} onChange={(e) => handleInputChange(reg.id, 'course', e.target.value)} className="p-1 border rounded w-full min-w-[120px]">
+                                            <option value="">เลือกหลักสูตร</option>
+                                            {courseOptions.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                                        </select>
+                                    ) : (
+                                        <span>{reg.course}</span>
+                                    )}
+                                </td>
+                                <td className="p-2">
+                                     {isEditing ? (
+                                        <select value={editStates[reg.id]?.timeSlot || ''} onChange={(e) => handleInputChange(reg.id, 'timeSlot', e.target.value)} className="p-1 border rounded  min-w-[100px]">
+                                            <option value="">เลือกเวลา</option>
+                                            {timeSlotOptions.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                                        </select>
+                                     ) : (
+                                        <span>{reg.timeSlot}</span>
+                                     )}
+                                </td>
+                                <td className="p-2">
+                                    {isEditing ? (
+                                        <input 
+                                            type="text" 
+                                            value={editStates[reg.id]?.displayQueueNumber || ''} 
+                                            onChange={(e) => handleInputChange(reg.id, 'displayQueueNumber', e.target.value)} 
+                                            className="p-1 border rounded w-24"
+                                            placeholder="เช่น A1"
+                                        />
+                                    ) : (
+                                        <span>{reg.displayQueueNumber}</span>
+                                    )}
+                                </td>
+                            </>
+                        ) : (
+                            <td className="p-2">
+                                {isEditing ? (
+                                    <input type="text" value={editStates[reg.id]?.seatNumber || ''} onChange={(e) => handleInputChange(reg.id, 'seatNumber', e.target.value)} className="p-1 border rounded w-24"/>
                                 ) : (
-                                    <>
-                                        <button
-                                            onClick={() => handleEditClick(reg)}
-                                            className="text-blue-500 hover:text-blue-700 text-sm font-semibold"
-                                        >
-                                            แก้ไข
-                                        </button>
-                                        <button
-                                            onClick={() => handleDeleteRegistrant(reg.id, reg.fullName)}
-                                            className="text-red-500 hover:text-red-700 text-sm font-semibold"
-                                        >
-                                            ลบ
-                                        </button>
-                                    </>
+                                    <span>{reg.seatNumber}</span>
                                 )}
-                            </div>
+                            </td>
+                        )}
+                        <td className="p-2">
+                            <button onClick={() => handleDeleteRegistrant(reg.id)} className="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700">ลบ</button>
                         </td>
                     </tr>
-                ))}
+                )})}
             </tbody>
           </table>
-          {registrants.length === 0 && (
-              <p className="p-6 text-center text-gray-500">ยังไม่มีนักเรียนลงทะเบียนในกิจกรรมนี้</p>
-          )}
+          {registrants.length === 0 && <p className="p-6 text-center text-gray-500">ยังไม่มีนักเรียนลงทะเบียน</p>}
         </div>
       </main>
     </div>
