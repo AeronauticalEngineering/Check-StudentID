@@ -242,19 +242,20 @@ export default function SeatAssignmentPage({ params }) {
                         const lineUserId = await findLineUserId(reg.nationalId);
                         const newRegRef = doc(collection(db, 'registrations'));
             batch.set(newRegRef, {
-                            activityId,
-                            courseId: activity?.courseId || null,
-                            fullName: reg.fullName,
-                            studentId: reg.studentId || null,
-                            nationalId: reg.nationalId,
+              activityId,
+              courseId: activity?.courseId || null,
+              fullName: reg.fullName,
+              studentId: reg.studentId || null,
+              nationalId: reg.nationalId,
               course: reg.course || null,
+              seatNumber: reg.seatNumber || null,
               timeSlot: reg.timeSlot || null,
               status: reg.status || 'registered',
-                            registeredBy: 'admin_csv_import',
-                            registeredAt: serverTimestamp(),
-                            lineUserId: lineUserId,
-                            displayQueueNumber: reg.displayQueueNumber || null,
-                        });
+              registeredBy: 'admin_csv_import',
+              registeredAt: serverTimestamp(),
+              lineUserId: lineUserId,
+              displayQueueNumber: reg.displayQueueNumber || null,
+            });
                     }
                 }
                 await batch.commit();
@@ -270,24 +271,27 @@ export default function SeatAssignmentPage({ params }) {
     });
   };
 
+  // ปรับ header ให้รองรับเลขที่นั่ง (seatNumber) สำหรับกิจกรรมปกติ/ปกติไม่ประเมิน
   const csvExportHeaders = [
-    { label: "fullName", key: "fullName" },
-    { label: "studentId", key: "studentId" },
-    { label: "nationalId", key: "nationalId" },
-    { label: "status", key: "status" },
-    { label: "course", key: "course" },
-    { label: "timeSlot", key: "timeSlot" },
-    { label: "displayQueueNumber", key: "displayQueueNumber" },
+    { label: "ชื่อ-สกุล", key: "fullName" },
+    { label: "รหัสผู้สมัคร", key: "studentId" },
+    { label: "เลขบัตรประชาชน", key: "nationalId" },
+    { label: "สถานะ", key: "status" },
+    { label: "หลักสูตร", key: "course" },
+    { label: "เลขที่นั่ง", key: "seatNumber" },
+    { label: "ช่วงเวลา", key: "timeSlot" },
+    { label: "คิว", key: "displayQueueNumber" },
   ];
 
   const csvExportData = registrants.map(reg => ({
-      fullName: reg.fullName || '',
-      studentId: reg.studentId || '',
-      nationalId: reg.nationalId || '',
-      status: reg.status || 'registered',
-      course: reg.course || '',
-      timeSlot: reg.timeSlot || '',
-      displayQueueNumber: reg.displayQueueNumber || '',
+    fullName: reg.fullName || '',
+    studentId: reg.studentId || '',
+    nationalId: reg.nationalId || '',
+    status: reg.status || 'registered',
+    course: reg.course || '',
+    seatNumber: reg.seatNumber || '',
+    timeSlot: reg.timeSlot || '',
+    displayQueueNumber: reg.displayQueueNumber || '',
   }));
 
   if (isLoading) return <div className="text-center p-10 font-sans">กำลังโหลด...</div>;
@@ -311,9 +315,11 @@ export default function SeatAssignmentPage({ params }) {
                 <h2 className="text-xl font-semibold mb-4">นำเข้าและส่งออกข้อมูล</h2>
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                           นำเข้าไฟล์ CSV (Header: fullName, studentId, nationalId, course, timeSlot, displayQueueNumber)
-                        </label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  นำเข้าไฟล์ CSV (Header: fullName, studentId, nationalId, course, seatNumber, timeSlot, displayQueueNumber)
+                  <br/>
+                  <span className="text-xs text-gray-500">*กิจกรรมปกติ/ปกติ(ไม่ประเมิน) ใช้เฉพาะ fullName, studentId, nationalId, course, seatNumber, status</span>
+                </label>
                         <input 
                             type="file" 
                             accept=".csv" 
@@ -349,19 +355,26 @@ export default function SeatAssignmentPage({ params }) {
               <option value="completed">สำเร็จแล้ว</option>
             </select>
           </div>
-                    {activity?.type === 'queue' && (
-                        <>
-                            <select value={form.course} onChange={e => setForm({...form, course: e.target.value})} className="p-2 border rounded w-full" required>
-                                <option value="">เลือกหลักสูตร*</option>
-                                {courseOptions.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                            </select>
-                            <select value={form.timeSlot} onChange={e => setForm({...form, timeSlot: e.target.value})} className="p-2 border rounded w-full" required>
-                                <option value="">เลือกช่วงเวลา*</option>
-                                {timeSlotOptions.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-                            </select>
-                             <input type="text" value={form.displayQueueNumber} onChange={e => setForm({...form, displayQueueNumber: e.target.value})} placeholder="กำหนดคิว (ถ้ามี)" className="p-2 border rounded w-full" />
-                        </>
-                    )}
+          {/* เพิ่มตัวเลือกหลักสูตรสำหรับทุกกิจกรรม */}
+          <select
+            value={form.course}
+            onChange={e => setForm({ ...form, course: e.target.value })}
+            className="p-2 border rounded w-full"
+            required={activity?.type === 'queue' || activity?.type === 'normal' || activity?.type === 'normal-no-eval'}
+          >
+            <option value="">เลือกหลักสูตร*</option>
+            {courseOptions.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+          </select>
+          {/* เฉพาะกิจกรรม queue ให้เลือกช่วงเวลาและคิว */}
+          {activity?.type === 'queue' && (
+            <>
+              <select value={form.timeSlot} onChange={e => setForm({...form, timeSlot: e.target.value})} className="p-2 border rounded w-full" required>
+                <option value="">เลือกช่วงเวลา*</option>
+                {timeSlotOptions.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+              </select>
+              <input type="text" value={form.displayQueueNumber} onChange={e => setForm({...form, displayQueueNumber: e.target.value})} placeholder="กำหนดคิว (ถ้ามี)" className="p-2 border rounded w-full" />
+            </>
+          )}
                     <button type="submit" className="w-full px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700">เพิ่ม</button>
                 </form>
             </div>
@@ -395,15 +408,16 @@ export default function SeatAssignmentPage({ params }) {
                     <th className="p-2">รหัสผู้สมัคร</th>
                     <th className="p-2">เลขบัตร ปชช.</th>
                     <th className="p-2">สถานะ</th>
-                    {activity?.type === 'queue' ? (
-                        <>
-                            <th className="p-2">หลักสูตร</th>
-                            <th className="p-2">ช่วงเวลา</th>
-                            <th className="p-2">คิว</th>
-                        </>
-                    ) : (
-                        <th className="p-2">เลขที่นั่ง</th>
-                    )}
+          {/* เพิ่มหลักสูตรในทุกกิจกรรม */}
+          <th className="p-2">หลักสูตร</th>
+          {activity?.type === 'queue' ? (
+            <>
+              <th className="p-2">ช่วงเวลา</th>
+              <th className="p-2">คิว</th>
+            </>
+          ) : (
+            <th className="p-2">เลขที่นั่ง</th>
+          )}
                     <th className="p-2">จัดการ</th>
                 </tr>
             </thead>
@@ -447,51 +461,52 @@ export default function SeatAssignmentPage({ params }) {
                             <span>{translateStatus(reg.status)}</span>
                           )}
                         </td>
-                        {activity?.type === 'queue' ? (
-                            <>
-                                <td className="p-2">
-                                    {isEditing ? (
-                                        <select value={editStates[reg.id]?.course || ''} onChange={(e) => handleInputChange(reg.id, 'course', e.target.value)} className="p-1 border rounded w-full min-w-[120px]">
-                                            <option value="">เลือกหลักสูตร</option>
-                                            {courseOptions.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                                        </select>
-                                    ) : (
-                                        <span>{reg.course}</span>
-                                    )}
-                                </td>
-                                <td className="p-2">
-                                     {isEditing ? (
-                                        <select value={editStates[reg.id]?.timeSlot || ''} onChange={(e) => handleInputChange(reg.id, 'timeSlot', e.target.value)} className="p-1 border rounded  min-w-[100px]">
-                                            <option value="">เลือกเวลา</option>
-                                            {timeSlotOptions.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-                                        </select>
-                                     ) : (
-                                        <span>{reg.timeSlot}</span>
-                                     )}
-                                </td>
-                                <td className="p-2">
-                                    {isEditing ? (
-                                        <input 
-                                            type="text" 
-                                            value={editStates[reg.id]?.displayQueueNumber || ''} 
-                                            onChange={(e) => handleInputChange(reg.id, 'displayQueueNumber', e.target.value)} 
-                                            className="p-1 border rounded w-24"
-                                            placeholder="เช่น A1"
-                                        />
-                                    ) : (
-                                        <span>{reg.displayQueueNumber}</span>
-                                    )}
-                                </td>
-                            </>
-                        ) : (
-                            <td className="p-2">
-                                {isEditing ? (
-                                    <input type="text" value={editStates[reg.id]?.seatNumber || ''} onChange={(e) => handleInputChange(reg.id, 'seatNumber', e.target.value)} className="p-1 border rounded w-24"/>
-                                ) : (
-                                    <span>{reg.seatNumber}</span>
-                                )}
-                            </td>
-                        )}
+            {/* หลักสูตร ทุกกิจกรรม */}
+            <td className="p-2">
+              {isEditing ? (
+                <select value={editStates[reg.id]?.course || ''} onChange={(e) => handleInputChange(reg.id, 'course', e.target.value)} className="p-1 border rounded w-full min-w-[120px]">
+                  <option value="">เลือกหลักสูตร</option>
+                  {courseOptions.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                </select>
+              ) : (
+                <span>{reg.course}</span>
+              )}
+            </td>
+            {activity?.type === 'queue' ? (
+              <>
+                <td className="p-2">
+                  {isEditing ? (
+                    <select value={editStates[reg.id]?.timeSlot || ''} onChange={(e) => handleInputChange(reg.id, 'timeSlot', e.target.value)} className="p-1 border rounded  min-w-[100px]">
+                      <option value="">เลือกเวลา</option>
+                      {timeSlotOptions.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                    </select>
+                  ) : (
+                    <span>{reg.timeSlot}</span>
+                  )}
+                </td>
+                <td className="p-2">
+                  {isEditing ? (
+                    <input 
+                      type="text" 
+                      value={editStates[reg.id]?.displayQueueNumber || ''} 
+                      onChange={(e) => handleInputChange(reg.id, 'displayQueueNumber', e.target.value)} 
+                      className="p-1 border rounded w-24"
+                      placeholder="เช่น A1"
+                    />
+                  ) : (
+                    <span>{reg.displayQueueNumber}</span>
+                  )}
+                </td>
+              </>
+            ) : (
+              <td className="p-2">
+                {isEditing ? (
+                  <input type="text" value={editStates[reg.id]?.seatNumber || ''} onChange={(e) => handleInputChange(reg.id, 'seatNumber', e.target.value)} className="p-1 border rounded w-24"/>
+                ) : (
+                  <span>{reg.seatNumber}</span>
+                )}
+              </td>
+            )}
                         <td className="p-2">
                             <button onClick={() => handleDeleteRegistrant(reg.id)} className="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700">ลบ</button>
                         </td>
