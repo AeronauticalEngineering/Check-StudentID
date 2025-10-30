@@ -224,50 +224,70 @@ export default function SeatAssignmentPage({ params }) {
     }
   };
 
+  // Map Thai CSV headers to English keys for import
+  const thaiToEnglishHeaderMap = {
+    'ชื่อ-สกุล': 'fullName',
+    'รหัสผู้สมัคร': 'studentId',
+    'เลขบัตรประชาชน': 'nationalId',
+    'สถานะ': 'status',
+    'หลักสูตร': 'course',
+    'เลขที่นั่ง': 'seatNumber',
+    'ช่วงเวลา': 'timeSlot',
+    'คิว': 'displayQueueNumber',
+  };
+
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     Papa.parse(file, {
-        header: true,
-        skipEmptyLines: true,
-        complete: async (results) => {
-            const newRegistrants = results.data;
-            setMessage(`กำลังนำเข้าข้อมูล ${newRegistrants.length} รายการ...`);
-            
-            try {
-                const batch = writeBatch(db);
-                for (const reg of newRegistrants) {
-                    if (reg.fullName && reg.nationalId) {
-                        const lineUserId = await findLineUserId(reg.nationalId);
-                        const newRegRef = doc(collection(db, 'registrations'));
-            batch.set(newRegRef, {
-              activityId,
-              courseId: activity?.courseId || null,
-              fullName: reg.fullName,
-              studentId: reg.studentId || null,
-              nationalId: reg.nationalId,
-              course: reg.course || null,
-              seatNumber: reg.seatNumber || null,
-              timeSlot: reg.timeSlot || null,
-              status: reg.status || 'registered',
-              registeredBy: 'admin_csv_import',
-              registeredAt: serverTimestamp(),
-              lineUserId: lineUserId,
-              displayQueueNumber: reg.displayQueueNumber || null,
-            });
-                    }
-                }
-                await batch.commit();
-                setMessage(`✅ นำเข้าข้อมูล ${newRegistrants.length} รายการสำเร็จ!`);
-                fetchData();
-            } catch (error) {
-                setMessage(`❌ เกิดข้อผิดพลาดในการนำเข้า: ${error.message}`);
+      header: true,
+      skipEmptyLines: true,
+      complete: async (results) => {
+        // Map Thai headers to English keys
+        const mappedData = results.data.map(row => {
+          const newRow = {};
+          Object.keys(row).forEach(key => {
+            const engKey = thaiToEnglishHeaderMap[key] || key;
+            newRow[engKey] = row[key];
+          });
+          return newRow;
+        });
+        setMessage(`กำลังนำเข้าข้อมูล ${mappedData.length} รายการ...`);
+
+        try {
+          const batch = writeBatch(db);
+          for (const reg of mappedData) {
+            if (reg.fullName && reg.nationalId) {
+              const lineUserId = await findLineUserId(reg.nationalId);
+              const newRegRef = doc(collection(db, 'registrations'));
+              batch.set(newRegRef, {
+                activityId,
+                courseId: activity?.courseId || null,
+                fullName: reg.fullName,
+                studentId: reg.studentId || null,
+                nationalId: reg.nationalId,
+                course: reg.course || null,
+                seatNumber: reg.seatNumber || null,
+                timeSlot: reg.timeSlot || null,
+                status: reg.status || 'registered',
+                registeredBy: 'admin_csv_import',
+                registeredAt: serverTimestamp(),
+                lineUserId: lineUserId,
+                displayQueueNumber: reg.displayQueueNumber || null,
+              });
             }
-        },
-        error: (error) => {
-            setMessage(`❌ เกิดข้อผิดพลาดในการอ่านไฟล์ CSV: ${error.message}`);
+          }
+          await batch.commit();
+          setMessage(`✅ นำเข้าข้อมูล ${mappedData.length} รายการสำเร็จ!`);
+          fetchData();
+        } catch (error) {
+          setMessage(`❌ เกิดข้อผิดพลาดในการนำเข้า: ${error.message}`);
         }
+      },
+      error: (error) => {
+        setMessage(`❌ เกิดข้อผิดพลาดในการอ่านไฟล์ CSV: ${error.message}`);
+      }
     });
   };
 
@@ -314,7 +334,7 @@ export default function SeatAssignmentPage({ params }) {
             <div className="bg-white p-4 rounded-lg shadow-md">
                 <h2 className="text-xl font-semibold mb-4">นำเข้าและส่งออกข้อมูล</h2>
                 <div className="space-y-4">
-                    <div>
+                    <div className='py-4'>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   นำเข้าไฟล์ CSV (Header: fullName, studentId, nationalId, course, seatNumber, timeSlot, displayQueueNumber)
                   <br/>
