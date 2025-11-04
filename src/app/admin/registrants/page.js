@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { db } from '../../../lib/firebase';
-import { collection, getDocs, query, orderBy, doc, updateDoc, deleteDoc, where, writeBatch } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, doc, updateDoc, deleteDoc, where, writeBatch, onSnapshot } from 'firebase/firestore';
 
 export default function AllRegistrantsPage() {
   const [registrations, setRegistrations] = useState([]);
@@ -11,47 +11,94 @@ export default function AllRegistrantsPage() {
   const [editStates, setEditStates] = useState({});
   const [editingId, setEditingId] = useState(null); // ID ของแถวที่กำลังแก้ไข
   const [message, setMessage] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 15;
 
-  const fetchData = async () => {
-    try {
-      const registrationsSnapshot = await getDocs(query(collection(db, 'registrations'), orderBy('registeredAt', 'desc')));
-      
-      const registrantsData = [];
-      const seenNationalIds = new Set();
-      
-      registrationsSnapshot.docs.forEach(doc => {
+  useEffect(() => {
+    setIsLoading(true);
+    
+    // Subscribe to studentProfiles realtime
+    const unsubProfiles = onSnapshot(collection(db, 'studentProfiles'), (profilesSnapshot) => {
+      const profilesMap = new Map();
+      profilesSnapshot.docs.forEach(doc => {
         const data = doc.data();
-        if (data.nationalId && !seenNationalIds.has(data.nationalId)) {
-          registrantsData.push({ id: doc.id, ...data });
-          seenNationalIds.add(data.nationalId);
-        } else if (!data.nationalId) {
-            registrantsData.push({ id: doc.id, ...data });
+        if (data.nationalId) {
+          profilesMap.set(data.nationalId, {
+            id: doc.id,
+            ...data,
+            hasProfile: true,
+            profileId: doc.id,
+            createdAt: data.createdAt
+          });
         }
       });
       
-      setRegistrations(registrantsData);
+      // Subscribe to registrations realtime
+      const unsubRegistrations = onSnapshot(collection(db, 'registrations'), (registrationsSnapshot) => {
+        registrationsSnapshot.docs.forEach(doc => {
+          const data = doc.data();
+          if (data.nationalId) {
+            if (profilesMap.has(data.nationalId)) {
+              // มีใน profiles แล้ว - เพิ่มข้อมูล registrations
+              const existing = profilesMap.get(data.nationalId);
+              existing.hasRegistration = true;
+              existing.registrationId = doc.id;
+              // อัพเดตวันที่ถ้า registration ใหม่กว่า
+              const regTime = data.registeredAt || data.createdAt;
+              if (regTime && (!existing.createdAt || regTime.seconds > existing.createdAt.seconds)) {
+                existing.createdAt = regTime;
+              }
+            } else {
+              // ยังไม่มีใน profiles - สร้างใหม่จาก registration
+              profilesMap.set(data.nationalId, {
+                id: doc.id,
+                ...data,
+                hasRegistration: true,
+                registrationId: doc.id,
+                createdAt: data.registeredAt || data.createdAt
+              });
+            }
+          }
+        });
+        
+        // แปลง Map เป็น Array และเรียงตามวันที่
+        const allData = Array.from(profilesMap.values()).sort((a, b) => {
+          const timeA = a.createdAt?.seconds || 0;
+          const timeB = b.createdAt?.seconds || 0;
+          return timeB - timeA; // เรียงจากใหม่ไปเก่า
+        });
+        
+        setRegistrations(allData);
 
-      const initialEdits = {};
-      registrantsData.forEach(r => {
-        initialEdits[r.id] = { 
-          fullName: r.fullName || '',
-          studentId: r.studentId || '',
-          nationalId: r.nationalId || '',
-          lineUserId: r.lineUserId || '',
-        };
+        const initialEdits = {};
+        allData.forEach(r => {
+          initialEdits[r.id] = { 
+            fullName: r.fullName || '',
+            studentId: r.studentId || '',
+            nationalId: r.nationalId || '',
+            lineUserId: r.lineUserId || '',
+          };
+        });
+        setEditStates(initialEdits);
+        setIsLoading(false);
+      }, (error) => {
+        console.error("Error listening to registrations: ", error);
+        setMessage("เกิดข้อผิดพลาดในการดึงข้อมูล");
+        setIsLoading(false);
       });
-      setEditStates(initialEdits);
-
-    } catch (error) {
-      console.error("Error fetching data: ", error);
+      
+      // Store unsubRegistrations for cleanup
+      return unsubRegistrations;
+    }, (error) => {
+      console.error("Error listening to profiles: ", error);
       setMessage("เกิดข้อผิดพลาดในการดึงข้อมูล");
-    } finally {
       setIsLoading(false);
-    }
-  };
+    });
 
-  useEffect(() => {
-    fetchData();
+    // Cleanup subscriptions
+    return () => {
+      unsubProfiles();
+    };
   }, []);
   
   const handleInputChange = (registrantId, field, value) => {
@@ -63,34 +110,40 @@ export default function AllRegistrantsPage() {
 
   const handleUpdateRegistrant = async (registrantId) => {
     const dataToUpdate = editStates[registrantId];
+    const reg = registrations.find(r => r.id === registrantId);
+    
     try {
-      const registrantDocRef = doc(db, 'registrations', registrantId);
-      await updateDoc(registrantDocRef, dataToUpdate);
+      // อัพเดตทั้งสอง collection ถ้ามีข้อมูลในทั้งคู่
+      if (reg?.profileId) {
+        await updateDoc(doc(db, 'studentProfiles', reg.profileId), dataToUpdate);
+      }
+      if (reg?.registrationId && reg.registrationId !== reg.profileId) {
+        await updateDoc(doc(db, 'registrations', reg.registrationId), dataToUpdate);
+      }
 
       setMessage('✅ อัปเดตข้อมูลสำเร็จ');
       setEditingId(null);
-      fetchData();
       setTimeout(() => setMessage(''), 3000);
     } catch (error)      {
       setMessage(`❌ เกิดข้อผิดพลาด: ${error.message}`);
     }
   };
 
-  const handleDeleteRegistrant = async (nationalIdToDelete) => {
-     if (window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลและทุกการลงทะเบียนของบุคคลนี้?`)) {
+  const handleDeleteRegistrant = async (registrantId) => {
+     const reg = registrations.find(r => r.id === registrantId);
+     
+     if (window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลนี้? ${reg?.hasProfile && reg?.hasRegistration ? '(จะลบทั้ง Profile และ Registration)' : ''}`)) {
         try {
-            const q = query(collection(db, 'registrations'), where("nationalId", "==", nationalIdToDelete));
-            const snapshot = await getDocs(q);
+            // ลบทั้งสอง collection ถ้ามี
+            if (reg?.profileId) {
+              await deleteDoc(doc(db, 'studentProfiles', reg.profileId));
+            }
+            if (reg?.registrationId && reg.registrationId !== reg.profileId) {
+              await deleteDoc(doc(db, 'registrations', reg.registrationId));
+            }
             
-            const batch = writeBatch(db);
-            snapshot.forEach(doc => {
-                batch.delete(doc.ref);
-            });
-            await batch.commit();
-
-            setMessage('✅ ลบข้อมูลทั้งหมดที่เกี่ยวข้องสำเร็จ');
-            fetchData();
-             setTimeout(() => setMessage(''), 3000);
+            setMessage('✅ ลบข้อมูลสำเร็จ');
+            setTimeout(() => setMessage(''), 3000);
         } catch (error) {
             setMessage(`❌ เกิดข้อผิดพลาดในการลบ: ${error.message}`);
         }
@@ -121,6 +174,17 @@ export default function AllRegistrantsPage() {
     );
   });
 
+  // คำนวณข้อมูลสำหรับ pagination
+  const totalPages = Math.ceil(filteredRegistrations.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const currentPageData = filteredRegistrations.slice(startIndex, endIndex);
+
+  // Reset to page 1 when search term changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm]);
+
   if (isLoading) {
     return <div className="text-center p-10 font-sans">กำลังโหลดข้อมูลผู้ลงทะเบียน...</div>;
   }
@@ -130,7 +194,8 @@ export default function AllRegistrantsPage() {
       <main className="max-w-7xl mx-auto">
         <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
           <h1 className="text-3xl font-bold text-gray-800">ข้อมูลนักเรียนทั้งหมด</h1>
-          <div className="w-full md:w-auto">
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-gray-600">ทั้งหมด {filteredRegistrations.length} รายการ</span>
             <input
               type="text"
               placeholder="ค้นหา (ชื่อ, รหัส, Line ID)..."
@@ -152,16 +217,18 @@ export default function AllRegistrantsPage() {
                 <th className="p-3">รหัสนักศึกษา</th>
                 <th className="p-3">เลขบัตรประชาชน</th>
                 <th className="p-3">สถานะ Line</th>
+                <th className="p-3">แหล่งข้อมูล</th>
                 <th className="p-3">วันที่ลงทะเบียนล่าสุด</th>
                 <th className="p-3">จัดการ</th>
               </tr>
             </thead>
             <tbody>
-              {filteredRegistrations.map((reg, index) => {
+              {currentPageData.map((reg, index) => {
                 const isEditing = editingId === reg.id;
+                const globalIndex = startIndex + index + 1; // เลขลำดับที่แท้จริง
                 return(
                 <tr key={reg.id} className={`border-b ${isEditing ? 'bg-yellow-50' : 'hover:bg-gray-50'}`}>
-                  <td className="p-3">{index + 1}</td>
+                  <td className="p-3">{globalIndex}</td>
                   <td className="p-3 font-medium">
                     {isEditing ? (
                         <input type="text" value={editStates[reg.id]?.fullName} onChange={e => handleInputChange(reg.id, 'fullName', e.target.value)} className="p-1 border rounded w-full"/>
@@ -196,8 +263,22 @@ export default function AllRegistrantsPage() {
                         )
                     )}
                   </td>
+                  <td className="p-3">
+                    <div className="flex gap-1">
+                      {reg.hasProfile && (
+                        <span className="px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
+                          Profile
+                        </span>
+                      )}
+                      {reg.hasRegistration && (
+                        <span className="px-2 py-1 text-xs font-semibold rounded-full bg-purple-100 text-purple-800">
+                          Registration
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="p-3 text-gray-500">
-                    {reg.registeredAt ? new Date(reg.registeredAt.seconds * 1000).toLocaleString('th-TH', {
+                    {reg.createdAt ? new Date(reg.createdAt.seconds * 1000).toLocaleString('th-TH', {
                         year: 'numeric', month: 'short', day: 'numeric',
                     }) : '-'}
                   </td>
@@ -210,7 +291,7 @@ export default function AllRegistrantsPage() {
                     ) : (
                         <div className="flex gap-2">
                              <button onClick={() => setEditingId(reg.id)} className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">แก้ไข</button>
-                             <button onClick={() => handleDeleteRegistrant(reg.nationalId)} className="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700">ลบ</button>
+                             <button onClick={() => handleDeleteRegistrant(reg.id)} className="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700">ลบ</button>
                         </div>
                     )}
                   </td>
@@ -224,6 +305,61 @@ export default function AllRegistrantsPage() {
             </p>
           )}
         </div>
+
+        {/* Pagination Controls */}
+        {filteredRegistrations.length > 0 && (
+          <div className="mt-6 flex flex-col md:flex-row justify-between items-center gap-4">
+            <div className="text-sm text-gray-600">
+              แสดง {startIndex + 1} - {Math.min(endIndex, filteredRegistrations.length)} จาก {filteredRegistrations.length} รายการ
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                disabled={currentPage === 1}
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                ← ก่อนหน้า
+              </button>
+              
+              <div className="flex gap-1">
+                {[...Array(totalPages)].map((_, i) => {
+                  const pageNum = i + 1;
+                  // แสดงหน้าปัจจุบัน และหน้าใกล้เคียง ±2
+                  if (
+                    pageNum === 1 || 
+                    pageNum === totalPages || 
+                    (pageNum >= currentPage - 2 && pageNum <= currentPage + 2)
+                  ) {
+                    return (
+                      <button
+                        key={pageNum}
+                        onClick={() => setCurrentPage(pageNum)}
+                        className={`px-3 py-2 rounded-md ${
+                          currentPage === pageNum
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  } else if (pageNum === currentPage - 3 || pageNum === currentPage + 3) {
+                    return <span key={pageNum} className="px-2 py-2">...</span>;
+                  }
+                  return null;
+                })}
+              </div>
+
+              <button
+                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                disabled={currentPage === totalPages}
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                ถัดไป →
+              </button>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

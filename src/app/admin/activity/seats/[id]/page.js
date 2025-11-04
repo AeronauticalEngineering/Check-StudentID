@@ -79,7 +79,13 @@ export default function SeatAssignmentPage({ params }) {
       const q = query(collection(db, 'registrations'), where('activityId', '==', activityId));
       const snapshot = await getDocs(q);
       const registrantsData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      registrantsData.sort((a, b) => (a.fullName || '').localeCompare(b.fullName || ''));
+      // เรียงตาม importOrder (ถ้ามี) หรือ fullName (ถ้าไม่มี)
+      registrantsData.sort((a, b) => {
+        if (a.importOrder !== undefined && b.importOrder !== undefined) {
+          return a.importOrder - b.importOrder;
+        }
+        return (a.fullName || '').localeCompare(b.fullName || '');
+      });
       setRegistrants(registrantsData);
 
       const initialEdits = {};
@@ -256,8 +262,10 @@ export default function SeatAssignmentPage({ params }) {
         setMessage(`กำลังนำเข้าข้อมูล ${mappedData.length} รายการ...`);
 
         try {
+          // นำเข้าข้อมูลตามลำดับใน CSV โดยเพิ่ม importOrder
           const batch = writeBatch(db);
-          for (const reg of mappedData) {
+          for (let i = 0; i < mappedData.length; i++) {
+            const reg = mappedData[i];
             if (reg.fullName && reg.nationalId) {
               const lineUserId = await findLineUserId(reg.nationalId);
               const newRegRef = doc(collection(db, 'registrations'));
@@ -275,12 +283,13 @@ export default function SeatAssignmentPage({ params }) {
                 registeredAt: serverTimestamp(),
                 lineUserId: lineUserId,
                 displayQueueNumber: reg.displayQueueNumber || null,
+                importOrder: i, // เก็บลำดับการนำเข้า
               });
             }
           }
           await batch.commit();
           setMessage(`✅ นำเข้าข้อมูล ${mappedData.length} รายการสำเร็จ!`);
-          fetchData();
+          await fetchData();
         } catch (error) {
           setMessage(`❌ เกิดข้อผิดพลาดในการนำเข้า: ${error.message}`);
         }

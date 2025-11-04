@@ -29,6 +29,8 @@ export default function EvaluationResultPage() {
     const [sourceCounts, setSourceCounts] = useState({});
     const [otherSources, setOtherSources] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [currentPage, setCurrentPage] = useState(1);
+    const itemsPerPage = 10;
 
     useEffect(() => {
         const fetchData = async () => {
@@ -46,12 +48,38 @@ export default function EvaluationResultPage() {
                 // Fetch Evaluations
                 const q = query(collection(db, 'evaluations'), where('activityId', '==', activityId));
                 const querySnapshot = await getDocs(q);
-                const evals = querySnapshot.docs.map(doc => doc.data());
-                setEvaluations(evals);
+                const evals = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                
+                // ดึงข้อมูลนักเรียนจาก studentProfiles เพื่อเติมชื่อและรหัส
+                const enrichedEvals = await Promise.all(evals.map(async (evaluation) => {
+                    if (evaluation.lineUserId) {
+                        try {
+                            const profileQuery = query(
+                                collection(db, 'studentProfiles'), 
+                                where('lineUserId', '==', evaluation.lineUserId)
+                            );
+                            const profileSnapshot = await getDocs(profileQuery);
+                            if (!profileSnapshot.empty) {
+                                const profileData = profileSnapshot.docs[0].data();
+                                return {
+                                    ...evaluation,
+                                    fullName: profileData.fullName || evaluation.fullName,
+                                    studentId: profileData.studentId || evaluation.studentId,
+                                    nationalId: profileData.nationalId || evaluation.nationalId
+                                };
+                            }
+                        } catch (error) {
+                            console.error('Error fetching profile:', error);
+                        }
+                    }
+                    return evaluation;
+                }));
+                
+                setEvaluations(enrichedEvals);
 
                 // Process evaluation data
-                if (evals.length > 0) {
-                    const satCounts = evals.reduce((acc, curr) => {
+                if (enrichedEvals.length > 0) {
+                    const satCounts = enrichedEvals.reduce((acc, curr) => {
                         if (curr.satisfaction) {
                             acc[curr.satisfaction] = (acc[curr.satisfaction] || 0) + 1;
                         }
@@ -61,7 +89,7 @@ export default function EvaluationResultPage() {
 
                     const srcCounts = {};
                     const others = [];
-                    evals.forEach(e => {
+                    enrichedEvals.forEach(e => {
                         if (e.source) {
                             if (sourceOptions.includes(e.source)) {
                                 srcCounts[e.source] = (srcCounts[e.source] || 0) + 1;
@@ -84,6 +112,12 @@ export default function EvaluationResultPage() {
     }, [activityId]);
 
     const getTotalResponses = () => evaluations.length;
+
+    // Pagination
+    const totalPages = Math.ceil(evaluations.length / itemsPerPage);
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    const currentPageData = evaluations.slice(startIndex, endIndex);
 
     if (isLoading) return <p className="text-center p-8">กำลังโหลดข้อมูลการประเมิน...</p>;
     
@@ -164,6 +198,117 @@ export default function EvaluationResultPage() {
                         </div>
                     )}
                 </div>
+            </div>
+
+            {/* รายละเอียดการประเมินของแต่ละคน */}
+            <div className="mt-8 bg-white p-6 rounded-lg shadow">
+                <h3 className="text-lg font-semibold mb-4">รายละเอียดการประเมินทั้งหมด</h3>
+                
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                        <thead className="bg-gray-100">
+                            <tr>
+                                <th className="p-3">#</th>
+                                <th className="p-3">ชื่อ-สกุล</th>
+                                <th className="p-3">รหัสนักเรียน</th>
+                                <th className="p-3">ความพึงพอใจ</th>
+                                <th className="p-3">ช่องทางรับทราบ</th>
+                                <th className="p-3">ความคิดเห็น</th>
+                                <th className="p-3">วันที่ประเมิน</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {currentPageData.map((evaluation, index) => {
+                                const globalIndex = startIndex + index + 1;
+                                return (
+                                    <tr key={index} className="border-b hover:bg-gray-50">
+                                        <td className="p-3">{globalIndex}</td>
+                                        <td className="p-3 font-medium">{evaluation.fullName || '-'}</td>
+                                        <td className="p-3">{evaluation.studentId || '-'}</td>
+                                        <td className="p-3">
+                                            <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                                                evaluation.satisfaction === 'มากที่สุด' ? 'bg-green-100 text-green-800' :
+                                                evaluation.satisfaction === 'มาก' ? 'bg-blue-100 text-blue-800' :
+                                                evaluation.satisfaction === 'ปานกลาง' ? 'bg-yellow-100 text-yellow-800' :
+                                                evaluation.satisfaction === 'น้อย' ? 'bg-orange-100 text-orange-800' :
+                                                evaluation.satisfaction === 'ควรปรับปรุง' ? 'bg-red-100 text-red-800' :
+                                                'bg-gray-100 text-gray-800'
+                                            }`}>
+                                                {evaluation.satisfaction || '-'}
+                                            </span>
+                                        </td>
+                                        <td className="p-3">{evaluation.source || '-'}</td>
+                                        <td className="p-3 max-w-xs">
+                                            <div className="truncate" title={evaluation.comment}>
+                                                {evaluation.comment || '-'}
+                                            </div>
+                                        </td>
+                                        <td className="p-3 text-gray-500 whitespace-nowrap">
+                                            {evaluation.submittedAt ? new Date(evaluation.submittedAt.seconds * 1000).toLocaleString('th-TH', {
+                                                year: 'numeric', month: 'short', day: 'numeric', 
+                                                hour: '2-digit', minute: '2-digit'
+                                            }) : '-'}
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+
+                {/* Pagination Controls */}
+                {evaluations.length > itemsPerPage && (
+                    <div className="mt-6 flex flex-col md:flex-row justify-between items-center gap-4">
+                        <div className="text-sm text-gray-600">
+                            แสดง {startIndex + 1} - {Math.min(endIndex, evaluations.length)} จาก {evaluations.length} รายการ
+                        </div>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                                disabled={currentPage === 1}
+                                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                ← ก่อนหน้า
+                            </button>
+                            
+                            <div className="flex gap-1">
+                                {[...Array(totalPages)].map((_, i) => {
+                                    const pageNum = i + 1;
+                                    if (
+                                        pageNum === 1 || 
+                                        pageNum === totalPages || 
+                                        (pageNum >= currentPage - 2 && pageNum <= currentPage + 2)
+                                    ) {
+                                        return (
+                                            <button
+                                                key={pageNum}
+                                                onClick={() => setCurrentPage(pageNum)}
+                                                className={`px-3 py-2 rounded-md ${
+                                                    currentPage === pageNum
+                                                        ? 'bg-blue-600 text-white'
+                                                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                                }`}
+                                            >
+                                                {pageNum}
+                                            </button>
+                                        );
+                                    } else if (pageNum === currentPage - 3 || pageNum === currentPage + 3) {
+                                        return <span key={pageNum} className="px-2 py-2">...</span>;
+                                    }
+                                    return null;
+                                })}
+                            </div>
+
+                            <button
+                                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                                disabled={currentPage === totalPages}
+                                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                ถัดไป →
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );

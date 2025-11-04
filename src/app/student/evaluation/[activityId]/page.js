@@ -58,6 +58,10 @@ export default function EvaluationPage() {
             await addDoc(collection(db, 'evaluations'), {
                 activityId,
                 userId: liffProfile?.userId || 'unknown',
+                lineUserId: liffProfile?.userId || 'unknown',
+                fullName: liffProfile?.fullName || '',
+                studentId: liffProfile?.studentId || '',
+                nationalId: liffProfile?.nationalId || '',
                 satisfaction: satisfaction,
                 source: finalSource,
                 submittedAt: serverTimestamp()
