@@ -125,6 +125,14 @@ export default function AllRegistrantsPage() {
         await updateDoc(doc(db, 'registrations', reg.registrationId), dataToUpdate);
       }
 
+      // อัพเดท state ชั่วคราว (optimistic update)
+      setRegistrations(prev => prev.map(r =>
+        r.id === registrantId ? { ...r, ...dataToUpdate } : r
+      ));
+      setEditStates(prev => ({
+        ...prev,
+        [registrantId]: { ...prev[registrantId], ...dataToUpdate }
+      }));
       setMessage('✅ อัปเดตข้อมูลสำเร็จ');
       setEditingId(null);
       setTimeout(() => setMessage(''), 3000);
