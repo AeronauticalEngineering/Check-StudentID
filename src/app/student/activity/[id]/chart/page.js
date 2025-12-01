@@ -139,7 +139,11 @@ export default function StudentSeatingChartPage({ params }) {
                             </div>
                             <div className="grid grid-cols-10 gap-1">
                                 {Array.from({ length: 100 }, (_, i) => {
-                                    const seatNum = i + 1;
+                                    // Column-Major Logic: 1, 11, 21... in first row
+                                    const row = Math.floor(i / 10);
+                                    const col = i % 10;
+                                    const seatNum = (col * 10) + row + 1;
+
                                     const runningNumber = (zoneIndex * 100) + seatNum;
                                     const displaySeatLabel = `${zoneChar}${runningNumber.toString().padStart(3, '0')}`;
                                     const registrant = seatMap[displaySeatLabel];

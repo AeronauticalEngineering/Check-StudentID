@@ -341,31 +341,20 @@ export default function SeatAssignmentPage({ params }) {
     setMessage('กำลังจัดที่นั่ง...');
 
     try {
-      // Sort courses by priority (not alphabetically)
-      const sortedCourseOptions = [...courseOptions].sort((a, b) => {
-        const priorityA = a.priority !== undefined ? a.priority : 999;
-        const priorityB = b.priority !== undefined ? b.priority : 999;
-        if (priorityA !== priorityB) return priorityA - priorityB;
-        return a.name.localeCompare(b.name); // Fallback to name if same priority
-      });
-      const courseOrder = sortedCourseOptions.map(c => c.name);
-
+      // Use the current sortConfig to determine the order for assignment
       const sortedRegistrants = [...registrants].sort((a, b) => {
-        const courseA = a.course || '';
-        const courseB = b.course || '';
-
-        const indexA = courseOrder.indexOf(courseA);
-        const indexB = courseOrder.indexOf(courseB);
-
-        if (indexA !== -1 && indexB !== -1) {
-          if (indexA !== indexB) return indexA - indexB;
+        if (sortConfig.key === 'importOrder') {
+          const valA = a.importOrder !== undefined ? a.importOrder : 999999;
+          const valB = b.importOrder !== undefined ? b.importOrder : 999999;
+          return sortConfig.direction === 'asc' ? valA - valB : valB - valA;
         }
 
-        if (indexA !== -1 && indexB === -1) return -1;
-        if (indexA === -1 && indexB !== -1) return 1;
+        const valA = (a[sortConfig.key] || '').toString().toLowerCase();
+        const valB = (b[sortConfig.key] || '').toString().toLowerCase();
 
-        if (courseA !== courseB) return courseA.localeCompare(courseB);
-        return (a.studentId || '').localeCompare(b.studentId || '');
+        if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+        if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+        return 0;
       });
 
       const batch = writeBatch(db);
@@ -648,7 +637,16 @@ export default function SeatAssignmentPage({ params }) {
               </div>
 
               {(activity?.type === 'exam' || activity?.type === 'graduation') && (
-                <div className="pt-2 border-t border-gray-100">
+                <div className="pt-4 border-t border-gray-100">
+                  <div className="flex flex-col gap-2 mb-3">
+                    <button
+                      onClick={() => setSortConfig({ key: 'fullName', direction: 'asc' })}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-xl hover:bg-gray-50 transition-all shadow-sm"
+                    >
+                      <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" /></svg>
+                      เรียงรายชื่อ ก-ฮ (Sort A-Z)
+                    </button>
+                  </div>
                   <button
                     onClick={handleAutoAssign}
                     disabled={isLoading}
@@ -829,10 +827,7 @@ export default function SeatAssignmentPage({ params }) {
                         <>
                           <td className="px-6 py-4 text-gray-600">
                             {isEditing ? (
-                              <select value={editStates[reg.id]?.timeSlot || ''} onChange={(e) => handleInputChange(reg.id, 'timeSlot', e.target.value)} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm">
-                                <option value="">เลือกช่วงเวลา</option>
-                                {timeSlotOptions.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-                              </select>
+                              <select value={editStates[reg.id]?.timeSlot || ''} onChange={(e) => handleInputChange(reg.id, 'timeSlot', e.target.value)} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm" />
                             ) : (
                               <span>{reg.timeSlot}</span>
                             )}
