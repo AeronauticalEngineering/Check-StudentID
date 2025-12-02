@@ -57,6 +57,14 @@ export default function SeatAssignmentPage({ params }) {
 
   // Sorting state
   const [sortConfig, setSortConfig] = useState({ key: 'importOrder', direction: 'asc' });
+  const [showSummary, setShowSummary] = useState(false);
+  const [confirmModal, setConfirmModal] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: null,
+    type: 'danger' // danger, warning, info
+  });
 
   useEffect(() => {
     // Sort by priority first, then by name
@@ -236,6 +244,19 @@ export default function SeatAssignmentPage({ params }) {
     }
 
     try {
+      // Check for duplicate nationalId in this activity
+      const qDuplicate = query(
+        collection(db, 'registrations'), 
+        where('activityId', '==', activityId), 
+        where('nationalId', '==', nationalId)
+      );
+      const duplicateSnapshot = await getDocs(qDuplicate);
+      
+      if (!duplicateSnapshot.empty) {
+        setMessage('❌ ไม่สามารถลงทะเบียนได้: เลขบัตรประชาชนนี้ได้ลงทะเบียนในกิจกรรมนี้ไปแล้ว');
+        return;
+      }
+
       const batch = writeBatch(db);
       let lineUserIdToUse = null;
 
@@ -289,148 +310,171 @@ export default function SeatAssignmentPage({ params }) {
     }
   };
 
-  const handleDeleteRegistrant = async (registrantId) => {
-    if (window.confirm('คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลนี้?')) {
-      try {
-        await deleteDoc(doc(db, 'registrations', registrantId));
-        setMessage('ลบข้อมูลสำเร็จ');
-        fetchData();
-      } catch (error) {
-        setMessage(`เกิดข้อผิดพลาดในการลบ: ${error.message}`);
+  const handleDeleteRegistrant = (registrantId) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'ยืนยันการลบข้อมูล',
+      message: 'คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลนี้?',
+      type: 'danger',
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'registrations', registrantId));
+          setMessage('ลบข้อมูลสำเร็จ');
+          fetchData();
+        } catch (error) {
+          setMessage(`เกิดข้อผิดพลาดในการลบ: ${error.message}`);
+        }
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
       }
-    }
+    });
   };
 
-  const handleDeleteAll = async () => {
-    if (!window.confirm('คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลทั้งหมดสำหรับกิจกรรมนี้? การกระทำนี้ไม่สามารถกู้คืนได้.')) return;
-    setIsLoading(true);
-    setMessage('กำลังลบข้อมูลทั้งหมด...');
-    try {
-      const q = query(collection(db, 'registrations'), where('activityId', '==', activityId));
-      const snapshot = await getDocs(q);
-      if (snapshot.empty) {
-        setMessage('ไม่มีข้อมูลให้ลบ');
-        setIsLoading(false);
-        setTimeout(() => setMessage(''), 3000);
-        return;
-      }
+  const handleDeleteAll = () => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'ยืนยันการลบข้อมูลทั้งหมด',
+      message: 'คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลทั้งหมดสำหรับกิจกรรมนี้? การกระทำนี้ไม่สามารถกู้คืนได้.',
+      type: 'danger',
+      onConfirm: async () => {
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        setIsLoading(true);
+        setMessage('กำลังลบข้อมูลทั้งหมด...');
+        try {
+          const q = query(collection(db, 'registrations'), where('activityId', '==', activityId));
+          const snapshot = await getDocs(q);
+          if (snapshot.empty) {
+            setMessage('ไม่มีข้อมูลให้ลบ');
+            setIsLoading(false);
+            setTimeout(() => setMessage(''), 3000);
+            return;
+          }
 
-      const docs = snapshot.docs;
-      const chunkSize = 400;
-      for (let i = 0; i < docs.length; i += chunkSize) {
-        const batch = writeBatch(db);
-        const chunk = docs.slice(i, i + chunkSize);
-        chunk.forEach(d => batch.delete(doc(db, 'registrations', d.id)));
-        await batch.commit();
-      }
+          const docs = snapshot.docs;
+          const chunkSize = 400;
+          for (let i = 0; i < docs.length; i += chunkSize) {
+            const batch = writeBatch(db);
+            const chunk = docs.slice(i, i + chunkSize);
+            chunk.forEach(d => batch.delete(doc(db, 'registrations', d.id)));
+            await batch.commit();
+          }
 
-      setMessage('✅ ลบข้อมูลทั้งหมดสำเร็จ');
-      fetchData();
-      setTimeout(() => setMessage(''), 3000);
-    } catch (error) {
-      setMessage(`❌ เกิดข้อผิดพลาดในการลบทั้งหมด: ${error.message}`);
-    } finally {
-      setIsLoading(false);
-    }
+          setMessage('✅ ลบข้อมูลทั้งหมดสำเร็จ');
+          fetchData();
+          setTimeout(() => setMessage(''), 3000);
+        } catch (error) {
+          setMessage(`❌ เกิดข้อผิดพลาดในการลบทั้งหมด: ${error.message}`);
+        } finally {
+          setIsLoading(false);
+        }
+      }
+    });
   };
 
-  const handleAutoAssign = async () => {
-    if (!window.confirm('คุณต้องการจัดที่นั่งอัตโนมัติใช่หรือไม่? ข้อมูลเลขที่นั่งเดิมจะถูกเขียนทับ')) return;
+  const handleAutoAssign = () => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'ยืนยันการจัดที่นั่งอัตโนมัติ',
+      message: 'คุณต้องการจัดที่นั่งอัตโนมัติใช่หรือไม่? ข้อมูลเลขที่นั่งเดิมจะถูกเขียนทับ',
+      type: 'warning',
+      onConfirm: async () => {
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        setIsLoading(true);
+        setMessage('กำลังจัดที่นั่ง...');
 
-    setIsLoading(true);
-    setMessage('กำลังจัดที่นั่ง...');
+        try {
+          // Use the current sortConfig to determine the order for assignment
+          const sortedRegistrants = [...registrants].sort((a, b) => {
+            if (sortConfig.key === 'importOrder') {
+              const valA = a.importOrder !== undefined ? a.importOrder : 999999;
+              const valB = b.importOrder !== undefined ? b.importOrder : 999999;
+              return sortConfig.direction === 'asc' ? valA - valB : valB - valA;
+            }
 
-    try {
-      // Use the current sortConfig to determine the order for assignment
-      const sortedRegistrants = [...registrants].sort((a, b) => {
-        if (sortConfig.key === 'importOrder') {
-          const valA = a.importOrder !== undefined ? a.importOrder : 999999;
-          const valB = b.importOrder !== undefined ? b.importOrder : 999999;
-          return sortConfig.direction === 'asc' ? valA - valB : valB - valA;
-        }
+            const valA = (a[sortConfig.key] || '').toString().toLowerCase();
+            const valB = (b[sortConfig.key] || '').toString().toLowerCase();
 
-        const valA = (a[sortConfig.key] || '').toString().toLowerCase();
-        const valB = (b[sortConfig.key] || '').toString().toLowerCase();
+            if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+            if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+            return 0;
+          });
 
-        if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
-        if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
-        return 0;
-      });
+          const batch = writeBatch(db);
+          const updates = [];
+          let currentSeatIndex = 0;
 
-      const batch = writeBatch(db);
-      const updates = [];
-      let currentSeatIndex = 0;
+          if (activity.type === 'exam') {
+            // EXAM Logic: A001-F600
+            const zones = ['A', 'B', 'C', 'D', 'E', 'F'];
+            const seatsPerZone = 100;
 
-      if (activity.type === 'exam') {
-        // EXAM Logic: A001-F600
-        const zones = ['A', 'B', 'C', 'D', 'E', 'F'];
-        const seatsPerZone = 100;
+            for (const reg of sortedRegistrants) {
+              if (currentSeatIndex >= zones.length * seatsPerZone) break;
 
-        for (const reg of sortedRegistrants) {
-          if (currentSeatIndex >= zones.length * seatsPerZone) break;
+              const zoneIndex = Math.floor(currentSeatIndex / seatsPerZone);
+              const seatInZone = (currentSeatIndex % seatsPerZone) + 1;
+              const zoneChar = zones[zoneIndex];
 
-          const zoneIndex = Math.floor(currentSeatIndex / seatsPerZone);
-          const seatInZone = (currentSeatIndex % seatsPerZone) + 1;
-          const zoneChar = zones[zoneIndex];
+              const runningNumber = (zoneIndex * 100) + seatInZone;
+              const seatLabel = `${zoneChar}${runningNumber.toString().padStart(3, '0')}`;
 
-          const runningNumber = (zoneIndex * 100) + seatInZone;
-          const seatLabel = `${zoneChar}${runningNumber.toString().padStart(3, '0')}`;
+              const regRef = doc(db, 'registrations', reg.id);
+              batch.update(regRef, { seatNumber: seatLabel });
 
-          const regRef = doc(db, 'registrations', reg.id);
-          batch.update(regRef, { seatNumber: seatLabel });
+              updates.push({ id: reg.id, seatNumber: seatLabel });
+              currentSeatIndex++;
+            }
+          } else if (activity.type === 'graduation') {
+            // GRADUATION Logic: Theater Style with AJ Locks
+            const ajSeats = new Set([
+              'A1-1', 'B1-10',    // A1
+              'A4-1', 'B4-10',    // A4 (เว้น 2 แถว)
+              'A7-1', 'B7-10',    // A7 (เว้น 2 แถว)
+              'A10-1', 'B10-10',  // A10 (เว้น 2 แถว)
+              'A13-1', 'B13-10',  // A13 (เว้น 2 แถว)
+              'A16-1', 'B16-10'   // A16 (เว้น 2 แถว)
+            ]);
 
-          updates.push({ id: reg.id, seatNumber: seatLabel });
-          currentSeatIndex++;
-        }
-      } else if (activity.type === 'graduation') {
-        // GRADUATION Logic: Theater Style with AJ Locks
-        const ajSeats = new Set([
-          'A6-1', 'B6-10',    // A1
-          'A9-1', 'B9-10',    // A4 (เว้น 2 แถว)
-          'A12-1', 'B12-10',  // A7 (เว้น 2 แถว)
-          'A15-1', 'B15-10',  // A10 (เว้น 2 แถว)
-          'A18-1', 'B18-10',  // A13 (เว้น 2 แถว)
-          'A21-1', 'B21-10'   // A16 (เว้น 2 แถว)
-        ]);
+            const availableSeats = [];
+            // Rows 6 to 23 (A1 to A18)
+            for (let row = 6; row <= 23; row++) {
+              const logicalRow = row - 5;
+              // Zone A (1-10)
+              for (let col = 1; col <= 10; col++) {
+                const seatLabel = `A${logicalRow}-${col}`;
+                if (!ajSeats.has(seatLabel)) availableSeats.push(seatLabel);
+              }
+              // Zone B (1-10)
+              for (let col = 1; col <= 10; col++) {
+                const seatLabel = `B${logicalRow}-${col}`;
+                if (!ajSeats.has(seatLabel)) availableSeats.push(seatLabel);
+              }
+            }
 
-        const availableSeats = [];
-        // Rows 6 to 23 (A1 to A18)
-        for (let row = 6; row <= 23; row++) {
-          // Zone A (1-10)
-          for (let col = 1; col <= 10; col++) {
-            const seatLabel = `A${row}-${col}`;
-            if (!ajSeats.has(seatLabel)) availableSeats.push(seatLabel);
+            for (const reg of sortedRegistrants) {
+              if (currentSeatIndex >= availableSeats.length) break;
+              const seatLabel = availableSeats[currentSeatIndex];
+
+              const regRef = doc(db, 'registrations', reg.id);
+              batch.update(regRef, { seatNumber: seatLabel });
+
+              updates.push({ id: reg.id, seatNumber: seatLabel });
+              currentSeatIndex++;
+            }
           }
-          // Zone B (1-10)
-          for (let col = 1; col <= 10; col++) {
-            const seatLabel = `B${row}-${col}`;
-            if (!ajSeats.has(seatLabel)) availableSeats.push(seatLabel);
-          }
-        }
 
-        for (const reg of sortedRegistrants) {
-          if (currentSeatIndex >= availableSeats.length) break;
-          const seatLabel = availableSeats[currentSeatIndex];
+          await batch.commit();
 
-          const regRef = doc(db, 'registrations', reg.id);
-          batch.update(regRef, { seatNumber: seatLabel });
+          setMessage(`✅ จัดที่นั่งสำเร็จสำหรับ ${updates.length} คน`);
+          fetchData();
 
-          updates.push({ id: reg.id, seatNumber: seatLabel });
-          currentSeatIndex++;
+        } catch (error) {
+          console.error("Auto assign error:", error);
+          setMessage(`เกิดข้อผิดพลาด: ${error.message}`);
+        } finally {
+          setIsLoading(false);
         }
       }
-
-      await batch.commit();
-
-      setMessage(`✅ จัดที่นั่งสำเร็จสำหรับ ${updates.length} คน`);
-      fetchData();
-
-    } catch (error) {
-      console.error("Auto assign error:", error);
-      setMessage(`เกิดข้อผิดพลาด: ${error.message}`);
-    } finally {
-      setIsLoading(false);
-    }
+    });
   };
 
   const handleFileUpload = (e) => {
@@ -464,10 +508,22 @@ export default function SeatAssignmentPage({ params }) {
 
         try {
           const batch = writeBatch(db);
+          
+          // Create a Set of existing national IDs for fast lookup
+          const existingNationalIds = new Set(registrants.map(r => r.nationalId));
+          let skippedCount = 0;
 
           for (let i = 0; i < mappedData.length; i++) {
             const reg = mappedData[i];
             if (reg.fullName && reg.nationalId) {
+              if (existingNationalIds.has(reg.nationalId)) {
+                console.log(`Skipping duplicate nationalId: ${reg.nationalId}`);
+                skippedCount++;
+                continue;
+              }
+              // Add to set to prevent duplicates within the CSV itself
+              existingNationalIds.add(reg.nationalId);
+
               let lineUserIdToUse = null;
 
               const q = query(collection(db, 'studentProfiles'), where('nationalId', '==', reg.nationalId), limit(1));
@@ -514,7 +570,7 @@ export default function SeatAssignmentPage({ params }) {
             }
           }
           await batch.commit();
-          setMessage(`✅ นำเข้าข้อมูล ${mappedData.length} รายการสำเร็จ!`);
+          setMessage(`✅ นำเข้าข้อมูล ${mappedData.length - skippedCount} รายการสำเร็จ! (ข้ามที่ซ้ำ ${skippedCount} รายการ)`);
           await fetchData();
         } catch (error) {
           setMessage(`❌ เกิดข้อผิดพลาดในการนำเข้า: ${error.message}`);
@@ -547,6 +603,35 @@ export default function SeatAssignmentPage({ params }) {
     timeSlot: reg.timeSlot || '',
     displayQueueNumber: reg.displayQueueNumber || '',
   }));
+
+  const stats = {
+    total: registrants.length,
+    byStatus: registrants.reduce((acc, curr) => {
+      const status = curr.status || 'registered';
+      acc[status] = (acc[status] || 0) + 1;
+      return acc;
+    }, {}),
+    byCourse: registrants.reduce((acc, curr) => {
+      const course = curr.course || 'ไม่ระบุ';
+      acc[course] = (acc[course] || 0) + 1;
+      return acc;
+    }, {}),
+    byTimeSlot: registrants.reduce((acc, curr) => {
+      if (activity?.type === 'queue') {
+        const slot = curr.timeSlot || 'ไม่ระบุ';
+        acc[slot] = (acc[slot] || 0) + 1;
+      }
+      return acc;
+    }, {}),
+    byZone: registrants.reduce((acc, curr) => {
+      if (activity?.type !== 'queue' && curr.seatNumber) {
+        const match = curr.seatNumber.match(/^([A-Za-z]+)/);
+        const zone = match ? match[1] : 'Other';
+        acc[zone] = (acc[zone] || 0) + 1;
+      }
+      return acc;
+    }, {})
+  };
 
   if (isLoading) return (
     <div className="flex flex-col justify-center items-center h-screen bg-gray-50">
@@ -714,6 +799,13 @@ export default function SeatAssignmentPage({ params }) {
           <div className="p-5 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-center gap-4 bg-gray-50/30">
             <h3 className="font-bold text-gray-800 text-lg">รายการผู้ลงทะเบียน ({registrants.length})</h3>
             <div className="flex flex-wrap gap-3">
+              <button 
+                onClick={() => setShowSummary(true)}
+                className="px-4 py-2 bg-white border border-purple-200 text-purple-700 text-sm font-medium rounded-xl hover:bg-purple-50 transition-colors shadow-sm flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                รายงานสรุป
+              </button>
               {isEditMode ? (
                 <>
                   <button onClick={handleUpdateAll} disabled={isLoading} className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-xl hover:bg-green-700 disabled:bg-green-300 transition-colors shadow-sm">
@@ -877,6 +969,187 @@ export default function SeatAssignmentPage({ params }) {
           </div>
         </div>
       </main>
+
+      {/* Summary Modal */}
+      {showSummary && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center sticky top-0 bg-white z-10">
+              <div>
+                <h3 className="text-xl font-bold text-gray-800">สรุปข้อมูลการลงทะเบียน</h3>
+                <p className="text-sm text-gray-500">{activity?.name}</p>
+              </div>
+              <button onClick={() => setShowSummary(false)} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+                <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-8">
+              {/* Key Metrics */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                 <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100">
+                    <p className="text-sm text-blue-600 font-medium mb-1">ทั้งหมด</p>
+                    <p className="text-3xl font-bold text-blue-800">{stats.total}</p>
+                    <p className="text-xs text-blue-500 mt-1">คน</p>
+                 </div>
+                 <div className="bg-green-50 p-4 rounded-2xl border border-green-100">
+                    <p className="text-sm text-green-600 font-medium mb-1">เช็คอินแล้ว</p>
+                    <p className="text-3xl font-bold text-green-800">{stats.byStatus['checked-in'] || 0}</p>
+                    <p className="text-xs text-green-500 mt-1">คน</p>
+                 </div>
+                 <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100">
+                    <p className="text-sm text-amber-600 font-medium mb-1">รอคิว</p>
+                    <p className="text-3xl font-bold text-amber-800">{stats.byStatus['waitlisted'] || 0}</p>
+                    <p className="text-xs text-amber-500 mt-1">คน</p>
+                 </div>
+                 <div className="bg-purple-50 p-4 rounded-2xl border border-purple-100">
+                    <p className="text-sm text-purple-600 font-medium mb-1">สำเร็จ</p>
+                    <p className="text-3xl font-bold text-purple-800">{stats.byStatus['completed'] || 0}</p>
+                    <p className="text-xs text-purple-500 mt-1">คน</p>
+                 </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* Status Breakdown */}
+                <div className="bg-gray-50 rounded-2xl p-5">
+                  <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
+                    <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    สถานะการลงทะเบียน
+                  </h4>
+                  <div className="space-y-3">
+                    {Object.entries(stats.byStatus).map(([status, count]) => (
+                      <div key={status} className="flex justify-between items-center p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
+                        <StatusBadge status={status} />
+                        <span className="font-mono font-bold text-gray-700">{count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Course Breakdown */}
+                <div className="bg-gray-50 rounded-2xl p-5">
+                  <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
+                    <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
+                    แยกตามหลักสูตร
+                  </h4>
+                   <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                    {Object.entries(stats.byCourse).sort((a,b) => b[1] - a[1]).map(([course, count]) => (
+                      <div key={course} className="flex justify-between items-center p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
+                        <span className="text-sm text-gray-700 font-medium truncate max-w-[70%]">{course}</span>
+                        <span className="font-mono font-bold text-gray-700 bg-gray-100 px-2 py-1 rounded-lg">{count}</span>
+                      </div>
+                    ))}
+                    {Object.keys(stats.byCourse).length === 0 && (
+                      <p className="text-center text-gray-400 py-4">ไม่พบข้อมูลหลักสูตร</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Time Slot Breakdown (Queue only) */}
+                {activity?.type === 'queue' && (
+                  <div className="bg-gray-50 rounded-2xl p-5">
+                    <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
+                      <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      แยกตามช่วงเวลา
+                    </h4>
+                    <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                      {Object.entries(stats.byTimeSlot).sort((a,b) => b[1] - a[1]).map(([slot, count]) => (
+                        <div key={slot} className="flex justify-between items-center p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
+                          <span className="text-sm text-gray-700 font-medium truncate max-w-[70%]">{slot}</span>
+                          <span className="font-mono font-bold text-gray-700 bg-gray-100 px-2 py-1 rounded-lg">{count}</span>
+                        </div>
+                      ))}
+                      {Object.keys(stats.byTimeSlot).length === 0 && (
+                        <p className="text-center text-gray-400 py-4">ไม่พบข้อมูลช่วงเวลา</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Zone Breakdown (Non-Queue) */}
+                {activity?.type !== 'queue' && Object.keys(stats.byZone).length > 0 && (
+                  <div className="bg-gray-50 rounded-2xl p-5">
+                    <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
+                      <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+                      แยกตามโซนที่นั่ง
+                    </h4>
+                    <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                      {Object.entries(stats.byZone).sort().map(([zone, count]) => (
+                        <div key={zone} className="flex justify-between items-center p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
+                          <span className="text-sm text-gray-700 font-medium">โซน {zone}</span>
+                          <span className="font-mono font-bold text-gray-700 bg-gray-100 px-2 py-1 rounded-lg">{count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-gray-100 bg-gray-50 rounded-b-2xl flex justify-end gap-3">
+               <button onClick={() => setShowSummary(false)} className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors">ปิดหน้าต่าง</button>
+               <CSVLink
+                  data={csvExportData}
+                  headers={csvExportHeaders}
+                  filename={`summary_registrants_${activityId}.csv`}
+                  className="px-5 py-2.5 bg-green-600 text-white font-medium rounded-xl hover:bg-green-700 shadow-lg shadow-green-600/20 flex items-center gap-2 transition-all active:scale-95"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                  Export ข้อมูลทั้งหมด
+                </CSVLink>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Modal */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full overflow-hidden transform transition-all scale-100 opacity-100">
+            <div className="p-6">
+              <div className="flex items-center gap-4 mb-4">
+                <div className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 ${
+                  confirmModal.type === 'danger' ? 'bg-red-100 text-red-600' : 
+                  confirmModal.type === 'warning' ? 'bg-amber-100 text-amber-600' : 
+                  'bg-blue-100 text-blue-600'
+                }`}>
+                  {confirmModal.type === 'danger' && (
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                  )}
+                  {confirmModal.type === 'warning' && (
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                  )}
+                  {confirmModal.type === 'info' && (
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  )}
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">{confirmModal.title}</h3>
+                  <p className="text-sm text-gray-500 mt-1">{confirmModal.message}</p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 mt-6">
+                <button 
+                  onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+                  className="px-4 py-2 bg-white border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors"
+                >
+                  ยกเลิก
+                </button>
+                <button 
+                  onClick={confirmModal.onConfirm}
+                  className={`px-4 py-2 text-white font-medium rounded-xl shadow-lg transition-all active:scale-95 ${
+                    confirmModal.type === 'danger' ? 'bg-red-600 hover:bg-red-700 shadow-red-600/20' : 
+                    confirmModal.type === 'warning' ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/20' : 
+                    'bg-blue-600 hover:bg-blue-700 shadow-blue-600/20'
+                  }`}
+                >
+                  ยืนยัน
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

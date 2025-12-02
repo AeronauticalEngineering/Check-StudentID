@@ -110,9 +110,12 @@ export default function StudentSeatingChartPage({ params }) {
     }, [getRowCourse, courseOptions]);
 
     const ajSeats = {
-        'A6-1': 'AJ1', 'B6-10': 'AJ2', 'A9-1': 'AJ3', 'B9-10': 'AJ4',
-        'A12-1': 'AJ5', 'B12-10': 'AJ6', 'A15-1': 'AJ7', 'B15-10': 'AJ8',
-        'A18-1': 'AJ9', 'B18-10': 'AJ10', 'A21-1': 'AJ11', 'B21-10': 'AJ12',
+        'A1-1': 'AJ1', 'B1-10': 'AJ2',      // A1
+        'A4-1': 'AJ3', 'B4-10': 'AJ4',      // A4 (เว้น 2 แถว)
+        'A7-1': 'AJ5', 'B7-10': 'AJ6',    // A7 (เว้น 2 แถว)
+        'A10-1': 'AJ7', 'B10-10': 'AJ8',    // A10 (เว้น 2 แถว)
+        'A13-1': 'AJ9', 'B13-10': 'AJ10',   // A13 (เว้น 2 แถว)
+        'A16-1': 'AJ11', 'B16-10': 'AJ12',  // A16 (เว้น 2 แถว)
     };
 
     if (isLoading) {
@@ -181,9 +184,17 @@ export default function StudentSeatingChartPage({ params }) {
     const renderTheaterChart = () => {
         return (
             <div className="bg-white rounded-lg shadow-lg p-4 overflow-x-auto">
+                {/* Stage */}
                 <div className="bg-blue-100 border-2 border-blue-200 rounded-lg py-3 mb-2 text-center">
-                    <div className="font-bold text-blue-800">เวที (Stage)</div>
+                    <div className="font-bold text-blue-800">Stage</div>
                 </div>
+
+                {/* Sofa */}
+                <div className="bg-blue-50 border-2 border-blue-100 rounded-lg py-2 mb-4 text-center">
+                    <div className="font-semibold text-blue-600 text-sm">Sofa</div>
+                </div>
+
+                {/* Seating Area */}
                 <div className="flex gap-4 justify-center items-start min-w-[800px]">
                     {/* Zone A */}
                     <div className="flex-1 max-w-md">
@@ -191,15 +202,27 @@ export default function StudentSeatingChartPage({ params }) {
                         <div className="space-y-0.5">
                             {zoneRowConfig.map((config, idx) => (
                                 <div key={idx} className="flex gap-0.5 items-center">
-                                    <div className="w-6 text-xs text-gray-500 text-right pr-1">{config.row}</div>
+                                    {/* Row numbers */}
+                                    <div className="w-6 text-xs text-gray-500 text-right pr-1">
+                                        {config.row > 5 ? config.row - 5 : ''}
+                                    </div>
+
+                                    {/* Seats 1-10 */}
                                     {Array.from({ length: 10 }, (_, col) => {
-                                        const seatLabel = `A${config.row}-${col + 1}`;
+                                        const seatLabel = config.row <= 5 ? `VIP_A${config.row}-${col + 1}` : `A${config.row - 5}-${col + 1}`;
                                         const ajLabel = ajSeats[seatLabel];
                                         const registrant = seatMap[seatLabel];
                                         const isMySeat = seatLabel === mySeatNumber;
                                         const courseColor = registrant ? getCourseColor(registrant.course) : null;
 
-                                        if (ajLabel) return <div key={col} className="w-7 h-7 bg-cyan-400 border border-cyan-600 rounded flex items-center justify-center text-[10px] font-bold text-black shadow-sm z-10">{ajLabel}</div>;
+                                        // AJ Seat Styling
+                                        if (ajLabel) {
+                                            return (
+                                                <div key={col} className="w-7 h-7 bg-cyan-400 border border-cyan-600 rounded flex items-center justify-center text-[10px] font-bold text-black shadow-sm z-10">
+                                                    {ajLabel}
+                                                </div>
+                                            );
+                                        }
 
                                         return (
                                             <div
@@ -221,7 +244,6 @@ export default function StudentSeatingChartPage({ params }) {
                                             </div>
                                         );
                                     })}
-                                    <div className="w-8 text-xs text-gray-500 pl-1">{config.row <= 5 ? `VIP${(config.row * 2) - 1}` : ''}</div>
                                 </div>
                             ))}
                         </div>
@@ -245,15 +267,22 @@ export default function StudentSeatingChartPage({ params }) {
                         <div className="space-y-0.5">
                             {zoneRowConfig.map((config, idx) => (
                                 <div key={idx} className="flex gap-0.5 items-center">
-                                    <div className="w-8 text-xs text-gray-500 text-right pr-1">{config.row <= 5 ? `VIP${config.row * 2}` : ''}</div>
+                                    {/* Seats 1-10 */}
                                     {Array.from({ length: 10 }, (_, col) => {
-                                        const seatLabel = `B${config.row}-${col + 1}`;
+                                        const seatLabel = config.row <= 5 ? `VIP_B${config.row}-${col + 1}` : `B${config.row - 5}-${col + 1}`;
                                         const ajLabel = ajSeats[seatLabel];
                                         const registrant = seatMap[seatLabel];
                                         const isMySeat = seatLabel === mySeatNumber;
                                         const courseColor = registrant ? getCourseColor(registrant.course) : null;
 
-                                        if (ajLabel) return <div key={col} className="w-7 h-7 bg-cyan-400 border border-cyan-600 rounded flex items-center justify-center text-[10px] font-bold text-black shadow-sm z-10">{ajLabel}</div>;
+                                        // AJ Seat Styling
+                                        if (ajLabel) {
+                                            return (
+                                                <div key={col} className="w-7 h-7 bg-cyan-400 border border-cyan-600 rounded flex items-center justify-center text-[10px] font-bold text-black shadow-sm z-10">
+                                                    {ajLabel}
+                                                </div>
+                                            );
+                                        }
 
                                         return (
                                             <div
@@ -275,6 +304,10 @@ export default function StudentSeatingChartPage({ params }) {
                                             </div>
                                         );
                                     })}
+                                    {/* Row numbers */}
+                                    <div className="w-6 text-xs text-gray-500 text-left pl-1">
+                                        {config.row > 5 ? config.row - 5 : ''}
+                                    </div>
                                 </div>
                             ))}
                         </div>

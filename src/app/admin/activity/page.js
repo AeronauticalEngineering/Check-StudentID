@@ -271,6 +271,9 @@ export default function ActivityDashboardPage() {
                       <span className={`px-3 py-1 text-xs font-semibold rounded-full border ${statusConfig.bg} ${statusConfig.textCol} ${statusConfig.border}`}>
                         {statusConfig.text}
                       </span>
+                      <span className="px-3 py-1 text-xs font-semibold rounded-full border bg-gray-50 text-gray-600 border-gray-200">
+                        {activity.type === 'exam' ? 'สอบข้อเขียน' : activity.type === 'interview' ? 'สอบสัมภาษณ์' : activity.type === 'queue' ? 'จองคิว' : activity.type === 'graduation' ? 'งานรับปริญญา' : activity.type === 'event' ? 'กิจกรรมทั่วไป' : 'ไม่ระบุ'}
+                      </span>
                     </div>
 
                     <h3 className="text-lg font-bold text-gray-900 line-clamp-2 mb-4 group-hover:text-primary transition-colors">

@@ -65,8 +65,8 @@ export default function SeatingChartPage({ params }) {
 
         // Check both zones A and B for this row
         for (let col = 1; col <= 10; col++) {
-            const seatA = `A${rowNumber}-${col}`;
-            const seatB = `B${rowNumber}-${col}`;
+            const seatA = `A${rowNumber - 5}-${col}`;
+            const seatB = `B${rowNumber - 5}-${col}`;
 
             const regA = seatMap[seatA];
             const regB = seatMap[seatB];
@@ -139,12 +139,12 @@ export default function SeatingChartPage({ params }) {
     }, [getRowCourse, courseOptions]);
 
     const ajSeats = {
-        'A6-1': 'AJ1', 'B6-10': 'AJ2',      // A1
-        'A9-1': 'AJ3', 'B9-10': 'AJ4',      // A4 (เว้น 2 แถว)
-        'A12-1': 'AJ5', 'B12-10': 'AJ6',    // A7 (เว้น 2 แถว)
-        'A15-1': 'AJ7', 'B15-10': 'AJ8',    // A10 (เว้น 2 แถว)
-        'A18-1': 'AJ9', 'B18-10': 'AJ10',   // A13 (เว้น 2 แถว)
-        'A21-1': 'AJ11', 'B21-10': 'AJ12',  // A16 (เว้น 2 แถว)
+        'A1-1': 'AJ1', 'B1-10': 'AJ2',      // A1
+        'A4-1': 'AJ3', 'B4-10': 'AJ4',      // A4 (เว้น 2 แถว)
+        'A7-1': 'AJ5', 'B7-10': 'AJ6',    // A7 (เว้น 2 แถว)
+        'A10-1': 'AJ7', 'B10-10': 'AJ8',    // A10 (เว้น 2 แถว)
+        'A13-1': 'AJ9', 'B13-10': 'AJ10',   // A13 (เว้น 2 แถว)
+        'A16-1': 'AJ11', 'B16-10': 'AJ12',  // A16 (เว้น 2 แถว)
     };
 
     // Filter by search
@@ -269,11 +269,13 @@ export default function SeatingChartPage({ params }) {
                             {zoneRowConfig.map((config, idx) => (
                                 <div key={idx} className="flex gap-0.5 items-center">
                                     {/* Row numbers */}
-                                    <div className="w-6 text-xs text-gray-500 text-right pr-1">{config.row}</div>
+                                    <div className="w-6 text-xs text-gray-500 text-right pr-1">
+                                        {config.row > 5 ? config.row - 5 : ''}
+                                    </div>
 
                                     {/* Seats 1-10 */}
                                     {Array.from({ length: 10 }, (_, col) => {
-                                        const seatLabel = `A${config.row}-${col + 1}`;
+                                        const seatLabel = config.row <= 5 ? `VIP_A${config.row}-${col + 1}` : `A${config.row - 5}-${col + 1}`;
                                         const ajLabel = ajSeats[seatLabel];
                                         const registrant = seatMap[seatLabel];
                                         const isHighlighted = highlightedSeats.has(seatLabel);
@@ -311,12 +313,6 @@ export default function SeatingChartPage({ params }) {
                                         {config.row <= 5 ? `VIP${(config.row * 2) - 1}` : ''}
                                     </div>
                                 </div>
-                            ))}
-                        </div>
-                        <div className="flex gap-0.5 mt-1">
-                            <div className="w-6"></div>
-                            {Array.from({ length: 10 }, (_, i) => (
-                                <div key={i} className="w-7 text-center text-[10px] text-gray-500">{i + 1}</div>
                             ))}
                         </div>
                     </div>
@@ -362,7 +358,7 @@ export default function SeatingChartPage({ params }) {
 
                                     {/* Seats 1-10 */}
                                     {Array.from({ length: 10 }, (_, col) => {
-                                        const seatLabel = `B${config.row}-${col + 1}`;
+                                        const seatLabel = config.row <= 5 ? `VIP_B${config.row}-${col + 1}` : `B${config.row - 5}-${col + 1}`;
                                         const ajLabel = ajSeats[seatLabel];
                                         const registrant = seatMap[seatLabel];
                                         const isHighlighted = highlightedSeats.has(seatLabel);
@@ -395,11 +391,6 @@ export default function SeatingChartPage({ params }) {
                                         );
                                     })}
                                 </div>
-                            ))}
-                        </div>
-                        <div className="flex gap-0.5 mt-1">
-                            {Array.from({ length: 10 }, (_, i) => (
-                                <div key={i} className="w-7 text-center text-[10px] text-gray-500">{i + 1}</div>
                             ))}
                         </div>
                     </div>
