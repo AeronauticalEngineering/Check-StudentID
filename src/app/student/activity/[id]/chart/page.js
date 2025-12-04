@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, use, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, use, useMemo, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { db } from '../../../../../lib/firebase';
@@ -15,6 +15,9 @@ export default function StudentSeatingChartPage({ params }) {
     const [registrants, setRegistrants] = useState([]);
     const [courseOptions, setCourseOptions] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [showScrollButton, setShowScrollButton] = useState(false);
+    const mySeatRef = useRef(null);
+    const chartContainerRef = useRef(null);
 
     useEffect(() => {
         const fetchData = async () => {
@@ -43,6 +46,63 @@ export default function StudentSeatingChartPage({ params }) {
         fetchData();
         return () => unsubCourses();
     }, [activityId]);
+
+    // Auto-scroll to my seat when data is loaded
+    useEffect(() => {
+        if (!isLoading && mySeatRef.current) {
+            setTimeout(() => {
+                mySeatRef.current?.scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'center',
+                    inline: 'center'
+                });
+            }, 300);
+        }
+    }, [isLoading, mySeatNumber]);
+
+    // Track scroll position to show/hide "Go to My Seat" button
+    useEffect(() => {
+        const handleScroll = () => {
+            if (mySeatRef.current && chartContainerRef.current) {
+                const seatRect = mySeatRef.current.getBoundingClientRect();
+                const containerRect = chartContainerRef.current.getBoundingClientRect();
+
+                // Check if seat is visible in viewport
+                const isVisible = (
+                    seatRect.top >= containerRect.top &&
+                    seatRect.bottom <= containerRect.bottom &&
+                    seatRect.left >= containerRect.left &&
+                    seatRect.right <= containerRect.right
+                );
+
+                setShowScrollButton(!isVisible);
+            }
+        };
+
+        const container = chartContainerRef.current;
+        if (container) {
+            container.addEventListener('scroll', handleScroll);
+            window.addEventListener('scroll', handleScroll);
+            // Initial check
+            handleScroll();
+        }
+
+        return () => {
+            if (container) {
+                container.removeEventListener('scroll', handleScroll);
+            }
+            window.removeEventListener('scroll', handleScroll);
+        };
+    }, [isLoading]);
+
+    // Function to scroll to my seat
+    const scrollToMySeat = () => {
+        mySeatRef.current?.scrollIntoView({
+            behavior: 'smooth',
+            block: 'center',
+            inline: 'center'
+        });
+    };
 
     // Create seat map
     const seatMap = useMemo(() => {
@@ -129,7 +189,7 @@ export default function StudentSeatingChartPage({ params }) {
     const renderExamChart = () => {
         const zones = ['A', 'B', 'C', 'D', 'E', 'F'];
         return (
-            <div className="bg-white rounded-lg shadow-lg p-4 overflow-x-auto">
+            <div className="bg-white rounded-lg shadow-lg p-4 overflow-x-auto" ref={chartContainerRef}>
                 <div className="text-center mb-6">
                     <h2 className="text-xl font-bold text-gray-800">ผังที่นั่งสอบ</h2>
                     <p className="text-sm text-gray-500">ที่นั่งของคุณคือ <span className="font-bold text-primary text-lg">{mySeatNumber}</span></p>
@@ -156,6 +216,7 @@ export default function StudentSeatingChartPage({ params }) {
                                     return (
                                         <div
                                             key={seatNum}
+                                            ref={isMySeat ? mySeatRef : null}
                                             className={`w-8 h-8 border rounded flex items-center justify-center text-[10px] font-bold relative
                                             ${isMySeat ? 'ring-4 ring-red-500 z-30 scale-110 animate-pulse' : ''}
                                             ${registrant ? 'text-white shadow-sm' : 'text-gray-300 bg-white'}`}
@@ -183,21 +244,21 @@ export default function StudentSeatingChartPage({ params }) {
 
     const renderTheaterChart = () => {
         return (
-            <div className="bg-white rounded-lg shadow-lg p-4 overflow-x-auto">
-                {/* Stage */}
-                <div className="bg-blue-100 border-2 border-blue-200 rounded-lg py-3 mb-2 text-center">
+            <div className="bg-white rounded-lg shadow-lg p-4 overflow-x-auto" ref={chartContainerRef}>
+                {/* Stage - Fixed width, no responsive */}
+                <div className="w-[900px] mx-auto bg-blue-100 border-2 border-blue-200 rounded-lg py-3 mb-2 text-center">
                     <div className="font-bold text-blue-800">Stage</div>
                 </div>
 
-                {/* Sofa */}
-                <div className="bg-blue-50 border-2 border-blue-100 rounded-lg py-2 mb-4 text-center">
+                {/* Sofa - Fixed width, no responsive */}
+                <div className="w-[900px] mx-auto bg-blue-50 border-2 border-blue-100 rounded-lg py-2 mb-4 text-center">
                     <div className="font-semibold text-blue-600 text-sm">Sofa</div>
                 </div>
 
                 {/* Seating Area */}
-                <div className="flex gap-4 justify-center items-start min-w-[800px]">
+                <div className="flex gap-4 justify-center items-start w-[900px] mx-auto">
                     {/* Zone A */}
-                    <div className="flex-1 max-w-md">
+                    <div className="w-[350px]">
                         <div className="h-7 flex items-center justify-center font-bold text-sm mb-0.5">Zone A</div>
                         <div className="space-y-0.5">
                             {zoneRowConfig.map((config, idx) => (
@@ -227,6 +288,7 @@ export default function StudentSeatingChartPage({ params }) {
                                         return (
                                             <div
                                                 key={col}
+                                                ref={isMySeat ? mySeatRef : null}
                                                 className={`w-7 h-7 border rounded flex items-center justify-center text-[10px] font-bold transition-all relative
                                                 ${isMySeat ? 'ring-4 ring-red-500 z-30 scale-125 animate-pulse' : ''}
                                                 ${registrant ? 'text-white' : 'text-black/50'}`}
@@ -262,7 +324,7 @@ export default function StudentSeatingChartPage({ params }) {
                     </div>
 
                     {/* Zone B */}
-                    <div className="flex-1 max-w-md">
+                    <div className="w-[350px]">
                         <div className="h-7 flex items-center justify-center font-bold text-sm mb-0.5">Zone B</div>
                         <div className="space-y-0.5">
                             {zoneRowConfig.map((config, idx) => (
@@ -287,6 +349,7 @@ export default function StudentSeatingChartPage({ params }) {
                                         return (
                                             <div
                                                 key={col}
+                                                ref={isMySeat ? mySeatRef : null}
                                                 className={`w-7 h-7 border rounded flex items-center justify-center text-[10px] font-bold transition-all relative
                                                 ${isMySeat ? 'ring-4 ring-red-500 z-30 scale-125 animate-pulse' : ''}
                                                 ${registrant ? 'text-white' : 'text-black/50'}`}
@@ -330,8 +393,23 @@ export default function StudentSeatingChartPage({ params }) {
 
                 {activity?.type === 'exam' ? renderExamChart() : renderTheaterChart()}
 
+                {/* Floating "Go to My Seat" Button */}
+                {showScrollButton && mySeatNumber && (
+                    <button
+                        onClick={scrollToMySeat}
+                        className="fixed bottom-8 right-8 bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-2 transition-all transform hover:scale-105 z-50 animate-bounce"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        <span className="font-bold">ไปยังที่นั่งของฉัน</span>
+                    </button>
+                )}
+
                 <div className="mt-6 text-center text-sm text-gray-500">
                     * ที่นั่งของคุณจะแสดงเป็นสีแดงและมีกรอบกระพริบ
+                    {activity?.type !== 'exam' && <><br />* หากที่นั่งอยู่ใน Zone B ระบบจะเลื่อนไปยังตำแหน่งที่นั่งโดยอัตโนมัติ</>}
                 </div>
             </div>
         </div>
