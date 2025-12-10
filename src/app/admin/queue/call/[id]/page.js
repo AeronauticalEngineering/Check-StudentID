@@ -145,9 +145,9 @@ export default function QueueCallPage() {
             const batch = writeBatch(db);
             const channelRef = doc(db, 'queueChannels', channel.id);
             batch.update(channelRef, { 
-                currentQueueNumber: registrant.queueNumber,
-                currentDisplayQueueNumber: registrant.displayQueueNumber,
-                currentStudentName: registrant.fullName
+                currentQueueNumber: registrant.queueNumber || null,
+                currentDisplayQueueNumber: registrant.displayQueueNumber || null,
+                currentStudentName: registrant.fullName || null
             });
             const regRef = doc(db, 'registrations', registrant.id);
             batch.update(regRef, { calledAt: serverTimestamp() });
@@ -307,6 +307,44 @@ export default function QueueCallPage() {
                                         <span className="font-bold text-primary">{waitingByCourse[course] || 0} คิว</span>
                                     </div>
                                 )) : <p className="text-sm text-gray-500 text-center">ยังไม่มีข้อมูลคิว</p>}
+                            </div>
+                        </div>
+
+                        <div className="bg-white p-5 border rounded-lg shadow-md">
+                            <h3 className="text-lg font-semibold mb-3">รายชื่อผู้รอคิว</h3>
+                            <div className="space-y-3 max-h-96 overflow-y-auto">
+                                {courseOptions.map(course => {
+                                    const waitingList = registrants
+                                        .filter(r => r.course === course && r.status === 'checked-in' && !r.calledAt)
+                                        .sort((a, b) => {
+                                            // Extract numeric part from displayQueueNumber (e.g., "AMT8" -> 8)
+                                            const numA = parseInt(a.displayQueueNumber?.replace(/\D/g, '') || '0');
+                                            const numB = parseInt(b.displayQueueNumber?.replace(/\D/g, '') || '0');
+                                            return numA - numB;
+                                        });
+                                    
+                                    if (waitingList.length === 0) return null;
+                                    
+                                    return (
+                                        <div key={course} className="border-b pb-3 last:border-b-0">
+                                            <h4 className="font-semibold text-gray-700 mb-2 text-sm">{course}</h4>
+                                            <div className="space-y-1">
+                                                {waitingList.map((reg, index) => (
+                                                    <div key={reg.id} className="flex items-center justify-between p-2 bg-gray-50 rounded text-sm hover:bg-gray-100 transition-colors">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="font-bold text-primary min-w-[50px]">{reg.displayQueueNumber}</span>
+                                                            <span className="text-gray-700 truncate">{reg.fullName}</span>
+                                                        </div>
+                                                        <span className="text-xs text-gray-500">ลำดับที่ {index + 1}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                                {registrants.filter(r => r.status === 'checked-in' && !r.calledAt).length === 0 && (
+                                    <p className="text-sm text-gray-500 text-center py-4">ไม่มีผู้รอคิวในขณะนี้</p>
+                                )}
                             </div>
                         </div>
                     </div>
