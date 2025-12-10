@@ -919,7 +919,10 @@ export default function SeatAssignmentPage({ params }) {
                         <>
                           <td className="px-6 py-4 text-gray-600">
                             {isEditing ? (
-                              <select value={editStates[reg.id]?.timeSlot || ''} onChange={(e) => handleInputChange(reg.id, 'timeSlot', e.target.value)} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm" />
+                              <select value={editStates[reg.id]?.timeSlot || ''} onChange={(e) => handleInputChange(reg.id, 'timeSlot', e.target.value)} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm">
+                                <option value="">เลือกช่วงเวลา</option>
+                                {timeSlotOptions.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                              </select>
                             ) : (
                               <span>{reg.timeSlot}</span>
                             )}
