@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { db } from '../../../../../lib/firebase';
 import {
-  doc, getDoc, updateDoc, collection, query, where, getDocs, runTransaction
+  doc, collection, query, where, getDocs, runTransaction
 } from 'firebase/firestore';
 import { useParams } from 'next/navigation';
 
@@ -16,7 +16,7 @@ export default function QueueScannerPage() {
     const [message, setMessage] = useState('');
     const [nationalIdInput, setNationalIdInput] = useState('');
     const qrScannerRef = useRef(null);
-    const isProcessingRef = useRef(false); // [แก้ไข 1] เพิ่ม Ref สำหรับล็อคการประมวลผล
+    const isProcessingRef = useRef(false); // กันการสแกนซ้ำ
 
     useEffect(() => {
         qrScannerRef.current = new Html5Qrcode("reader");
@@ -31,12 +31,14 @@ export default function QueueScannerPage() {
         setMessage('');
         setNationalIdInput('');
         setScannerState('idle');
+        isProcessingRef.current = false; // ปลดล็อคเมื่อเริ่มใหม่
     }
 
     const assignQueue = async (registrationId) => {
         setScannerState('submitting');
         try {
             const result = await runTransaction(db, async (transaction) => {
+                // 1. อ่านข้อมูลการลงทะเบียน (Read: 1 doc)
                 const regRef = doc(db, 'registrations', registrationId);
                 const regDoc = await transaction.get(regRef);
 
@@ -45,25 +47,53 @@ export default function QueueScannerPage() {
                 }
                 
                 const registrationData = regDoc.data();
+                const courseName = registrationData.course;
 
                 if (registrationData.status === 'checked-in') {
                     throw new Error(`นักเรียนคนนี้ได้รับคิวแล้ว (คิวที่ ${registrationData.queueNumber})`);
                 }
                 
-                if (!registrationData.course) {
+                if (!courseName) {
                     throw new Error('นักเรียนยังไม่ได้ถูกกำหนดหลักสูตร');
                 }
 
-                const registrationsRef = collection(db, 'registrations');
-                const q = query(registrationsRef, 
-                    where("activityId", "==", activityId),
-                    where("course", "==", registrationData.course),
-                    where("status", "==", "checked-in")
-                );
-                
-                const checkedInSnapshot = await getDocs(q);
-                const nextQueueNumber = checkedInSnapshot.size + 1;
+                // 2. อ่านข้อมูล Activity เพื่อเอาเลขคิวล่าสุด (Read: 1 doc)
+                // เป็นการ Lock Document นี้ ห้ามใครแย่งเขียนจนกว่าเราจะเสร็จ
+                const activityRef = doc(db, 'activities', activityId);
+                const activityDoc = await transaction.get(activityRef);
 
+                if (!activityDoc.exists()) {
+                    throw new Error('ไม่พบข้อมูลกิจกรรม');
+                }
+
+                const activityData = activityDoc.data();
+                let currentCounters = activityData.queueCounters || {}; // เก็บ Counter แยกตามสาขา
+                let nextQueueNumber;
+
+                // 3. เช็คว่ามี Counter ของสาขานี้หรือยัง?
+                if (currentCounters[courseName] !== undefined) {
+                    // แบบใหม่: ถ้ามีแล้ว ให้เอาค่าเดิม + 1 (เร็ว + ประหยัด Quota)
+                    nextQueueNumber = currentCounters[courseName] + 1;
+                } else {
+                    // แบบเก่า (Fallback): ถ้ายังไม่มี (เพิ่งเริ่มระบบใหม่กลางคัน) ให้นับจาก DB เอา (ช้าหน่อยแต่ทำแค่ครั้งเดียว)
+                    const registrationsRef = collection(db, 'registrations');
+                    const q = query(registrationsRef, 
+                        where("activityId", "==", activityId),
+                        where("course", "==", courseName),
+                        where("status", "==", "checked-in")
+                    );
+                    const checkedInSnapshot = await getDocs(q);
+                    nextQueueNumber = checkedInSnapshot.size + 1;
+                }
+
+                // 4. อัพเดทเลขคิวล่าสุดกลับไปที่ Activity (Write: 1 doc)
+                const newCounters = {
+                    ...currentCounters,
+                    [courseName]: nextQueueNumber
+                };
+                transaction.update(activityRef, { queueCounters: newCounters });
+
+                // 5. อัพเดทสถานะนักเรียน (Write: 1 doc)
                 transaction.update(regRef, { 
                     status: 'checked-in', 
                     queueNumber: nextQueueNumber 
@@ -72,7 +102,7 @@ export default function QueueScannerPage() {
                 return {
                     name: registrationData.fullName,
                     queue: nextQueueNumber,
-                    course: registrationData.course,
+                    course: courseName,
                 };
             });
 
@@ -81,26 +111,25 @@ export default function QueueScannerPage() {
         } catch (err) {
             setMessage(`❌ ${err.message}`);
         } finally {
+            // รอ 3 วินาทีเพื่อให้คนอ่านทัน แล้วค่อยรีเซ็ตหน้า
             setTimeout(() => {
                 resetPage();
-                // [แก้ไข 4] ปลดล็อคหลังจากทำงานเสร็จ (หรือหลังจาก Reset หน้า)
-                isProcessingRef.current = false; 
-            }, 5000);
+            }, 3000);
         }
     };
 
     const handleStartScanner = async () => {
         resetPage();
-        isProcessingRef.current = false; // [แก้ไข 2] รีเซ็ตค่าล็อคเมื่อเริ่มสแกนใหม่
         setScannerState('scanning');
+        
         try {
             await qrScannerRef.current.start(
                 { facingMode: "environment" },
                 { fps: 10, qrbox: { width: 250, height: 250 } },
                 (decodedText) => {
-                    // [แก้ไข 3] เช็คว่ากำลังทำงานอยู่หรือเปล่า ถ้าใช่ให้หยุด
+                    // ล็อกการทำงาน: ถ้ากำลังประมวลผลอยู่ ห้ามทำซ้ำ
                     if (isProcessingRef.current) return;
-                    isProcessingRef.current = true; // ล็อคทันที
+                    isProcessingRef.current = true;
 
                     if (qrScannerRef.current?.isScanning) {
                         qrScannerRef.current.stop().catch(console.error);
@@ -118,7 +147,10 @@ export default function QueueScannerPage() {
     
     const handleManualSearch = async (e) => {
         e.preventDefault();
-        resetPage();
+        
+        if (isProcessingRef.current) return;
+        isProcessingRef.current = true; // ล็อกทันทีที่กด
+
         setScannerState('submitting');
         setMessage('กำลังค้นหา...');
 
@@ -141,10 +173,9 @@ export default function QueueScannerPage() {
             setMessage(`❌ ${err.message}`);
              setTimeout(() => {
                 resetPage();
-            }, 5000);
+            }, 3000);
         }
     };
-
 
     return (
         <div className="max-w-xl mx-auto p-4 md:p-8 font-sans">
@@ -158,7 +189,7 @@ export default function QueueScannerPage() {
                     </button>
                 </div>
 
-                {message && <p className="mt-4 text-center font-bold text-lg">{message}</p>}
+                {message && <p className={`mt-4 text-center font-bold text-lg ${message.startsWith('✅') ? 'text-green-600' : 'text-red-600'}`}>{message}</p>}
 
                 {mode === 'scan' && scannerState === 'idle' && !message && (
                     <button onClick={handleStartScanner} className="text-xl font-semibold text-primary">
@@ -182,7 +213,7 @@ export default function QueueScannerPage() {
                                 className="mt-1 block w-full p-2 border border-gray-300 rounded-md"
                             />
                         </div>
-                        <button type="submit" className="w-full py-2 bg-purple-600 text-white font-semibold rounded-md hover:bg-purple-700">
+                        <button type="submit" className="w-full py-2 bg-purple-600 text-white font-semibold rounded-md hover:bg-purple-700 disabled:opacity-50">
                             ค้นหาและรับคิว
                         </button>
                     </form>
