@@ -5,7 +5,7 @@ import { Html5Qrcode } from 'html5-qrcode';
 import { db } from '../../../../../lib/firebase';
 import {
   doc, collection, query, where, getDocs, runTransaction, orderBy, limit
-} from 'firebase/firestore'; // [แก้ไข 1] เพิ่ม orderBy, limit
+} from 'firebase/firestore';
 import { useParams } from 'next/navigation';
 
 export default function QueueScannerPage() {
@@ -16,7 +16,7 @@ export default function QueueScannerPage() {
     const [message, setMessage] = useState('');
     const [nationalIdInput, setNationalIdInput] = useState('');
     const qrScannerRef = useRef(null);
-    const isProcessingRef = useRef(false);
+    const isProcessingRef = useRef(false); // กันการสแกนซ้ำ
 
     useEffect(() => {
         qrScannerRef.current = new Html5Qrcode("reader");
@@ -57,7 +57,7 @@ export default function QueueScannerPage() {
                     throw new Error('นักเรียนยังไม่ได้ถูกกำหนดหลักสูตร');
                 }
 
-                // 2. อ่านข้อมูล Activity เพื่อเตรียมอัพเดท Counter
+                // 2. อ่านข้อมูล Activity เพื่อดูว่ามีตัวนับ (Counter) หรือยัง
                 const activityRef = doc(db, 'activities', activityId);
                 const activityDoc = await transaction.get(activityRef);
 
@@ -71,40 +71,39 @@ export default function QueueScannerPage() {
 
                 // 3. คำนวณเลขคิวถัดไป
                 if (currentCounters[courseName] !== undefined) {
-                    // กรณีมี Counter แล้ว: ใช้ค่าเดิม + 1
+                    // กรณี A: มีตัวนับล่าสุดอยู่แล้ว -> เอาค่าเดิม + 1 (วิธีที่ถูกต้องที่สุด)
                     nextQueueNumber = currentCounters[courseName] + 1;
                 } else {
-                    // [แก้ไข 2] กรณี "ยังไม่มี Counter" (Fallback)
-                    // เปลี่ยนจาก "นับคนในห้อง" เป็น "หาเลขสูงสุดที่เคยแจกไป"
+                    // กรณี B (Fallback): ยังไม่มีตัวนับ (เช่น เพิ่งเริ่มระบบใหม่ หรือไม่ได้ตั้งค่า)
+                    // [แก้ไขสำคัญ] เปลี่ยนจาก "นับคนในห้อง" เป็น "หาเลขคิวสูงสุดที่เคยแจกไป"
+                    // วิธีนี้จะนับรวมคนที่ Completed ไปแล้วด้วย ทำให้เลขไม่ย้อนกลับมาซ้ำ
                     const registrationsRef = collection(db, 'registrations');
                     const q = query(registrationsRef, 
                         where("activityId", "==", activityId),
                         where("course", "==", courseName),
-                        where("queueNumber", ">", 0), // เอาเฉพาะคนที่มีเลขคิวแล้ว
+                        where("queueNumber", ">", 0), // หาเฉพาะคนที่มีคิวแล้ว
                         orderBy("queueNumber", "desc"), // เรียงจากมากไปน้อย
-                        limit(1) // เอาตัวแรก (ตัวที่มากที่สุด)
+                        limit(1) // เอาตัวแรก (คือตัวที่มากที่สุด)
                     );
                     
-                    // หมายเหตุ: การใช้ query แบบนี้ครั้งแรก Firebase Console อาจฟ้องให้สร้าง Index
-                    // หากเกิด Error ให้เปิด Console แล้วคลิกลิงก์ที่ Firebase แจ้งเตือนเพื่อสร้าง Index ครับ
                     const latestSnapshot = await getDocs(q);
 
                     if (!latestSnapshot.empty) {
                         const maxQueue = latestSnapshot.docs[0].data().queueNumber;
                         nextQueueNumber = maxQueue + 1;
                     } else {
-                        nextQueueNumber = 1; // ถ้ายังไม่มีใครได้คิวเลย เริ่มที่ 1
+                        nextQueueNumber = 1; // ถ้ายังไม่มีใครได้คิวเลย ให้เริ่มที่ 1
                     }
                 }
 
-                // 4. บันทึกค่า Counter ใหม่ลง Activity (เพื่อให้ครั้งหน้าไม่ต้อง Query หาอีก)
+                // 4. บันทึกค่า Counter ใหม่ลง Activity (เพื่อให้ครั้งหน้าทำงานเร็วขึ้นและแม่นยำ)
                 const newCounters = {
                     ...currentCounters,
                     [courseName]: nextQueueNumber
                 };
                 transaction.update(activityRef, { queueCounters: newCounters });
 
-                // 5. บันทึกให้นักเรียน
+                // 5. อัปเดตสถานะและเลขคิวให้นักเรียน
                 transaction.update(regRef, { 
                     status: 'checked-in', 
                     queueNumber: nextQueueNumber 
@@ -121,9 +120,9 @@ export default function QueueScannerPage() {
 
         } catch (err) {
             console.error(err);
-            // แจ้งเตือนถ้าต้องสร้าง Index
+            // แจ้งเตือนกรณีต้องสร้าง Index (จะเกิดขึ้นครั้งแรกที่มีการรัน Query แบบใหม่)
             if (err.message.includes('index')) {
-                setMessage(`❌ ระบบต้องการ Index: กรุณาแจ้ง Admin ให้กดสร้าง Index ใน Firebase Console`);
+                setMessage(`⚠️ ระบบต้องการการตั้งค่า Index: กรุณาเปิด Console (F12) และคลิกลิงก์ที่ Firebase แจ้งเตือนเพื่อสร้าง Index`);
             } else {
                 setMessage(`❌ ${err.message}`);
             }
@@ -143,6 +142,7 @@ export default function QueueScannerPage() {
                 { facingMode: "environment" },
                 { fps: 10, qrbox: { width: 250, height: 250 } },
                 (decodedText) => {
+                    // ล็อกการทำงาน: ถ้ากำลังประมวลผลอยู่ ห้ามทำซ้ำ
                     if (isProcessingRef.current) return;
                     isProcessingRef.current = true;
 
@@ -164,7 +164,7 @@ export default function QueueScannerPage() {
         e.preventDefault();
         
         if (isProcessingRef.current) return;
-        isProcessingRef.current = true;
+        isProcessingRef.current = true; // ล็อกทันทีที่กด
 
         setScannerState('submitting');
         setMessage('กำลังค้นหา...');
