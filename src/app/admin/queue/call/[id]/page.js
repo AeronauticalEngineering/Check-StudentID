@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { db } from '../../../../../lib/firebase';
 import {
-  doc, getDoc, collection, query, where, onSnapshot, updateDoc, writeBatch, serverTimestamp, addDoc, deleteDoc, orderBy, limit, getDocs
+    doc, getDoc, collection, query, where, onSnapshot, updateDoc, writeBatch, serverTimestamp, addDoc, deleteDoc, orderBy, limit, getDocs
 } from 'firebase/firestore';
 import { useParams } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
@@ -61,6 +61,107 @@ export default function QueueCallPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [publicUrl, setPublicUrl] = useState('');
     const [insertingOnChannel, setInsertingOnChannel] = useState(null);
+    const [voiceEnabled, setVoiceEnabled] = useState(true);
+
+    // ฟังก์ชันแปลงเลขคิวเป็นข้อความภาษาไทย
+    const queueToThaiSpeech = (displayQueueNumber) => {
+        if (!displayQueueNumber) return '';
+
+        // แยกตัวอักษรและตัวเลข (เช่น ANE-001 -> ["ANE", "001"])
+        const match = displayQueueNumber.match(/([A-Za-z]+)[- ]?(\d+)/);
+        if (!match) return displayQueueNumber;
+
+        const letters = match[1].toUpperCase();
+        const numbers = match[2];
+
+        // แปลงตัวอักษรเป็นภาษาไทย
+        const letterMap = {
+            'A': 'เอ', 'B': 'บี', 'C': 'ซี', 'D': 'ดี', 'E': 'อี', 'F': 'เอฟ',
+            'G': 'จี', 'H': 'เอช', 'I': 'ไอ', 'J': 'เจ', 'K': 'เค', 'L': 'แอล',
+            'M': 'เอ็ม', 'N': 'เอ็น', 'O': 'โอ', 'P': 'พี', 'Q': 'คิว', 'R': 'อาร์',
+            'S': 'เอส', 'T': 'ที', 'U': 'ยู', 'V': 'วี', 'W': 'ดับเบิ้ลยู',
+            'X': 'เอ็กซ์', 'Y': 'วาย', 'Z': 'แซด'
+        };
+
+        // แปลงตัวเลขเป็นภาษาไทย (อ่านทีละตัว)
+        const digitMap = {
+            '0': 'ศูนย์', '1': 'หนึ่ง', '2': 'สอง', '3': 'สาม', '4': 'สี่',
+            '5': 'ห้า', '6': 'หก', '7': 'เจ็ด', '8': 'แปด', '9': 'เก้า'
+        };
+
+        // สร้างข้อความ (ใช้จุลภาคเพื่อเว้นจังหวะสั้นๆ)
+        let speech = '';
+        for (const char of letters) {
+            speech += (letterMap[char] || char) + ', ';
+        }
+        for (const digit of numbers) {
+            speech += (digitMap[digit] || digit) + ', ';
+        }
+
+        return speech.trim();
+    };
+
+    // ฟังก์ชันแปลงชื่อช่องเป็นคำอ่านภาษาไทย
+    const channelNameToThai = (channelName) => {
+        if (!channelName) return '';
+
+        // Map คำศัพท์ที่ต้องการอ่านเป็นภาษาไทย
+        const wordMap = {
+            'AERO': 'แอโร่',
+            'VIP': 'วีไอพี',
+            'SERVICE': 'เซอร์วิส',
+            'COUNTER': 'เคาน์เตอร์',
+            'DESK': 'เดสก์',
+            'STATION': 'สเตชั่น',
+            'ZONE': 'โซน',
+            'ROOM': 'รูม'
+        };
+
+        // แปลงตัวเลขเป็นภาษาไทย
+        const digitToThai = {
+            '0': 'ศูนย์', '1': 'หนึ่ง', '2': 'สอง', '3': 'สาม', '4': 'สี่',
+            '5': 'ห้า', '6': 'หก', '7': 'เจ็ด', '8': 'แปด', '9': 'เก้า'
+        };
+
+        let result = channelName.toUpperCase();
+
+        // แทนที่คำศัพท์
+        for (const [eng, thai] of Object.entries(wordMap)) {
+            result = result.replace(new RegExp(eng, 'gi'), thai);
+        }
+
+        // แทนที่ตัวเลข (ไม่เว้นวรรค)
+        result = result.replace(/\d/g, (digit) => digitToThai[digit]);
+
+        return result.trim().replace(/\s+/g, '');
+    };
+
+    // ฟังก์ชันอ่านออกเสียง
+    const speakQueueNumber = (displayQueueNumber, channelName) => {
+        if (!voiceEnabled || !('speechSynthesis' in window)) return;
+
+        // หยุดเสียงที่กำลังพูดอยู่
+        window.speechSynthesis.cancel();
+
+        const thaiText = queueToThaiSpeech(displayQueueNumber);
+        const thaiChannelName = channelNameToThai(channelName);
+        const fullText = `เชิญ, หมายเลข, ${thaiText} ที่, ${thaiChannelName}`;
+
+        const utterance = new SpeechSynthesisUtterance(fullText);
+        utterance.lang = 'th-TH';
+        utterance.rate = 0.85; // ความเร็วปกติ (เป็นธรรมชาติกว่า)
+        utterance.pitch = 1; // ระดับเสียง (0 - 2)
+        utterance.volume = 1; // ความดัง (0 - 1)
+
+        // หาเสียงภาษาไทย
+        const voices = window.speechSynthesis.getVoices();
+        const thaiVoice = voices.find(v => v.lang.includes('th'));
+        if (thaiVoice) {
+            utterance.voice = thaiVoice;
+        }
+
+        window.speechSynthesis.speak(utterance);
+    };
 
     // ... (All logic functions like fetchData, findLineUserId, handle... remain unchanged)
     useEffect(() => {
@@ -72,7 +173,7 @@ export default function QueueCallPage() {
     const fetchData = useCallback(async () => {
         if (!activityId) return;
         setIsLoading(true);
-        
+
         const activityRef = doc(db, 'activities', activityId);
         const activitySnap = await getDoc(activityRef);
         if (activitySnap.exists()) setActivity({ id: activitySnap.id, ...activitySnap.data() });
@@ -88,7 +189,7 @@ export default function QueueCallPage() {
             const courses = [...new Set(regData.map(r => r.course).filter(Boolean))];
             setCourseOptions(courses);
         });
-        
+
         setIsLoading(false);
         return () => {
             unsubChannels();
@@ -100,7 +201,7 @@ export default function QueueCallPage() {
         const unsubscribe = fetchData();
         return () => unsubscribe.then(u => u && u());
     }, [fetchData]);
-    
+
     const findLineUserId = async (nationalId) => {
         if (!nationalId) return null;
         const profileQuery = query(collection(db, 'studentProfiles'), where("nationalId", "==", nationalId), limit(1));
@@ -135,16 +236,16 @@ export default function QueueCallPage() {
             await deleteDoc(doc(db, 'queueChannels', channelId));
         }
     };
-    
+
     const callSpecificRegistrant = async (channel, registrant) => {
-         try {
+        try {
             const settingsRef = doc(db, 'systemSettings', 'notifications');
             const settingsSnap = await getDoc(settingsRef);
             const settings = settingsSnap.exists() ? settingsSnap.data() : { onQueueCall: true };
-            
+
             const batch = writeBatch(db);
             const channelRef = doc(db, 'queueChannels', channel.id);
-            batch.update(channelRef, { 
+            batch.update(channelRef, {
                 currentQueueNumber: registrant.queueNumber || null,
                 currentDisplayQueueNumber: registrant.displayQueueNumber || null,
                 currentStudentName: registrant.fullName || null
@@ -152,6 +253,10 @@ export default function QueueCallPage() {
             const regRef = doc(db, 'registrations', registrant.id);
             batch.update(regRef, { calledAt: serverTimestamp() });
             await batch.commit();
+
+            // อ่านออกเสียงเลขคิว
+            const channelName = channel.channelName || `ช่องบริการ ${channel.channelNumber}`;
+            speakQueueNumber(registrant.displayQueueNumber, channelName);
 
             const lineUserId = registrant.lineUserId || await findLineUserId(registrant.nationalId);
             if (settings.onQueueCall && lineUserId) {
@@ -161,7 +266,7 @@ export default function QueueCallPage() {
                     queueNumber: registrant.displayQueueNumber,
                     courseName: registrant.course,
                 });
-                
+
                 const response = await fetch('/api/send-notification', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: lineUserId, flexMessage }) });
                 if (!response.ok) {
                     const errorResult = await response.json();
@@ -189,7 +294,7 @@ export default function QueueCallPage() {
         const nextInQueue = waitingForCourse[0];
         await callSpecificRegistrant(channel, nextInQueue);
     };
-    
+
     const handleRecall = async (channel) => {
         if (!channel.currentQueueNumber) {
             alert('ยังไม่มีคิวที่ถูกเรียกในช่องนี้');
@@ -216,8 +321,33 @@ export default function QueueCallPage() {
         setInsertingOnChannel(null);
     };
 
+    // ฟังก์ชันรีเซ็ต calledAt เพื่อให้คิวกลับมารอใหม่
+    const handleResetCalledAt = async () => {
+        const calledRegistrants = registrants.filter(r => r.status === 'checked-in' && r.calledAt);
+        if (calledRegistrants.length === 0) {
+            alert('ไม่มีคิวที่ถูกเรียกไปแล้ว');
+            return;
+        }
+
+        if (!window.confirm(`ต้องการรีเซ็ต ${calledRegistrants.length} คิวให้กลับมา "รอ" ใหม่หรือไม่?\n\nคิวทั้งหมดที่ถูกเรียกไปแล้วจะกลับมาอยู่ในรายการรอเรียก`)) {
+            return;
+        }
+
+        try {
+            const batch = writeBatch(db);
+            calledRegistrants.forEach(reg => {
+                const regRef = doc(db, 'registrations', reg.id);
+                batch.update(regRef, { calledAt: null });
+            });
+            await batch.commit();
+            alert(`รีเซ็ต ${calledRegistrants.length} คิวสำเร็จ`);
+        } catch (error) {
+            alert(`เกิดข้อผิดพลาด: ${error.message}`);
+        }
+    };
+
     if (isLoading) return <p className="text-center p-8 font-sans">กำลังโหลด...</p>;
-    
+
     const waitingByCourse = courseOptions.reduce((acc, course) => {
         acc[course] = registrants.filter(r => r.course === course && r.status === 'checked-in' && !r.calledAt).length;
         return acc;
@@ -233,14 +363,28 @@ export default function QueueCallPage() {
             )}
             <main className="container mx-auto p-4 md:p-8">
                 <h1 className="text-3xl font-bold mb-6 text-gray-800">เรียกคิวสำหรับ: {activity?.name}</h1>
-                
+
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                     <div className="lg:col-span-2">
                         <div className="flex justify-between items-center mb-6">
                             <h2 className="text-2xl font-semibold text-gray-700">ช่องเรียกคิว</h2>
-                            <button onClick={handleAddChannel} className="flex items-center px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-sm hover:bg-blue-700 transition-colors">
-                                <PlusIcon /> เพิ่มช่อง
-                            </button>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={() => setVoiceEnabled(!voiceEnabled)}
+                                    className={`flex items-center px-4 py-2 font-semibold rounded-lg shadow-sm transition-colors ${voiceEnabled ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-gray-300 text-gray-600 hover:bg-gray-400'}`}
+                                    title={voiceEnabled ? 'ปิดเสียงอ่านคิว' : 'เปิดเสียงอ่านคิว'}
+                                >
+                                    {voiceEnabled ? (
+                                        <svg className="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /></svg>
+                                    ) : (
+                                        <svg className="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" /></svg>
+                                    )}
+                                    {voiceEnabled ? 'เสียงเปิด' : 'เสียงปิด'}
+                                </button>
+                                <button onClick={handleAddChannel} className="flex items-center px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-sm hover:bg-blue-700 transition-colors">
+                                    <PlusIcon /> เพิ่มช่อง
+                                </button>
+                            </div>
                         </div>
                         {/* ✅ Main grid for channels, supports up to 3 columns on extra large screens */}
                         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
@@ -267,10 +411,10 @@ export default function QueueCallPage() {
                                             </button>
                                             <div className="grid grid-cols-2 gap-2">
                                                 <button onClick={() => handleRecall(channel)} className="w-full py-2 flex items-center justify-center bg-card text-white font-semibold rounded-md hover:opacity-90 disabled:bg-gray-400 transition-colors text-sm" disabled={!channel.currentQueueNumber}>
-                                                     เรียกซ้ำ
+                                                    เรียกซ้ำ
                                                 </button>
                                                 <button onClick={() => setInsertingOnChannel(channel.id)} className="w-full py-2 flex items-center justify-center bg-gray-600 text-white font-semibold rounded-md hover:bg-gray-700 transition-colors text-sm">
-                                                      แทรกคิว
+                                                    แทรกคิว
                                                 </button>
                                             </div>
                                         </div>
@@ -286,7 +430,7 @@ export default function QueueCallPage() {
                     </div>
                     {/* Summary Column */}
                     <div className="lg:col-span-1 space-y-6">
-                         <h2 className="text-2xl font-semibold text-gray-700">ข้อมูลสรุป</h2>
+                        <h2 className="text-2xl font-semibold text-gray-700">ข้อมูลสรุป</h2>
                         <div className="bg-white p-5 border rounded-lg shadow-md">
                             <h3 className="text-lg font-semibold mb-3">ลิงก์สำหรับแสดงผลคิว</h3>
                             <div className="flex items-center gap-4">
@@ -298,12 +442,21 @@ export default function QueueCallPage() {
                             </div>
                         </div>
 
-                         <div className="bg-white p-5 border rounded-lg shadow-md">
-                            <h3 className="text-lg font-semibold mb-3">คิวที่รอเรียก</h3>
-                             <div className="space-y-2">
+                        <div className="bg-white p-5 border rounded-lg shadow-md">
+                            <div className="flex justify-between items-center mb-3">
+                                <h3 className="text-lg font-semibold">คิวที่รอเรียก</h3>
+                                <button
+                                    onClick={handleResetCalledAt}
+                                    className="text-xs px-3 py-1 bg-orange-100 text-orange-700 rounded-full hover:bg-orange-200 transition-colors"
+                                    title="รีเซ็ตคิวที่ถูกเรียกแล้วให้กลับมารอใหม่"
+                                >
+                                    🔄 รีเซ็ต
+                                </button>
+                            </div>
+                            <div className="space-y-2">
                                 {courseOptions.length > 0 ? courseOptions.map(course => (
                                     <div key={course} className="flex justify-between items-center p-2 bg-gray-50 rounded">
-                                        <span className="font-medium text-gray-700">{course}:</span> 
+                                        <span className="font-medium text-gray-700">{course}:</span>
                                         <span className="font-bold text-primary">{waitingByCourse[course] || 0} คิว</span>
                                     </div>
                                 )) : <p className="text-sm text-gray-500 text-center">ยังไม่มีข้อมูลคิว</p>}
@@ -322,9 +475,9 @@ export default function QueueCallPage() {
                                             const numB = parseInt(b.displayQueueNumber?.replace(/\D/g, '') || '0');
                                             return numA - numB;
                                         });
-                                    
+
                                     if (waitingList.length === 0) return null;
-                                    
+
                                     return (
                                         <div key={course} className="border-b pb-3 last:border-b-0">
                                             <h4 className="font-semibold text-gray-700 mb-2 text-sm">{course}</h4>

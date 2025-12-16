@@ -58,6 +58,7 @@ export default function SeatAssignmentPage({ params }) {
   // Sorting state
   const [sortConfig, setSortConfig] = useState({ key: 'importOrder', direction: 'asc' });
   const [showSummary, setShowSummary] = useState(false);
+  const [editingCounter, setEditingCounter] = useState(null); // { courseName, value }
   const [confirmModal, setConfirmModal] = useState({
     isOpen: false,
     title: '',
@@ -246,12 +247,12 @@ export default function SeatAssignmentPage({ params }) {
     try {
       // Check for duplicate nationalId in this activity
       const qDuplicate = query(
-        collection(db, 'registrations'), 
-        where('activityId', '==', activityId), 
+        collection(db, 'registrations'),
+        where('activityId', '==', activityId),
         where('nationalId', '==', nationalId)
       );
       const duplicateSnapshot = await getDocs(qDuplicate);
-      
+
       if (!duplicateSnapshot.empty) {
         setMessage('❌ ไม่สามารถลงทะเบียนได้: เลขบัตรประชาชนนี้ได้ลงทะเบียนในกิจกรรมนี้ไปแล้ว');
         return;
@@ -508,7 +509,7 @@ export default function SeatAssignmentPage({ params }) {
 
         try {
           const batch = writeBatch(db);
-          
+
           // Create a Set of existing national IDs for fast lookup
           const existingNationalIds = new Set(registrants.map(r => r.nationalId));
           let skippedCount = 0;
@@ -633,6 +634,78 @@ export default function SeatAssignmentPage({ params }) {
     }, {})
   };
 
+  // ฟังก์ชันอัพเดท Counter คิว
+  const handleUpdateCounter = async () => {
+    if (!editingCounter || !activity) return;
+    try {
+      const activityRef = doc(db, 'activities', activityId);
+      const currentCounters = activity.queueCounters || {};
+      const newCounters = {
+        ...currentCounters,
+        [editingCounter.courseName]: parseInt(editingCounter.value, 10) || 0
+      };
+      await updateDoc(activityRef, { queueCounters: newCounters });
+      setActivity(prev => ({ ...prev, queueCounters: newCounters }));
+      setMessage('✅ บันทึก Counter คิวแล้ว');
+      setEditingCounter(null);
+      setTimeout(() => setMessage(''), 3000);
+    } catch (error) {
+      setMessage(`❌ เกิดข้อผิดพลาด: ${error.message}`);
+    }
+  };
+
+  // ฟังก์ชันรีเซ็ต Counter - คำนวณใหม่จากข้อมูลจริงเพื่อหาเลขที่หายไป
+  const handleResetAllCounters = async () => {
+    // หาหลักสูตรทั้งหมดที่มีในกิจกรรมนี้
+    const coursesInActivity = [...new Set(registrants.map(r => r.course).filter(Boolean))];
+    if (coursesInActivity.length === 0) {
+      setMessage('❌ ไม่มีหลักสูตรที่จะรีเซ็ต');
+      return;
+    }
+
+    // สร้างสรุปว่าแต่ละหลักสูตรจะได้เลขอะไรถัดไป
+    const summaryLines = [];
+    const resetCounters = {};
+
+    coursesInActivity.forEach(courseName => {
+      // ดึงเลขคิวทั้งหมดของหลักสูตรนี้
+      const queueNumbers = registrants
+        .filter(r => r.course === courseName && r.displayQueueNumber)
+        .map(r => parseInt(r.displayQueueNumber.replace(/\D/g, ''), 10) || 0)
+        .filter(n => n > 0)
+        .sort((a, b) => a - b);
+
+      // หาเลขแรกที่หายไป (gap)
+      let nextNumber = 1;
+      for (const num of queueNumbers) {
+        if (num > nextNumber) {
+          // พบ gap - เลข nextNumber หายไป
+          break;
+        }
+        nextNumber = num + 1;
+      }
+
+      // Counter ต้องเป็น nextNumber - 1 เพราะระบบจะ +1 ตอนแจกคิว
+      resetCounters[courseName] = nextNumber - 1;
+
+      const courseInfo = courseOptions.find(c => c.name === courseName);
+      const prefix = courseInfo?.shortName || '';
+      summaryLines.push(`${courseName}: ${prefix}-${String(nextNumber).padStart(3, '0')}`);
+    });
+
+    if (!window.confirm(`รีเซ็ต Counter เพื่อหาเลขที่หายไป:\n\nคิวถัดไป:\n${summaryLines.join('\n')}\n\nดำเนินการต่อ?`)) return;
+
+    try {
+      const activityRef = doc(db, 'activities', activityId);
+      await updateDoc(activityRef, { queueCounters: resetCounters });
+      setActivity(prev => ({ ...prev, queueCounters: resetCounters }));
+      setMessage('✅ รีเซ็ต Counter แล้ว - คิวถัดไปจะเป็นเลขที่หายไป');
+      setTimeout(() => setMessage(''), 3000);
+    } catch (error) {
+      setMessage(`❌ เกิดข้อผิดพลาด: ${error.message}`);
+    }
+  };
+
   if (isLoading) return (
     <div className="flex flex-col justify-center items-center h-screen bg-gray-50">
       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
@@ -682,7 +755,7 @@ export default function SeatAssignmentPage({ params }) {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
           {/* Import/Export Card */}
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
             <div className="flex items-center gap-3 mb-5">
@@ -745,6 +818,84 @@ export default function SeatAssignmentPage({ params }) {
             </div>
           </div>
 
+          {/* Queue Counter Management Card - Only for queue type */}
+          {activity?.type === 'queue' && (
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+              <div className="flex items-center justify-between mb-5">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-purple-50 flex items-center justify-center text-purple-600">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" /></svg>
+                  </div>
+                  <h2 className="text-lg font-bold text-gray-800">จัดการ Counter คิว</h2>
+                </div>
+                <button
+                  onClick={handleResetAllCounters}
+                  className="text-xs text-red-500 hover:text-red-700 hover:underline"
+                >
+                  รีเซ็ตทั้งหมด
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mb-4">ตั้งค่าเลขคิวถัดไปที่จะแจก เมื่อต้องการใช้เลขเดิมซ้ำ สามารถแก้ไข Counter ได้</p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[250px] overflow-y-auto">
+                {/* แสดงเฉพาะหลักสูตรที่มีนักเรียนลงทะเบียนในกิจกรรมนี้ */}
+                {courseOptions.filter(course => registrants.some(r => r.course === course.name)).map(course => {
+                  const currentCounter = activity?.queueCounters?.[course.name] || 0;
+                  const nextQueue = currentCounter + 1;
+                  const isEditing = editingCounter?.courseName === course.name;
+                  const registrantCount = registrants.filter(r => r.course === course.name).length;
+
+                  return (
+                    <div key={course.id} className="bg-gray-50 rounded-lg p-3 border border-gray-100">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: course.color || '#3B82F6' }}></div>
+                        <span className="font-medium text-gray-700 text-sm truncate">{course.name}</span>
+                        <span className="text-xs text-gray-400 font-mono">({course.shortName})</span>
+                        <span className="ml-auto text-xs bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded">{registrantCount} คน</span>
+                      </div>
+
+                      {isEditing ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            value={editingCounter.value}
+                            onChange={(e) => setEditingCounter({ ...editingCounter, value: e.target.value })}
+                            className="w-20 px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none"
+                            min="0"
+                          />
+                          <button onClick={handleUpdateCounter} className="text-green-600 hover:text-green-700 p-1">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                          </button>
+                          <button onClick={() => setEditingCounter(null)} className="text-gray-400 hover:text-gray-600 p-1">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="text-xs text-gray-500">Counter</div>
+                            <div className="font-bold text-gray-800">{currentCounter}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-xs text-gray-500">คิวถัดไป</div>
+                            <div className="font-bold text-purple-600">{course.shortName}-{String(nextQueue).padStart(3, '0')}</div>
+                          </div>
+                          <button
+                            onClick={() => setEditingCounter({ courseName: course.name, value: currentCounter })}
+                            className="text-gray-400 hover:text-purple-600 p-1"
+                            title="แก้ไข Counter"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Add Participant Card */}
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
             <div className="flex items-center gap-3 mb-5">
@@ -799,7 +950,7 @@ export default function SeatAssignmentPage({ params }) {
           <div className="p-5 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-center gap-4 bg-gray-50/30">
             <h3 className="font-bold text-gray-800 text-lg">รายการผู้ลงทะเบียน ({registrants.length})</h3>
             <div className="flex flex-wrap gap-3">
-              <button 
+              <button
                 onClick={() => setShowSummary(true)}
                 className="px-4 py-2 bg-white border border-purple-200 text-purple-700 text-sm font-medium rounded-xl hover:bg-purple-50 transition-colors shadow-sm flex items-center gap-2"
               >
@@ -986,30 +1137,30 @@ export default function SeatAssignmentPage({ params }) {
                 <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
-            
+
             <div className="p-6 space-y-8">
               {/* Key Metrics */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                 <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100">
-                    <p className="text-sm text-blue-600 font-medium mb-1">ทั้งหมด</p>
-                    <p className="text-3xl font-bold text-blue-800">{stats.total}</p>
-                    <p className="text-xs text-blue-500 mt-1">คน</p>
-                 </div>
-                 <div className="bg-green-50 p-4 rounded-2xl border border-green-100">
-                    <p className="text-sm text-green-600 font-medium mb-1">เช็คอินแล้ว</p>
-                    <p className="text-3xl font-bold text-green-800">{stats.byStatus['checked-in'] || 0}</p>
-                    <p className="text-xs text-green-500 mt-1">คน</p>
-                 </div>
-                 <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100">
-                    <p className="text-sm text-amber-600 font-medium mb-1">รอคิว</p>
-                    <p className="text-3xl font-bold text-amber-800">{stats.byStatus['waitlisted'] || 0}</p>
-                    <p className="text-xs text-amber-500 mt-1">คน</p>
-                 </div>
-                 <div className="bg-purple-50 p-4 rounded-2xl border border-purple-100">
-                    <p className="text-sm text-purple-600 font-medium mb-1">สำเร็จ</p>
-                    <p className="text-3xl font-bold text-purple-800">{stats.byStatus['completed'] || 0}</p>
-                    <p className="text-xs text-purple-500 mt-1">คน</p>
-                 </div>
+                <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100">
+                  <p className="text-sm text-blue-600 font-medium mb-1">ทั้งหมด</p>
+                  <p className="text-3xl font-bold text-blue-800">{stats.total}</p>
+                  <p className="text-xs text-blue-500 mt-1">คน</p>
+                </div>
+                <div className="bg-green-50 p-4 rounded-2xl border border-green-100">
+                  <p className="text-sm text-green-600 font-medium mb-1">เช็คอินแล้ว</p>
+                  <p className="text-3xl font-bold text-green-800">{stats.byStatus['checked-in'] || 0}</p>
+                  <p className="text-xs text-green-500 mt-1">คน</p>
+                </div>
+                <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100">
+                  <p className="text-sm text-amber-600 font-medium mb-1">รอคิว</p>
+                  <p className="text-3xl font-bold text-amber-800">{stats.byStatus['waitlisted'] || 0}</p>
+                  <p className="text-xs text-amber-500 mt-1">คน</p>
+                </div>
+                <div className="bg-purple-50 p-4 rounded-2xl border border-purple-100">
+                  <p className="text-sm text-purple-600 font-medium mb-1">สำเร็จ</p>
+                  <p className="text-3xl font-bold text-purple-800">{stats.byStatus['completed'] || 0}</p>
+                  <p className="text-xs text-purple-500 mt-1">คน</p>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -1035,8 +1186,8 @@ export default function SeatAssignmentPage({ params }) {
                     <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
                     แยกตามหลักสูตร
                   </h4>
-                   <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                    {Object.entries(stats.byCourse).sort((a,b) => b[1] - a[1]).map(([course, count]) => (
+                  <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                    {Object.entries(stats.byCourse).sort((a, b) => b[1] - a[1]).map(([course, count]) => (
                       <div key={course} className="flex justify-between items-center p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
                         <span className="text-sm text-gray-700 font-medium truncate max-w-[70%]">{course}</span>
                         <span className="font-mono font-bold text-gray-700 bg-gray-100 px-2 py-1 rounded-lg">{count}</span>
@@ -1056,7 +1207,7 @@ export default function SeatAssignmentPage({ params }) {
                       แยกตามช่วงเวลา
                     </h4>
                     <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                      {Object.entries(stats.byTimeSlot).sort((a,b) => b[1] - a[1]).map(([slot, count]) => (
+                      {Object.entries(stats.byTimeSlot).sort((a, b) => b[1] - a[1]).map(([slot, count]) => (
                         <div key={slot} className="flex justify-between items-center p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
                           <span className="text-sm text-gray-700 font-medium truncate max-w-[70%]">{slot}</span>
                           <span className="font-mono font-bold text-gray-700 bg-gray-100 px-2 py-1 rounded-lg">{count}</span>
@@ -1090,16 +1241,16 @@ export default function SeatAssignmentPage({ params }) {
             </div>
 
             <div className="p-6 border-t border-gray-100 bg-gray-50 rounded-b-2xl flex justify-end gap-3">
-               <button onClick={() => setShowSummary(false)} className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors">ปิดหน้าต่าง</button>
-               <CSVLink
-                  data={csvExportData}
-                  headers={csvExportHeaders}
-                  filename={`summary_registrants_${activityId}.csv`}
-                  className="px-5 py-2.5 bg-green-600 text-white font-medium rounded-xl hover:bg-green-700 shadow-lg shadow-green-600/20 flex items-center gap-2 transition-all active:scale-95"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                  Export ข้อมูลทั้งหมด
-                </CSVLink>
+              <button onClick={() => setShowSummary(false)} className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors">ปิดหน้าต่าง</button>
+              <CSVLink
+                data={csvExportData}
+                headers={csvExportHeaders}
+                filename={`summary_registrants_${activityId}.csv`}
+                className="px-5 py-2.5 bg-green-600 text-white font-medium rounded-xl hover:bg-green-700 shadow-lg shadow-green-600/20 flex items-center gap-2 transition-all active:scale-95"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                Export ข้อมูลทั้งหมด
+              </CSVLink>
             </div>
           </div>
         </div>
@@ -1111,11 +1262,10 @@ export default function SeatAssignmentPage({ params }) {
           <div className="bg-white rounded-2xl shadow-xl max-w-md w-full overflow-hidden transform transition-all scale-100 opacity-100">
             <div className="p-6">
               <div className="flex items-center gap-4 mb-4">
-                <div className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 ${
-                  confirmModal.type === 'danger' ? 'bg-red-100 text-red-600' : 
-                  confirmModal.type === 'warning' ? 'bg-amber-100 text-amber-600' : 
-                  'bg-blue-100 text-blue-600'
-                }`}>
+                <div className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 ${confirmModal.type === 'danger' ? 'bg-red-100 text-red-600' :
+                  confirmModal.type === 'warning' ? 'bg-amber-100 text-amber-600' :
+                    'bg-blue-100 text-blue-600'
+                  }`}>
                   {confirmModal.type === 'danger' && (
                     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
                   )}
@@ -1132,19 +1282,18 @@ export default function SeatAssignmentPage({ params }) {
                 </div>
               </div>
               <div className="flex justify-end gap-3 mt-6">
-                <button 
+                <button
                   onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
                   className="px-4 py-2 bg-white border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors"
                 >
                   ยกเลิก
                 </button>
-                <button 
+                <button
                   onClick={confirmModal.onConfirm}
-                  className={`px-4 py-2 text-white font-medium rounded-xl shadow-lg transition-all active:scale-95 ${
-                    confirmModal.type === 'danger' ? 'bg-red-600 hover:bg-red-700 shadow-red-600/20' : 
-                    confirmModal.type === 'warning' ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/20' : 
-                    'bg-blue-600 hover:bg-blue-700 shadow-blue-600/20'
-                  }`}
+                  className={`px-4 py-2 text-white font-medium rounded-xl shadow-lg transition-all active:scale-95 ${confirmModal.type === 'danger' ? 'bg-red-600 hover:bg-red-700 shadow-red-600/20' :
+                    confirmModal.type === 'warning' ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/20' :
+                      'bg-blue-600 hover:bg-blue-700 shadow-blue-600/20'
+                    }`}
                 >
                   ยืนยัน
                 </button>

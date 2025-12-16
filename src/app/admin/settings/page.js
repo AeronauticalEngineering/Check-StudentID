@@ -26,6 +26,7 @@ export default function SettingsPage() {
     const [message, setMessage] = useState('');
     const [editingCourse, setEditingCourse] = useState(null);
 
+
     const [notificationSettings, setNotificationSettings] = useState({
         onCheckIn: true,
         onCheckOut: true,
@@ -64,11 +65,14 @@ export default function SettingsPage() {
             }
         });
 
+
+
         return () => {
             unsubCategories();
             unsubCourses();
             unsubTimeSlots();
             unsubSettings();
+
         };
     }, []);
 

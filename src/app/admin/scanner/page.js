@@ -5,7 +5,7 @@ import { Html5Qrcode } from 'html5-qrcode';
 import { db } from '../../../lib/firebase';
 import {
   doc, getDoc, updateDoc, collection,
-  serverTimestamp, query, where, getDocs, runTransaction, Timestamp, limit, addDoc
+  serverTimestamp, query, where, getDocs, runTransaction, Timestamp, limit, addDoc, orderBy
 } from 'firebase/firestore';
 import { createCheckInSuccessFlex, createEvaluationRequestFlex, createQueueCheckInSuccessFlex } from '../../../lib/flexMessageTemplates';
 
@@ -173,7 +173,7 @@ export default function UniversalScannerPage() {
       setMessage('กรุณาเลือกกิจกรรมก่อน');
       return;
     }
-    
+
     // [แก้ไข 2] Reset Lock ก่อนเริ่ม
     isProcessingRef.current = false;
 
@@ -235,34 +235,152 @@ export default function UniversalScannerPage() {
 
         if (activity.type === 'queue') {
           if (registration.displayQueueNumber) {
+            // กรณีมี displayQueueNumber อยู่แล้ว (Pre-assigned เช่น ANE-085) 
+            // ตรวจสอบว่าคิวนี้ถูกใช้งานโดยคนอื่นที่เช็คอินแล้วหรือยัง
             const result = await runTransaction(db, async (transaction) => {
               const regRef = doc(db, 'registrations', registration.id);
-              const q = query(collection(db, 'registrations'), where("activityId", "==", activity.id), where("course", "==", registration.course), where("status", "==", "checked-in"));
-              const checkedInSnapshot = await getDocs(q);
-              const nextQueueNumber = checkedInSnapshot.size + 1;
+              const existingDisplayQueue = registration.displayQueueNumber;
 
-              transaction.update(regRef, {
-                status: 'checked-in',
-                queueNumber: nextQueueNumber
-              });
-              return { ...registration, queueNumber: nextQueueNumber };
+              // ตรวจสอบว่ามีคนอื่นใช้คิวนี้และเช็คอินไปแล้วหรือยัง
+              const registrationsRef = collection(db, 'registrations');
+              const duplicateQuery = query(registrationsRef,
+                where("activityId", "==", activity.id),
+                where("displayQueueNumber", "==", existingDisplayQueue),
+                where("status", "in", ["checked-in", "completed"])
+              );
+              const duplicateSnapshot = await getDocs(duplicateQuery);
+
+              let finalDisplayQueue = existingDisplayQueue;
+              let finalQueueNumber;
+
+              if (!duplicateSnapshot.empty) {
+                // มีคนอื่นใช้คิวนี้ไปแล้ว - ต้องสร้างคิวใหม่
+                const courseName = registration.course;
+
+                // หาเลขคิวสูงสุดจาก displayQueueNumber
+                const allRegsQuery = query(registrationsRef,
+                  where("activityId", "==", activity.id),
+                  where("course", "==", courseName)
+                );
+                const allRegsSnapshot = await getDocs(allRegsQuery);
+
+                let maxQueueNumber = 0;
+                allRegsSnapshot.forEach((docSnap) => {
+                  const data = docSnap.data();
+                  if (data.displayQueueNumber) {
+                    const extractedNum = parseInt(data.displayQueueNumber.replace(/\D/g, ''), 10) || 0;
+                    if (extractedNum > maxQueueNumber) {
+                      maxQueueNumber = extractedNum;
+                    }
+                  }
+                  if (data.queueNumber && data.queueNumber > maxQueueNumber) {
+                    maxQueueNumber = data.queueNumber;
+                  }
+                });
+
+                finalQueueNumber = maxQueueNumber + 1;
+
+                // สร้าง displayQueueNumber ใหม่
+                const courseInfo = courseOptions.find(c => c.name === courseName);
+                const prefix = courseInfo?.shortName || '';
+                const paddedNumber = String(finalQueueNumber).padStart(3, '0');
+                finalDisplayQueue = `${prefix}-${paddedNumber}`;
+
+                transaction.update(regRef, {
+                  status: 'checked-in',
+                  queueNumber: finalQueueNumber,
+                  displayQueueNumber: finalDisplayQueue
+                });
+              } else {
+                // ยังไม่มีใครใช้คิวนี้ - ใช้คิวเดิมได้
+                finalQueueNumber = parseInt(existingDisplayQueue.replace(/\D/g, ''), 10) || 0;
+
+                transaction.update(regRef, {
+                  status: 'checked-in',
+                  queueNumber: finalQueueNumber
+                });
+              }
+
+              // อัพเดท Counter ใน Activity
+              const activityRef = doc(db, 'activities', activity.id);
+              const activityDoc = await transaction.get(activityRef);
+              if (activityDoc.exists()) {
+                const activityData = activityDoc.data();
+                const courseName = registration.course;
+                let currentCounters = activityData.queueCounters || {};
+
+                if (finalQueueNumber > (currentCounters[courseName] || 0)) {
+                  const newCounters = { ...currentCounters, [courseName]: finalQueueNumber };
+                  transaction.update(activityRef, { queueCounters: newCounters });
+                }
+              }
+
+              return { ...registration, queueNumber: finalQueueNumber, displayQueueNumber: finalDisplayQueue };
             });
             finalQueueData = result;
             successMessage = `✅ สำเร็จ! ${finalQueueData.fullName} ได้รับคิว ${finalQueueData.displayQueueNumber} (${finalQueueData.course})`;
           } else {
+            // กรณีไม่มี displayQueueNumber - ต้องสร้างใหม่ โดยใช้ queueCounters จาก Activity
             const result = await runTransaction(db, async (transaction) => {
               const regRef = doc(db, 'registrations', registration.id);
               const regDoc = await transaction.get(regRef);
               if (!regDoc.exists()) throw new Error("ไม่พบข้อมูล");
               const regData = regDoc.data();
               if (!regData.course) throw new Error('นักเรียนยังไม่ได้ถูกกำหนดหลักสูตร');
-              const q = query(collection(db, 'registrations'), where("activityId", "==", selectedActivity.id), where("course", "==", regData.course), where("status", "==", "checked-in"));
-              const checkedInSnapshot = await getDocs(q);
-              const nextQueueNumber = checkedInSnapshot.size + 1;
 
-              const courseInfo = courseOptions.find(c => c.name === regData.course);
+              const courseName = regData.course;
+
+              // อ่านข้อมูล Activity เพื่อดูตัวนับ (Counter)
+              const activityRef = doc(db, 'activities', selectedActivity.id);
+              const activityDoc = await transaction.get(activityRef);
+
+              if (!activityDoc.exists()) throw new Error('ไม่พบข้อมูลกิจกรรม');
+
+              const activityData = activityDoc.data();
+              let currentCounters = activityData.queueCounters || {};
+              let nextQueueNumber;
+
+              // ใช้ Counter ที่บันทึกไว้ (รองรับค่า 0 คือรีเซ็ตแล้ว) หรือหาเลขคิวสูงสุดที่เคยแจกไป
+              if (currentCounters[courseName] !== undefined) {
+                // Counter มีค่า (รวม 0 ที่ถูกรีเซ็ต) - ใช้ counter + 1
+                nextQueueNumber = currentCounters[courseName] + 1;
+              } else {
+                // Fallback: หาเลขคิวสูงสุดจาก displayQueueNumber (เพราะข้อมูลที่ import อาจไม่มี queueNumber)
+                const registrationsRef = collection(db, 'registrations');
+                const allRegsQuery = query(registrationsRef,
+                  where("activityId", "==", selectedActivity.id),
+                  where("course", "==", courseName)
+                );
+                const allRegsSnapshot = await getDocs(allRegsQuery);
+
+                let maxQueueNumber = 0;
+                allRegsSnapshot.forEach((docSnap) => {
+                  const data = docSnap.data();
+                  // ดึงเลขจาก displayQueueNumber (เช่น "ANE-086" -> 86)
+                  if (data.displayQueueNumber) {
+                    const extractedNum = parseInt(data.displayQueueNumber.replace(/\D/g, ''), 10) || 0;
+                    if (extractedNum > maxQueueNumber) {
+                      maxQueueNumber = extractedNum;
+                    }
+                  }
+                  // ดึงจาก queueNumber ด้วย (กรณีมีอยู่แล้ว)
+                  if (data.queueNumber && data.queueNumber > maxQueueNumber) {
+                    maxQueueNumber = data.queueNumber;
+                  }
+                });
+
+                nextQueueNumber = maxQueueNumber + 1;
+              }
+
+              // สร้าง displayQueueNumber จาก prefix ของ course (รูปแบบ: ANE-001, ANE-002, ...)
+              const courseInfo = courseOptions.find(c => c.name === courseName);
               const prefix = courseInfo?.shortName || '';
-              const displayQueueNumber = `${prefix}${nextQueueNumber}`;
+              const paddedNumber = String(nextQueueNumber).padStart(3, '0');
+              const displayQueueNumber = `${prefix}-${paddedNumber}`;
+
+              // บันทึก Counter ใหม่ลง Activity
+              const newCounters = { ...currentCounters, [courseName]: nextQueueNumber };
+              transaction.update(activityRef, { queueCounters: newCounters });
 
               transaction.update(regRef, {
                 status: 'checked-in',

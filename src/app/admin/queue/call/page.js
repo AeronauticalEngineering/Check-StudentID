@@ -13,10 +13,19 @@ export default function SelectQueueActivityPage() {
     const fetchQueueActivities = async () => {
       try {
         const activitiesRef = collection(db, 'activities');
+        // ดึงเฉพาะกิจกรรมประเภท queue
         const q = query(activitiesRef, where('type', '==', 'queue'));
         const querySnapshot = await getDocs(q);
         const activities = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setQueueActivities(activities);
+
+        // กรองกิจกรรมที่ยังไม่จบ (วันที่กิจกรรม >= วันนี้)
+        const now = new Date();
+        const ongoingActivities = activities.filter(activity => {
+          const activityDate = activity.activityDate?.toDate();
+          return !activityDate || activityDate >= now;
+        });
+
+        setQueueActivities(ongoingActivities);
       } catch (error) {
         console.error("Error fetching queue activities:", error);
       } finally {
