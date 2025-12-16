@@ -56,6 +56,7 @@ export default function UniversalScannerPage() {
   const [seatNumberInput, setSeatNumberInput] = useState('');
   const [message, setMessage] = useState('');
   const qrScannerRef = useRef(null);
+  const isProcessingRef = useRef(false); // [แก้ไข 1] เพิ่ม Ref
 
   useEffect(() => {
     const fetchData = async () => {
@@ -111,6 +112,7 @@ export default function UniversalScannerPage() {
     setMessage('');
     setNationalIdInput('');
     setScannerState('idle');
+    isProcessingRef.current = false; // [แก้ไข 4] Reset lock
   };
 
   const handleActivityChange = (e) => {
@@ -161,6 +163,8 @@ export default function UniversalScannerPage() {
     } catch (err) {
       setMessage(`❌ ${err.message}`);
       setScannerState('idle');
+      // [แก้ไข 5] ถ้า error ให้ปลดล็อค (กรณีไม่ได้ไปต่อ)
+      setTimeout(() => { isProcessingRef.current = false; }, 1000);
     }
   };
 
@@ -169,6 +173,9 @@ export default function UniversalScannerPage() {
       setMessage('กรุณาเลือกกิจกรรมก่อน');
       return;
     }
+    
+    // [แก้ไข 2] Reset Lock ก่อนเริ่ม
+    isProcessingRef.current = false;
 
     stopScanner().then(() => {
       resetState();
@@ -178,12 +185,17 @@ export default function UniversalScannerPage() {
         qrScannerRef.current.start(
           { facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 250 } },
           (decodedText) => {
+            // [แก้ไข 3] Check Lock
+            if (isProcessingRef.current) return;
+            isProcessingRef.current = true; // Lock ทันที
+
             stopScanner();
             processId(decodedText);
           }, () => { }
         ).catch(err => {
           setMessage(`ไม่สามารถเปิดกล้องได้: ${err.name}`);
           setScannerState('idle');
+          isProcessingRef.current = false;
         });
       }, 100);
     });
