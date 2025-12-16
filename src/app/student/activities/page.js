@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { db } from '../../../lib/firebase';
-import { collection, getDocs, query, where, Timestamp } from 'firebase/firestore';
+import { collection, getDocs, query, where, Timestamp, getCountFromServer } from 'firebase/firestore';
 import useLiff from '../../../hooks/useLiff';
 
 // Helper component for the person icon
@@ -29,53 +29,63 @@ export default function ActivitiesListPage() {
   const [activities, setActivities] = useState([]);
   const [courses, setCourses] = useState({});
   const [registrationsCount, setRegistrationsCount] = useState({});
-  const [userRegistrations, setUserRegistrations] = useState(new Set()); // เก็บ ID ของกิจกรรมที่ผู้ใช้ลงทะเบียนแล้ว
+  const [userRegistrations, setUserRegistrations] = useState(new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [isMounted, setIsMounted] = useState(false);
 
-  // This effect runs only on the client after the component mounts
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
   useEffect(() => {
-    // Only fetch data on the client side
     if (!isMounted || !liffProfile?.userId) return;
 
     const fetchData = async () => {
       setIsLoading(true);
       try {
-        const [coursesSnapshot, activitiesSnapshot, registrationsSnapshot] = await Promise.all([
+        // 1. ดึงข้อมูล Courses และ Activities ตามปกติ
+        const [coursesSnapshot, activitiesSnapshot] = await Promise.all([
           getDocs(collection(db, 'courses')),
           getDocs(query(collection(db, 'activities'), where("activityDate", ">=", Timestamp.now()))),
-          getDocs(collection(db, 'registrations'))
         ]);
         
         const coursesMap = {};
         coursesSnapshot.forEach(doc => { coursesMap[doc.id] = doc.data().name; });
         setCourses(coursesMap);
 
-        const counts = {};
+        const activitiesList = activitiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        
+        // 2. [แก้] ดึงเฉพาะการลงทะเบียนของ "ผู้ใช้คนนี้" เท่านั้น (ประหยัด Quota มหาศาล)
+        // ใช้ nationalId เป็นหลัก ถ้าไม่มีให้ใช้ lineUserId
+        const identifierField = studentDbProfile?.nationalId ? 'nationalId' : 'lineUserId';
+        const identifierValue = studentDbProfile?.nationalId || liffProfile.userId;
+
+        const userRegQuery = query(
+            collection(db, 'registrations'), 
+            where(identifierField, "==", identifierValue)
+        );
+        const userRegSnapshot = await getDocs(userRegQuery);
+        
         const userActivityIds = new Set();
-        
-        registrationsSnapshot.forEach(doc => {
-          const registration = doc.data();
-          const activityId = registration.activityId;
-          
-          // นับจำนวนการลงทะเบียนทั้งหมด
-          counts[activityId] = (counts[activityId] || 0) + 1;
-          
-          // ตรวจสอบว่าผู้ใช้คนนี้ลงทะเบียนกิจกรรมนี้หรือไม่
-          if (registration.lineUserId === liffProfile.userId || 
-              (studentDbProfile?.nationalId && registration.nationalId === studentDbProfile.nationalId)) {
-            userActivityIds.add(activityId);
-          }
+        userRegSnapshot.forEach(doc => {
+            userActivityIds.add(doc.data().activityId);
         });
-        
-        setRegistrationsCount(counts);
         setUserRegistrations(userActivityIds);
 
-        const activitiesList = activitiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // 3. [แก้] นับจำนวนผู้ลงทะเบียนแต่ละกิจกรรมด้วย getCountFromServer (Cost ต่ำกว่า Read)
+        const counts = {};
+        await Promise.all(activitiesList.map(async (act) => {
+            try {
+                const countQuery = query(collection(db, 'registrations'), where('activityId', '==', act.id));
+                const snapshot = await getCountFromServer(countQuery);
+                counts[act.id] = snapshot.data().count;
+            } catch (err) {
+                console.error(`Error counting for ${act.id}`, err);
+                counts[act.id] = 0;
+            }
+        }));
+        
+        setRegistrationsCount(counts);
         setActivities(activitiesList);
 
       } catch (error) {
@@ -87,10 +97,7 @@ export default function ActivitiesListPage() {
     fetchData();
   }, [isMounted, liffProfile?.userId, studentDbProfile?.nationalId]);
 
-  // Don't render anything until mounted on the client
-  if (!isMounted) {
-    return null; 
-  }
+  if (!isMounted) return null; 
 
   if (isLoading) {
     return <div className="text-center p-10 font-sans">กำลังโหลดรายการกิจกรรม...</div>;
