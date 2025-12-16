@@ -16,6 +16,7 @@ export default function QueueScannerPage() {
     const [message, setMessage] = useState('');
     const [nationalIdInput, setNationalIdInput] = useState('');
     const qrScannerRef = useRef(null);
+    const isProcessingRef = useRef(false); // [แก้ไข 1] เพิ่ม Ref สำหรับล็อคการประมวลผล
 
     useEffect(() => {
         qrScannerRef.current = new Html5Qrcode("reader");
@@ -82,20 +83,27 @@ export default function QueueScannerPage() {
         } finally {
             setTimeout(() => {
                 resetPage();
+                // [แก้ไข 4] ปลดล็อคหลังจากทำงานเสร็จ (หรือหลังจาก Reset หน้า)
+                isProcessingRef.current = false; 
             }, 5000);
         }
     };
 
     const handleStartScanner = async () => {
         resetPage();
+        isProcessingRef.current = false; // [แก้ไข 2] รีเซ็ตค่าล็อคเมื่อเริ่มสแกนใหม่
         setScannerState('scanning');
         try {
             await qrScannerRef.current.start(
                 { facingMode: "environment" },
                 { fps: 10, qrbox: { width: 250, height: 250 } },
                 (decodedText) => {
+                    // [แก้ไข 3] เช็คว่ากำลังทำงานอยู่หรือเปล่า ถ้าใช่ให้หยุด
+                    if (isProcessingRef.current) return;
+                    isProcessingRef.current = true; // ล็อคทันที
+
                     if (qrScannerRef.current?.isScanning) {
-                        qrScannerRef.current.stop();
+                        qrScannerRef.current.stop().catch(console.error);
                     }
                     assignQueue(decodedText);
                 },
@@ -104,6 +112,7 @@ export default function QueueScannerPage() {
         } catch (err) {
             setMessage(`ไม่สามารถเปิดกล้องได้: ${err.name}`);
             setScannerState('idle');
+            isProcessingRef.current = false;
         }
     };
     
