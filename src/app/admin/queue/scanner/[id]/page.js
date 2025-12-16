@@ -4,8 +4,8 @@ import { useState, useEffect, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { db } from '../../../../../lib/firebase';
 import {
-  doc, collection, query, where, getDocs, runTransaction
-} from 'firebase/firestore';
+  doc, collection, query, where, getDocs, runTransaction, orderBy, limit
+} from 'firebase/firestore'; // [แก้ไข 1] เพิ่ม orderBy, limit
 import { useParams } from 'next/navigation';
 
 export default function QueueScannerPage() {
@@ -16,7 +16,7 @@ export default function QueueScannerPage() {
     const [message, setMessage] = useState('');
     const [nationalIdInput, setNationalIdInput] = useState('');
     const qrScannerRef = useRef(null);
-    const isProcessingRef = useRef(false); // กันการสแกนซ้ำ
+    const isProcessingRef = useRef(false);
 
     useEffect(() => {
         qrScannerRef.current = new Html5Qrcode("reader");
@@ -31,14 +31,14 @@ export default function QueueScannerPage() {
         setMessage('');
         setNationalIdInput('');
         setScannerState('idle');
-        isProcessingRef.current = false; // ปลดล็อคเมื่อเริ่มใหม่
+        isProcessingRef.current = false;
     }
 
     const assignQueue = async (registrationId) => {
         setScannerState('submitting');
         try {
             const result = await runTransaction(db, async (transaction) => {
-                // 1. อ่านข้อมูลการลงทะเบียน (Read: 1 doc)
+                // 1. อ่านข้อมูลผู้ลงทะเบียน
                 const regRef = doc(db, 'registrations', registrationId);
                 const regDoc = await transaction.get(regRef);
 
@@ -57,8 +57,7 @@ export default function QueueScannerPage() {
                     throw new Error('นักเรียนยังไม่ได้ถูกกำหนดหลักสูตร');
                 }
 
-                // 2. อ่านข้อมูล Activity เพื่อเอาเลขคิวล่าสุด (Read: 1 doc)
-                // เป็นการ Lock Document นี้ ห้ามใครแย่งเขียนจนกว่าเราจะเสร็จ
+                // 2. อ่านข้อมูล Activity เพื่อเตรียมอัพเดท Counter
                 const activityRef = doc(db, 'activities', activityId);
                 const activityDoc = await transaction.get(activityRef);
 
@@ -67,33 +66,45 @@ export default function QueueScannerPage() {
                 }
 
                 const activityData = activityDoc.data();
-                let currentCounters = activityData.queueCounters || {}; // เก็บ Counter แยกตามสาขา
+                let currentCounters = activityData.queueCounters || {};
                 let nextQueueNumber;
 
-                // 3. เช็คว่ามี Counter ของสาขานี้หรือยัง?
+                // 3. คำนวณเลขคิวถัดไป
                 if (currentCounters[courseName] !== undefined) {
-                    // แบบใหม่: ถ้ามีแล้ว ให้เอาค่าเดิม + 1 (เร็ว + ประหยัด Quota)
+                    // กรณีมี Counter แล้ว: ใช้ค่าเดิม + 1
                     nextQueueNumber = currentCounters[courseName] + 1;
                 } else {
-                    // แบบเก่า (Fallback): ถ้ายังไม่มี (เพิ่งเริ่มระบบใหม่กลางคัน) ให้นับจาก DB เอา (ช้าหน่อยแต่ทำแค่ครั้งเดียว)
+                    // [แก้ไข 2] กรณี "ยังไม่มี Counter" (Fallback)
+                    // เปลี่ยนจาก "นับคนในห้อง" เป็น "หาเลขสูงสุดที่เคยแจกไป"
                     const registrationsRef = collection(db, 'registrations');
                     const q = query(registrationsRef, 
                         where("activityId", "==", activityId),
                         where("course", "==", courseName),
-                        where("status", "==", "checked-in")
+                        where("queueNumber", ">", 0), // เอาเฉพาะคนที่มีเลขคิวแล้ว
+                        orderBy("queueNumber", "desc"), // เรียงจากมากไปน้อย
+                        limit(1) // เอาตัวแรก (ตัวที่มากที่สุด)
                     );
-                    const checkedInSnapshot = await getDocs(q);
-                    nextQueueNumber = checkedInSnapshot.size + 1;
+                    
+                    // หมายเหตุ: การใช้ query แบบนี้ครั้งแรก Firebase Console อาจฟ้องให้สร้าง Index
+                    // หากเกิด Error ให้เปิด Console แล้วคลิกลิงก์ที่ Firebase แจ้งเตือนเพื่อสร้าง Index ครับ
+                    const latestSnapshot = await getDocs(q);
+
+                    if (!latestSnapshot.empty) {
+                        const maxQueue = latestSnapshot.docs[0].data().queueNumber;
+                        nextQueueNumber = maxQueue + 1;
+                    } else {
+                        nextQueueNumber = 1; // ถ้ายังไม่มีใครได้คิวเลย เริ่มที่ 1
+                    }
                 }
 
-                // 4. อัพเดทเลขคิวล่าสุดกลับไปที่ Activity (Write: 1 doc)
+                // 4. บันทึกค่า Counter ใหม่ลง Activity (เพื่อให้ครั้งหน้าไม่ต้อง Query หาอีก)
                 const newCounters = {
                     ...currentCounters,
                     [courseName]: nextQueueNumber
                 };
                 transaction.update(activityRef, { queueCounters: newCounters });
 
-                // 5. อัพเดทสถานะนักเรียน (Write: 1 doc)
+                // 5. บันทึกให้นักเรียน
                 transaction.update(regRef, { 
                     status: 'checked-in', 
                     queueNumber: nextQueueNumber 
@@ -109,9 +120,14 @@ export default function QueueScannerPage() {
             setMessage(`✅ สำเร็จ! ${result.name} ได้รับคิวที่ ${result.queue} (${result.course})`);
 
         } catch (err) {
-            setMessage(`❌ ${err.message}`);
+            console.error(err);
+            // แจ้งเตือนถ้าต้องสร้าง Index
+            if (err.message.includes('index')) {
+                setMessage(`❌ ระบบต้องการ Index: กรุณาแจ้ง Admin ให้กดสร้าง Index ใน Firebase Console`);
+            } else {
+                setMessage(`❌ ${err.message}`);
+            }
         } finally {
-            // รอ 3 วินาทีเพื่อให้คนอ่านทัน แล้วค่อยรีเซ็ตหน้า
             setTimeout(() => {
                 resetPage();
             }, 3000);
@@ -127,7 +143,6 @@ export default function QueueScannerPage() {
                 { facingMode: "environment" },
                 { fps: 10, qrbox: { width: 250, height: 250 } },
                 (decodedText) => {
-                    // ล็อกการทำงาน: ถ้ากำลังประมวลผลอยู่ ห้ามทำซ้ำ
                     if (isProcessingRef.current) return;
                     isProcessingRef.current = true;
 
@@ -149,7 +164,7 @@ export default function QueueScannerPage() {
         e.preventDefault();
         
         if (isProcessingRef.current) return;
-        isProcessingRef.current = true; // ล็อกทันทีที่กด
+        isProcessingRef.current = true;
 
         setScannerState('submitting');
         setMessage('กำลังค้นหา...');
