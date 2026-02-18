@@ -41,7 +41,7 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
   }
   return (
     <div className="bg-white rounded-xl shadow-lg flex overflow-hidden">
-      <div className="flex-none w-32 bg-primary text-white flex flex-col justify-center items-center p-4 text-center">
+      <div className="flex-none w-34 bg-primary text-white flex flex-col justify-center items-center p-4 text-center">
         {activity.type === 'queue' ? (
           reg.displayQueueNumber ? ( // ✅ Check for displayQueueNumber first
             <><span className="text-xs opacity-75">คิวของคุณ</span><span className="text-4xl font-bold tracking-wider">{reg.displayQueueNumber}</span></>
@@ -49,14 +49,14 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
             <>
               <span className="text-xs opacity-75">เวลาที่ลงทะเบียน</span>
               <span className="text-2xl font-bold tracking-wider my-1">{reg.timeSlot || '-'}</span>
-              <span className="text-xs font-semibold">รอรับคิว</span>
+              <span className="text-xs font-semibold">รอรับคิวเมื่อเช็คอิน</span>
             </>
           )
         ) : reg.seatNumber ? (
           <Link href={`/student/activity/${reg.activityId}/chart?seat=${reg.seatNumber}`} className="flex flex-col items-center hover:opacity-80 transition-opacity group">
             <span className="text-xs opacity-75">เลขที่นั่งของคุณ</span>
             <span className="text-4xl font-bold tracking-wider underline decoration-dotted decoration-2 underline-offset-4 group-hover:text-white">{reg.seatNumber}</span>
-            <span className="text-[10px] mt-1 bg-white/20 px-2 py-0.5 rounded-full flex items-center gap-1">
+            <span className="text-[12px] mt-12 bg-white/20 px-2 py-0.5 rounded-full flex items-center gap-1">
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
               กดเพื่อดูผัง
             </span>
@@ -65,23 +65,31 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
           <><TicketIcon /><span className="text-xs font-semibold mt-2">ยังไม่ได้รับ</span></>
         )}
       </div>
-      <div className="flex flex-col flex-grow">
-        <div className="p-4 flex-grow">
+      <div className="flex flex-col flex-grow min-w-0">
+        <div className="p-4 flex-grow relative">
           <div className="flex justify-between items-start">
             <div className="flex items-center gap-2 text-sm font-semibold">{getStatusDisplay()}</div>
-            {(reg.status === 'registered' || reg.status === 'checked-in') && (
-              <button onClick={() => onShowQr(reg.id)} className="px-3 py-1 bg-gray-800 text-white text-xs font-bold rounded-full hover:bg-gray-600">
-                {reg.status === 'checked-in' ? 'QR Code จบกิจกรรม' : 'QR Code เช็คอิน'}
-              </button>
-            )}
-            {reg.status === 'completed' && !hasEvaluated && (activity.enableEvaluation === true || activity.enableEvaluation === undefined) && (
-              <Link href={`/student/evaluation/${reg.activityId}`} className="px-4 py-2 bg-yellow-500 text-white text-sm font-bold rounded-lg hover:bg-yellow-600">
-                ประเมินกิจกรรม
-              </Link>
-            )}
+            <div className="flex flex-col items-end gap-2">
+              {(reg.status === 'registered' || reg.status === 'checked-in') && (
+                <button
+                  onClick={() => onShowQr(reg.id)}
+                  className="px-3 py-1.5 bg-gray-800 text-white text-[12px] font-bold rounded-full hover:bg-gray-900 transition-all active:scale-95 whitespace-nowrap"
+                >
+                  {reg.status === 'checked-in' ? 'QR จบกิจกรรม' : 'QR เช็คอิน'}
+                </button>
+              )}
+              {reg.status === 'completed' && !hasEvaluated && (activity.enableEvaluation === true || activity.enableEvaluation === undefined) && (
+                <Link
+                  href={`/student/evaluation/${reg.activityId}`}
+                  className="px-3 py-1.5 bg-yellow-500 text-white text-[12px] font-bold rounded-full hover:bg-yellow-600 transition-all active:scale-95 whitespace-nowrap"
+                >
+                  ประเมินกิจกรรม
+                </Link>
+              )}
+            </div>
           </div>
-          <h2 className="text-lg font-bold text-gray-800 mt-2">{activity.name}</h2>
-          <p className="text-sm text-gray-500">{course?.name || reg.course || 'ทั่วไป'}</p>
+          <h2 className="text-lg font-bold text-gray-800 mt-2 line-clamp-2">{activity.name}</h2>
+          <p className="text-sm text-gray-500 truncate">{course?.name || reg.course || 'ทั่วไป'}</p>
         </div>
       </div>
     </div>

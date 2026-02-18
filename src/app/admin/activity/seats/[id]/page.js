@@ -846,49 +846,64 @@ export default function SeatAssignmentPage({ params }) {
                   const registrantCount = registrants.filter(r => r.course === course.name).length;
 
                   return (
-                    <div key={course.id} className="bg-gray-50 rounded-lg p-3 border border-gray-100">
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: course.color || '#3B82F6' }}></div>
-                        <span className="font-medium text-gray-700 text-sm truncate">{course.name}</span>
-                        <span className="text-xs text-gray-400 font-mono">({course.shortName})</span>
-                        <span className="ml-auto text-xs bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded">{registrantCount} คน</span>
+                    <div key={course.id} className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden flex flex-col">
+                      {/* Course Header Bar */}
+                      <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                        <div className="flex items-center gap-2 overflow-hidden">
+                          <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: course.color || '#3B82F6' }}></div>
+                          <span className="text-[11px] font-bold text-gray-700 uppercase tracking-tight truncate">{course.name}</span>
+                        </div>
+                        <span className="text-[9px] font-bold text-gray-400 bg-white px-1.5 py-0.5 rounded border border-gray-100">
+                          {registrantCount} People
+                        </span>
                       </div>
 
-                      {isEditing ? (
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            value={editingCounter.value}
-                            onChange={(e) => setEditingCounter({ ...editingCounter, value: e.target.value })}
-                            className="w-20 px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none"
-                            min="0"
-                          />
-                          <button onClick={handleUpdateCounter} className="text-green-600 hover:text-green-700 p-1">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                          </button>
-                          <button onClick={() => setEditingCounter(null)} className="text-gray-400 hover:text-gray-600 p-1">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="text-xs text-gray-500">Counter</div>
-                            <div className="font-bold text-gray-800">{currentCounter}</div>
+                      <div className="p-3 flex-grow flex flex-col justify-center">
+                        {isEditing ? (
+                          <div className="flex items-center gap-2">
+                            <div className="flex-grow">
+                              <p className="text-[9px] font-bold text-gray-400 uppercase mb-1">Update Counter</p>
+                              <input
+                                type="number"
+                                value={editingCounter.value}
+                                onChange={(e) => setEditingCounter({ ...editingCounter, value: e.target.value })}
+                                className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 outline-none font-bold"
+                                min="0"
+                                autoFocus
+                              />
+                            </div>
+                            <div className="flex flex-col gap-1 pt-3">
+                              <button onClick={handleUpdateCounter} className="p-1 bg-green-500 text-white rounded hover:bg-green-600 transition-colors">
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                              </button>
+                              <button onClick={() => setEditingCounter(null)} className="p-1 bg-gray-200 text-gray-500 rounded hover:bg-gray-300 transition-colors">
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                              </button>
+                            </div>
                           </div>
-                          <div className="text-right">
-                            <div className="text-xs text-gray-500">คิวถัดไป</div>
-                            <div className="font-bold text-purple-600">{course.shortName}-{String(nextQueue).padStart(3, '0')}</div>
+                        ) : (
+                          <div className="grid grid-cols-2 gap-2 divide-x divide-gray-100">
+                            <div className="pr-2">
+                              <p className="text-[9px] font-bold text-gray-400 uppercase leading-none mb-1.5">Current</p>
+                              <div className="flex items-baseline gap-1">
+                                <span className="text-lg font-black text-gray-800 tabular-nums">{currentCounter}</span>
+                                <button
+                                  onClick={() => setEditingCounter({ courseName: course.name, value: currentCounter })}
+                                  className="text-gray-300 hover:text-blue-600 transition-colors"
+                                >
+                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                </button>
+                              </div>
+                            </div>
+                            <div className="pl-3">
+                              <p className="text-[9px] font-bold text-gray-400 uppercase leading-none mb-1.5">Next Queue</p>
+                              <div className="text-sm font-bold text-blue-600 font-mono tracking-tighter">
+                                {course.shortName}-{String(nextQueue).padStart(3, '0')}
+                              </div>
+                            </div>
                           </div>
-                          <button
-                            onClick={() => setEditingCounter({ courseName: course.name, value: currentCounter })}
-                            className="text-gray-400 hover:text-purple-600 p-1"
-                            title="แก้ไข Counter"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                          </button>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -905,19 +920,23 @@ export default function SeatAssignmentPage({ params }) {
               <h2 className="text-lg font-bold text-gray-800">เพิ่มนักเรียนรายบุคคล</h2>
             </div>
 
-            <form onSubmit={handleAddParticipant} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <form onSubmit={handleAddParticipant} className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
               <div className="col-span-2 sm:col-span-1">
-                <input type="text" value={form.fullName} onChange={e => setForm({ ...form, fullName: e.target.value })} placeholder="ชื่อ-สกุล*" className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all" required />
+                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">Full Name *</p>
+                <input type="text" value={form.fullName} onChange={e => setForm({ ...form, fullName: e.target.value })} placeholder="ชื่อ-นามสกุล" className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-blue-500 outline-none transition-all" required />
               </div>
               <div className="col-span-2 sm:col-span-1">
-                <input type="text" value={form.studentId} onChange={e => setForm({ ...form, studentId: e.target.value })} placeholder="รหัสผู้สมัคร" className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all" />
+                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">Student ID</p>
+                <input type="text" value={form.studentId} onChange={e => setForm({ ...form, studentId: e.target.value })} placeholder="รหัสผู้สมัคร" className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-blue-500 outline-none transition-all" />
               </div>
               <div className="col-span-2">
-                <input type="text" value={form.nationalId} onChange={e => setForm({ ...form, nationalId: e.target.value })} placeholder="เลขบัตรประชาชน*" className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all" required />
+                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">National ID *</p>
+                <input type="text" value={form.nationalId} onChange={e => setForm({ ...form, nationalId: e.target.value })} placeholder="เลขบัตรประชาชน" className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-blue-500 outline-none transition-all" required />
               </div>
               <div className="col-span-2 sm:col-span-1">
-                <select value={form.course} onChange={e => setForm({ ...form, course: e.target.value })} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-gray-600">
-                  <option value="">เลือกหลักสูตร</option>
+                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">Course</p>
+                <select value={form.course} onChange={e => setForm({ ...form, course: e.target.value })} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-blue-500 outline-none transition-all appearance-none cursor-pointer">
+                  <option value="">Select Course</option>
                   {courseOptions.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                 </select>
               </div>
@@ -925,20 +944,22 @@ export default function SeatAssignmentPage({ params }) {
               {activity?.type === 'queue' && (
                 <>
                   <div className="col-span-2 sm:col-span-1">
-                    <select value={form.timeSlot} onChange={e => setForm({ ...form, timeSlot: e.target.value })} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-gray-600" required>
-                      <option value="">เลือกช่วงเวลา*</option>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">Time Slot *</p>
+                    <select value={form.timeSlot} onChange={e => setForm({ ...form, timeSlot: e.target.value })} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-blue-500 outline-none transition-all appearance-none cursor-pointer" required>
+                      <option value="">Select Time</option>
                       {timeSlotOptions.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
                     </select>
                   </div>
                   <div className="col-span-2 sm:col-span-1">
-                    <input type="text" value={form.displayQueueNumber} onChange={e => setForm({ ...form, displayQueueNumber: e.target.value })} placeholder="กำหนดคิว (ถ้ามี)" className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all" />
+                    <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">Manual Queue</p>
+                    <input type="text" value={form.displayQueueNumber} onChange={e => setForm({ ...form, displayQueueNumber: e.target.value })} placeholder="Optional" className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-blue-500 outline-none transition-all" />
                   </div>
                 </>
               )}
 
               <div className="col-span-2 mt-2">
-                <button type="submit" className="w-full px-4 py-2.5 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/20 active:scale-95">
-                  เพิ่มรายชื่อ
+                <button type="submit" className="w-full px-4 py-2.5 bg-blue-600 text-white text-xs font-bold rounded hover:bg-blue-700 transition-all shadow-sm active:scale-[0.98]">
+                  Add Participant Record
                 </button>
               </div>
             </form>

@@ -250,140 +250,119 @@ export default function ActivityDashboardPage() {
               const isPastEvent = activityDate && activityDate < new Date() && activityDate.toDateString() !== new Date().toDateString();
               const isToday = activityDate && activityDate.toDateString() === new Date().toDateString();
 
-              let statusConfig = { text: 'เปิดรับลงทะเบียน', bg: 'bg-emerald-50', textCol: 'text-emerald-700', border: 'border-emerald-100' };
+              let statusConfig = { text: 'เปิดรับ', bg: 'bg-emerald-50', textCol: 'text-emerald-700', border: 'border-emerald-100' };
 
               if (isPastEvent) {
-                statusConfig = { text: 'จบกิจกรรมแล้ว', bg: 'bg-gray-100', textCol: 'text-gray-600', border: 'border-gray-200' };
+                statusConfig = { text: 'สิ้นสุด', bg: 'bg-gray-100', textCol: 'text-gray-600', border: 'border-gray-200' };
               } else if (isToday) {
-                statusConfig = { text: 'เริ่มวันนี้', bg: 'bg-amber-50', textCol: 'text-amber-700', border: 'border-amber-100' };
+                statusConfig = { text: 'วันนี้', bg: 'bg-amber-50', textCol: 'text-amber-700', border: 'border-amber-100' };
               } else if (isFullyBooked) {
-                statusConfig = { text: 'ที่นั่งเต็ม', bg: 'bg-rose-50', textCol: 'text-rose-700', border: 'border-rose-100' };
+                statusConfig = { text: 'เต็ม', bg: 'bg-rose-50', textCol: 'text-rose-700', border: 'border-rose-100' };
               }
 
               return (
                 <div
                   key={activity.id}
-                  className={`group bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 border border-gray-100 flex flex-col h-full overflow-hidden ${isPastEvent ? 'opacity-80 grayscale-[0.3]' : ''}`}
+                  className={`bg-white rounded-xl shadow-sm hover:shadow-md transition-all duration-200 border border-gray-200 flex flex-col h-full overflow-hidden ${isPastEvent ? 'grayscale opacity-75' : ''}`}
                 >
-                  {/* Card Header */}
-                  <div className="p-6 pb-4 flex-grow">
-                    <div className="flex justify-between items-start mb-4 gap-2">
-                      <span className={`px-3 py-1 text-xs font-semibold rounded-full border ${statusConfig.bg} ${statusConfig.textCol} ${statusConfig.border}`}>
-                        {statusConfig.text}
-                      </span>
-                      <span className="px-3 py-1 text-xs font-semibold rounded-full border bg-gray-50 text-gray-600 border-gray-200">
-                        {activity.type === 'exam' ? 'สอบข้อเขียน' : activity.type === 'interview' ? 'สอบสัมภาษณ์' : activity.type === 'queue' ? 'จองคิว' : activity.type === 'graduation' ? 'งานรับปริญญา' : activity.type === 'event' ? 'กิจกรรมทั่วไป' : 'ไม่ระบุ'}
-                      </span>
-                    </div>
+                  {/* Card Header Area */}
+                  <div className="px-5 py-4 border-b border-gray-50 flex justify-between items-start">
+                    <span className={`px-2 py-0.5 text-[10px] font-bold rounded uppercase tracking-wider border ${statusConfig.bg} ${statusConfig.textCol} ${statusConfig.border}`}>
+                      {statusConfig.text}
+                    </span>
+                    <span className="text-[10px] font-bold text-gray-400 bg-gray-50 px-2 py-0.5 rounded border border-gray-100 uppercase tracking-tight">
+                      {activity.type === 'exam' ? 'Exam' : activity.type === 'interview' ? 'Interview' : activity.type === 'queue' ? 'Queue' : activity.type === 'graduation' ? 'Graduation' : activity.type === 'event' ? 'Event' : 'Other'}
+                    </span>
+                  </div>
 
-                    <h3 className="text-lg font-bold text-gray-900 line-clamp-2 mb-4 group-hover:text-primary transition-colors">
+                  <div className="p-5 flex-grow">
+                    <h3 className="text-base font-bold text-gray-800 leading-snug line-clamp-2 mb-4 h-10">
                       {activity.name}
                     </h3>
 
-                    <div className="space-y-3">
-                      <div className="flex items-start text-gray-600">
-                        <div className="w-8 flex-shrink-0 flex items-center justify-center">
-                          <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center text-gray-400 group-hover:bg-primary/5 group-hover:text-primary transition-colors">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                          </div>
+                    {/* Metadata Grid */}
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-3 pt-2">
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 bg-gray-50 rounded text-gray-400">
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                         </div>
-                        <div className="ml-3">
-                          <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">วันที่จัดกิจกรรม</p>
-                          <p className="text-sm font-medium text-gray-700">
-                            {activityDate ? activityDate.toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' }) : 'ไม่ระบุ'}
-                          </p>
+                        <div className="overflow-hidden">
+                          <p className="text-[10px] uppercase text-gray-400 font-bold leading-none mb-0.5">Date</p>
+                          <p className="text-xs font-semibold text-gray-700 truncate">{activityDate ? activityDate.toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: '2-digit' }) : '-'}</p>
                         </div>
                       </div>
-
-                      <div className="flex items-start text-gray-600">
-                        <div className="w-8 flex-shrink-0 flex items-center justify-center">
-                          <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center text-gray-400 group-hover:bg-primary/5 group-hover:text-primary transition-colors">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                          </div>
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 bg-gray-50 rounded text-gray-400">
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                         </div>
-                        <div className="ml-3">
-                          <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">เวลา</p>
-                          <p className="text-sm font-medium text-gray-700">
-                            {activityDate ? `${activityDate.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.` : '-'}
-                          </p>
+                        <div className="overflow-hidden">
+                          <p className="text-[10px] uppercase text-gray-400 font-bold leading-none mb-0.5">Time</p>
+                          <p className="text-xs font-semibold text-gray-700">{activityDate ? activityDate.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '-'}</p>
                         </div>
                       </div>
-
-                      <div className="flex items-start text-gray-600">
-                        <div className="w-8 flex-shrink-0 flex items-center justify-center">
-                          <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center text-gray-400 group-hover:bg-primary/5 group-hover:text-primary transition-colors">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                          </div>
+                      <div className="col-span-2 flex items-center gap-2">
+                        <div className="p-1.5 bg-gray-50 rounded text-gray-400">
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /></svg>
                         </div>
-                        <div className="ml-3">
-                          <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">สถานที่</p>
-                          <p className="text-sm font-medium text-gray-700 line-clamp-1">{activity.location || 'ไม่ระบุ'}</p>
+                        <div className="overflow-hidden">
+                          <p className="text-[10px] uppercase text-gray-400 font-bold leading-none mb-0.5">Location</p>
+                          <p className="text-xs font-semibold text-gray-700 truncate">{activity.location || 'Not Specified'}</p>
                         </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* Toggles Section */}
-                  <div className="px-6 py-3 border-t border-gray-50 bg-gray-50/30 flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium text-gray-600">เปิดรับลงทะเบียนสำหรับนักเรียน</span>
+                  {/* Operational Controls (Compact) */}
+                  <div className="bg-gray-50/50 px-5 py-3 border-t border-gray-100 space-y-2">
+                    <div className="flex justify-between items-center text-[11px] font-bold text-gray-500">
+                      <span>Registration</span>
                       <button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          handleToggleRegistration(activity.id, activity.isRegistrationOpen);
-                        }}
-                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${activity.isRegistrationOpen ? 'bg-green-500' : 'bg-gray-300'}`}
+                        onClick={(e) => { e.preventDefault(); handleToggleRegistration(activity.id, activity.isRegistrationOpen); }}
+                        className={`w-8 h-4 rounded-full relative transition-colors ${activity.isRegistrationOpen ? 'bg-green-500' : 'bg-gray-300'}`}
                       >
-                        <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${activity.isRegistrationOpen ? 'translate-x-5' : 'translate-x-1'}`} />
+                        <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-transform ${activity.isRegistrationOpen ? 'left-[17px]' : 'left-[3px]'}`} />
                       </button>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium text-gray-600">เปิดรับประเมิน</span>
+                    <div className="flex justify-between items-center text-[11px] font-bold text-gray-500">
+                      <span>Evaluation</span>
                       <button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          handleToggleEvaluation(activity.id, activity.enableEvaluation);
-                        }}
-                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${activity.enableEvaluation ? 'bg-blue-500' : 'bg-gray-300'}`}
+                        onClick={(e) => { e.preventDefault(); handleToggleEvaluation(activity.id, activity.enableEvaluation); }}
+                        className={`w-8 h-4 rounded-full relative transition-colors ${activity.enableEvaluation ? 'bg-blue-500' : 'bg-gray-300'}`}
                       >
-                        <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${activity.enableEvaluation ? 'translate-x-5' : 'translate-x-1'}`} />
+                        <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-transform ${activity.enableEvaluation ? 'left-[17px]' : 'left-[3px]'}`} />
                       </button>
                     </div>
                   </div>
 
-                  {/* Progress & Actions */}
-                  <div className="px-6 pb-6 pt-2">
-                    <div className="mb-5">
-                      <div className="flex justify-between items-end mb-2">
-                        <span className="text-xs font-medium text-gray-500">จำนวนที่นั่ง</span>
-                        <span className="text-sm font-bold text-gray-800">
-                          <span className={isFullyBooked ? 'text-rose-600' : 'text-primary'}>{count}</span>
-                          <span className="text-gray-400 text-xs font-normal mx-1">/</span>
-                          {activity.capacity}
+                  {/* Actions & Progress Area */}
+                  <div className="p-5 bg-white space-y-4">
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between text-[11px] font-bold uppercase tracking-wider text-gray-400">
+                        <span>Capacity</span>
+                        <span className="text-gray-700">
+                          <span className={isFullyBooked ? 'text-red-600' : 'text-primary'}>{count}</span> / {activity.capacity}
                         </span>
                       </div>
-                      <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
+                      <div className="w-full bg-gray-100 h-1.5 rounded-full overflow-hidden">
                         <div
-                          className={`h-full rounded-full transition-all duration-500 ease-out ${isFullyBooked ? 'bg-rose-500' :
-                            (count / activity.capacity) > 0.8 ? 'bg-amber-500' : 'bg-emerald-500'
-                            }`}
+                          className={`h-full transition-all duration-500 rounded-full ${isFullyBooked ? 'bg-red-500' : (count / activity.capacity) > 0.8 ? 'bg-amber-500' : 'bg-emerald-500'}`}
                           style={{ width: `${Math.min((count / activity.capacity) * 100, 100)}%` }}
-                        ></div>
+                        />
                       </div>
                     </div>
 
-                    <div className="flex gap-3">
+                    <div className="flex gap-2">
                       <Link
                         href={`/admin/activity/seats/${activity.id}`}
-                        className="flex-1 px-4 py-2.5 bg-primary text-white text-sm font-medium rounded-xl hover:bg-primary-hover transition-colors text-center shadow-lg shadow-primary/20"
+                        className="flex-1 bg-gray-800 text-white text-xs font-bold py-2.5 rounded hover:bg-black transition-colors text-center"
                       >
-                        จัดการที่นั่ง
+                        Manage
                       </Link>
                       <Link
                         href={`/admin/activity/edit/${activity.id}`}
-                        className="px-4 py-2.5 bg-white border border-gray-200 text-gray-600 text-sm font-medium rounded-xl hover:bg-gray-50 hover:text-gray-900 transition-colors text-center"
+                        className="px-4 border border-gray-200 text-gray-600 text-xs font-bold py-2.5 rounded hover:bg-gray-50 transition-colors text-center"
                       >
-                        แก้ไข
+                        Edit
                       </Link>
                     </div>
                   </div>
