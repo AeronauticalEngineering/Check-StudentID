@@ -83,11 +83,6 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
           <h2 className="text-lg font-bold text-gray-800 mt-2">{activity.name}</h2>
           <p className="text-sm text-gray-500">{course?.name || reg.course || 'ทั่วไป'}</p>
         </div>
-        // {activityDate && (
-        //   <div className="bg-gray-100 p-2 text-center text-sm text-gray-600 border-t">
-        //     {activityDate.toLocaleString('th-TH', { dateStyle: 'full', timeStyle: 'short' })} น.
-        //   </div>
-        // )}
       </div>
     </div>
   );
