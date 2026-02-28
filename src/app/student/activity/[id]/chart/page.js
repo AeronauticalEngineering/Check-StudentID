@@ -39,12 +39,13 @@ export default function StudentSeatingChartPage({ params }) {
             }
         };
 
-        const unsubCourses = onSnapshot(query(collection(db, 'courseOptions'), orderBy('name')), (snapshot) => {
-            setCourseOptions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-        });
+        const fetchCourses = async () => {
+            const snap = await getDocs(query(collection(db, 'courseOptions'), orderBy('name')));
+            setCourseOptions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        };
 
         fetchData();
-        return () => unsubCourses();
+        fetchCourses();
     }, [activityId]);
 
     // Auto-scroll to my seat when data is loaded

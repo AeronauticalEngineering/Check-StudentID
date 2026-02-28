@@ -35,13 +35,14 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
   const getStatusDisplay = () => {
     switch (reg.status) {
       case 'checked-in': return <><CheckmarkIcon className="text-green-600" /> <span className="text-green-600">เช็คอินแล้ว</span></>;
+      case 'interviewing': return <><CheckmarkIcon className="text-purple-600" /> <span className="text-purple-600">เข้าสอบสัมภาษณ์</span></>;
       case 'completed': return <><CheckmarkIcon className="text-blue-600" /> <span className="text-blue-600">จบกิจกรรมแล้ว</span></>;
       default: return <><CheckmarkIcon className="text-yellow-600" /> <span className="text-yellow-600">ลงทะเบียนแล้ว</span></>;
     }
   }
   return (
-    <div className="bg-white rounded-xl shadow-lg flex overflow-hidden">
-      <div className="flex-none w-34 bg-primary text-white flex flex-col justify-center items-center p-4 text-center">
+    <div className="bg-white rounded-xl shadow-lg flex flex-col overflow-hidden">
+      <div className="w-full bg-primary text-white flex flex-col justify-center items-center py-4 px-6 text-center shadow-inner">
         {activity.type === 'queue' ? (
           reg.displayQueueNumber ? ( // ✅ Check for displayQueueNumber first
             <><span className="text-xs opacity-75">คิวของคุณ</span><span className="text-4xl font-bold tracking-wider">{reg.displayQueueNumber}</span></>
@@ -56,7 +57,7 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
           <Link href={`/student/activity/${reg.activityId}/chart?seat=${reg.seatNumber}`} className="flex flex-col items-center hover:opacity-80 transition-opacity group">
             <span className="text-xs opacity-75">เลขที่นั่งของคุณ</span>
             <span className="text-4xl font-bold tracking-wider underline decoration-dotted decoration-2 underline-offset-4 group-hover:text-white">{reg.seatNumber}</span>
-            <span className="text-[12px] mt-12 bg-white/20 px-2 py-0.5 rounded-full flex items-center gap-1">
+            <span className="text-[12px] mt-4 bg-white/20 px-2 py-0.5 rounded-full flex items-center gap-1">
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
               กดเพื่อดูผัง
             </span>
@@ -70,15 +71,17 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
           <div className="flex justify-between items-start">
             <div className="flex items-center gap-2 text-sm font-semibold">{getStatusDisplay()}</div>
             <div className="flex flex-col items-end gap-2">
-              {(reg.status === 'registered' || reg.status === 'checked-in') && (
-                <button
-                  onClick={() => onShowQr(reg.id)}
-                  className="px-3 py-1.5 bg-gray-800 text-white text-[12px] font-bold rounded-full hover:bg-gray-900 transition-all active:scale-95 whitespace-nowrap"
-                >
-                  {reg.status === 'checked-in' ? 'QR จบกิจกรรม' : 'QR เช็คอิน'}
-                </button>
-              )}
-              {reg.status === 'completed' && !hasEvaluated && (activity.enableEvaluation === true || activity.enableEvaluation === undefined) && (
+              {((reg.status === 'registered') ||
+                ((reg.status === 'checked-in' || reg.status === 'interviewing') &&
+                  (!(activity.enableEvaluation === true || activity.enableEvaluation === undefined) || hasEvaluated))) && (
+                  <button
+                    onClick={() => onShowQr(reg.id)}
+                    className="px-3 py-1.5 bg-gray-800 text-white text-[12px] font-bold rounded-full hover:bg-gray-900 transition-all active:scale-95 whitespace-nowrap"
+                  >
+                    {reg.status === 'registered' ? 'QR เช็คอิน' : 'QR จบกิจกรรม'}
+                  </button>
+                )}
+              {(reg.status === 'completed' || reg.status === 'interviewing' || reg.status === 'checked-in') && !hasEvaluated && (activity.enableEvaluation === true || activity.enableEvaluation === undefined) && (
                 <Link
                   href={`/student/evaluation/${reg.activityId}`}
                   className="px-3 py-1.5 bg-yellow-500 text-white text-[12px] font-bold rounded-full hover:bg-yellow-600 transition-all active:scale-95 whitespace-nowrap"
@@ -108,24 +111,29 @@ export default function MyRegistrationsPage() {
   const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
-    const unsubActivities = onSnapshot(collection(db, 'activities'), (snapshot) => {
-      const actMap = {};
-      snapshot.forEach(doc => { actMap[doc.id] = doc.data(); });
-      setActivities(actMap);
-    });
+    const fetchData = async () => {
+      setIsLoadingData(true);
+      try {
+        const [activitiesSnap, coursesSnap] = await Promise.all([
+          getDocs(collection(db, 'activities')),
+          getDocs(collection(db, 'courses'))
+        ]);
 
-    const unsubCourses = onSnapshot(collection(db, 'courses'), (snapshot) => {
-      const courseMap = {};
-      snapshot.forEach(doc => { courseMap[doc.id] = doc.data(); });
-      setCourses(courseMap);
-    });
+        const actMap = {};
+        activitiesSnap.forEach(doc => { actMap[doc.id] = doc.data(); });
+        setActivities(actMap);
 
-    setIsLoadingData(false);
-
-    return () => {
-      unsubActivities();
-      unsubCourses();
+        const courseMap = {};
+        coursesSnap.forEach(doc => { courseMap[doc.id] = doc.data(); });
+        setCourses(courseMap);
+      } catch (err) {
+        console.error("Error fetching base data:", err);
+      } finally {
+        setIsLoadingData(false);
+      }
     };
+
+    fetchData();
   }, []);
 
   useEffect(() => {
@@ -231,8 +239,12 @@ export default function MyRegistrationsPage() {
       return true;
     }
     if (!activity.activityDate?.toDate) return false;
-    const activityEndDate = new Date(activity.activityDate.toDate().getTime() + 3 * 60 * 60 * 1000);
-    return activityEndDate >= now && reg.status !== 'completed';
+
+    // ตั้งเวลาให้หมดในตอนสิ้นสุดของวัน (23:59:59.999)
+    const dt = activity.activityDate.toDate();
+    const endOfDay = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate(), 23, 59, 59, 999);
+
+    return endOfDay >= now && reg.status !== 'completed';
   });
 
   const pastRegistrations = sortedRegistrations.filter(reg => {
@@ -243,8 +255,12 @@ export default function MyRegistrationsPage() {
       return false;
     }
     if (!activity.activityDate?.toDate) return true;
-    const activityEndDate = new Date(activity.activityDate.toDate().getTime() + 3 * 60 * 60 * 1000);
-    return activityEndDate < now || (reg.status === 'completed' && (evaluatedActivities.has(reg.activityId) || activity.enableEvaluation === false));
+
+    // ตั้งเวลาให้หมดในตอนสิ้นสุดของวัน (23:59:59.999)
+    const dt = activity.activityDate.toDate();
+    const endOfDay = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate(), 23, 59, 59, 999);
+
+    return endOfDay < now || (reg.status === 'completed' && (evaluatedActivities.has(reg.activityId) || activity.enableEvaluation === false));
   });
 
   return (

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { db } from '../../../lib/firebase';
-import { collection, doc, updateDoc, deleteDoc, writeBatch, getDocs, query, orderBy, limit, where, startAfter } from 'firebase/firestore';
+import { collection, doc, updateDoc, deleteDoc, writeBatch, getDocs, query, orderBy, limit, where, startAfter, startAt } from 'firebase/firestore';
 import Papa from 'papaparse';
 
 export default function AllRegistrantsPage() {
@@ -14,7 +14,13 @@ export default function AllRegistrantsPage() {
   const [editingId, setEditingId] = useState(null);
   const [message, setMessage] = useState('');
   const [selectedIds, setSelectedIds] = useState(new Set());
+
+  // Pagination States
   const [lastVisible, setLastVisible] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageCursors, setPageCursors] = useState([]);
+  const [hasNext, setHasNext] = useState(true);
+  const ITEMS_PER_PAGE = 20;
 
   // โหลดรายชื่อกิจกรรมมาเก็บไว้ก่อน (Activities มักจะไม่เยอะมาก)
   useEffect(() => {
@@ -27,23 +33,60 @@ export default function AllRegistrantsPage() {
     fetchActivities();
   }, []);
 
-  const fetchRegistrations = async (isSearch = false) => {
+  const fetchRegistrations = async (isSearch = false, mode = 'initial') => {
     setIsLoading(true);
     try {
       let q;
       const regsRef = collection(db, 'registrations');
 
       if (searchTerm.trim()) {
-        // [โหมดค้นหา] ค้นหาจาก nationalId หรือ studentId (ต้องตรงเป๊ะเพราะ Firestore Search มีข้อจำกัด)
-        // หมายเหตุ: เพื่อความง่ายและประหยัด เราจะค้นหาด้วย nationalId เป็นหลัก
         q = query(regsRef, where('nationalId', '==', searchTerm.trim()));
       } else {
-        // [โหมดปกติ] โหลด 50 รายการล่าสุด
-        q = query(regsRef, orderBy('registeredAt', 'desc'), limit(50));
+        if (mode === 'initial') {
+          q = query(regsRef, orderBy('registeredAt', 'desc'), limit(ITEMS_PER_PAGE));
+        } else if (mode === 'next' && lastVisible) {
+          q = query(regsRef, orderBy('registeredAt', 'desc'), startAfter(lastVisible), limit(ITEMS_PER_PAGE));
+        } else if (mode === 'prev' && currentPage > 1) {
+          const targetStartDoc = pageCursors[currentPage - 2];
+          q = query(regsRef, orderBy('registeredAt', 'desc'), startAt(targetStartDoc), limit(ITEMS_PER_PAGE));
+        }
       }
 
       const snapshot = await getDocs(q);
-      
+
+      if (!searchTerm.trim()) {
+        const docsLength = snapshot.docs.length;
+        if (docsLength > 0) {
+          setLastVisible(snapshot.docs[docsLength - 1]);
+
+          if (mode === 'initial') {
+            setCurrentPage(1);
+            setPageCursors([snapshot.docs[0]]);
+            setHasNext(docsLength === ITEMS_PER_PAGE);
+          } else if (mode === 'next') {
+            const nextCursors = [...pageCursors];
+            nextCursors[currentPage] = snapshot.docs[0];
+            setPageCursors(nextCursors);
+            setCurrentPage(prev => prev + 1);
+            setHasNext(docsLength === ITEMS_PER_PAGE);
+          } else if (mode === 'prev') {
+            setCurrentPage(prev => prev - 1);
+            setHasNext(true); // Since we went back, there's always a next page
+          }
+        } else {
+          if (mode === 'initial') {
+            setRegistrations([]);
+            setHasNext(false);
+          } else if (mode === 'next') {
+            setHasNext(false);
+            setIsLoading(false);
+            return;
+          }
+        }
+      } else {
+        setHasNext(false); // No pagination during search
+      }
+
       // แปลงข้อมูล
       const data = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -52,12 +95,8 @@ export default function AllRegistrantsPage() {
         registeredAtDate: doc.data().registeredAt ? doc.data().registeredAt.toDate() : null
       }));
 
-      // ถ้าเป็นการค้นหาด้วยชื่อ (Client-side filter workaround)
-      // *หมายเหตุ: ถ้าต้องการค้นหาชื่อบางส่วน (Partial Search) จริงๆ ต้องใช้ Algolia/Meilisearch 
-      // แต่ในที่นี้เราใช้การโหลดล่าสุดมาแสดงแทน
-      
       setRegistrations(data);
-      
+
       // Prepare edit states
       const initialEdits = {};
       data.forEach(r => {
@@ -82,7 +121,7 @@ export default function AllRegistrantsPage() {
   useEffect(() => {
     // Debounce search เล็กน้อย
     const timeoutId = setTimeout(() => {
-        fetchRegistrations(!!searchTerm);
+      fetchRegistrations(!!searchTerm, 'initial');
     }, 500);
     return () => clearTimeout(timeoutId);
   }, [searchTerm]);
@@ -98,7 +137,7 @@ export default function AllRegistrantsPage() {
     const dataToUpdate = editStates[registrantId];
     try {
       const batch = writeBatch(db);
-      
+
       // อัปเดตใน registrations
       batch.update(doc(db, 'registrations', registrantId), {
         fullName: dataToUpdate.fullName,
@@ -113,7 +152,7 @@ export default function AllRegistrantsPage() {
         const profileQ = query(collection(db, 'studentProfiles'), where('nationalId', '==', oldData.nationalId), limit(1));
         const profileSnap = await getDocs(profileQ);
         if (!profileSnap.empty) {
-             batch.update(doc(db, 'studentProfiles', profileSnap.docs[0].id), dataToUpdate);
+          batch.update(doc(db, 'studentProfiles', profileSnap.docs[0].id), dataToUpdate);
         }
       }
 
@@ -142,6 +181,13 @@ export default function AllRegistrantsPage() {
 
   const handleCancelEdit = (registrantId) => {
     setEditingId(null);
+  };
+
+  const handleCopyLineId = (lineId) => {
+    if (!lineId) return;
+    navigator.clipboard.writeText(lineId);
+    setMessage('✅ คัดลอก LINE User ID เรียบร้อยแล้ว');
+    setTimeout(() => setMessage(''), 3000);
   };
 
   // CSV Functions (Simplified for quota safety)
@@ -173,15 +219,15 @@ export default function AllRegistrantsPage() {
   };
 
   const handleImportCSV = (event) => {
-      // (คงไว้ตามเดิม หรือปรับปรุงตามความเหมาะสม)
-      alert("ฟีเจอร์ Import ปิดชั่วคราวเพื่อประหยัด Quota ในการตรวจสอบซ้ำซ้อนจำนวนมาก");
+    // (คงไว้ตามเดิม หรือปรับปรุงตามความเหมาะสม)
+    alert("ฟีเจอร์ Import ปิดชั่วคราวเพื่อประหยัด Quota ในการตรวจสอบซ้ำซ้อนจำนวนมาก");
   };
-  
+
   const handleSelectOne = (id) => {
     setSelectedIds(prev => {
-        const newSet = new Set(prev);
-        newSet.has(id) ? newSet.delete(id) : newSet.add(id);
-        return newSet;
+      const newSet = new Set(prev);
+      newSet.has(id) ? newSet.delete(id) : newSet.add(id);
+      return newSet;
     });
   };
 
@@ -191,7 +237,7 @@ export default function AllRegistrantsPage() {
         <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
           <div>
             <h1 className="text-3xl font-bold text-gray-800">ฐานข้อมูลการลงทะเบียน (ล่าสุด)</h1>
-            <p className="text-gray-500 mt-1">แสดง 50 รายการล่าสุด หรือค้นหาด้วยเลขบัตรประชาชน</p>
+            <p className="text-gray-500 mt-1">แสดงผลหน้าละ 20 รายการ หรือค้นหาด้วยเลขบัตรประชาชน</p>
           </div>
           <div className="flex items-center gap-3 w-full md:w-auto">
             <div className="relative w-full md:w-80">
@@ -210,7 +256,7 @@ export default function AllRegistrantsPage() {
           <button onClick={handleExportCSV} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 shadow-sm flex items-center gap-2 text-sm font-medium">
             Export CSV (หน้านี้)
           </button>
-           <button onClick={() => fetchRegistrations(!!searchTerm)} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm flex items-center gap-2 text-sm font-medium">
+          <button onClick={() => fetchRegistrations(!!searchTerm, 'initial')} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm flex items-center gap-2 text-sm font-medium">
             รีเฟรชข้อมูล
           </button>
         </div>
@@ -226,6 +272,7 @@ export default function AllRegistrantsPage() {
                   <th className="p-4 min-w-[200px]">ชื่อ-สกุล</th>
                   <th className="p-4 min-w-[120px]">รหัสนักศึกษา</th>
                   <th className="p-4 min-w-[150px]">เลขบัตรประชาชน</th>
+                  <th className="p-4 text-center">LINE</th>
                   <th className="p-4 min-w-[150px]">กิจกรรม</th>
                   <th className="p-4 min-w-[150px]">สถานะ</th>
                   <th className="p-4 text-center">จัดการ</th>
@@ -233,7 +280,7 @@ export default function AllRegistrantsPage() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {isLoading ? (
-                    <tr><td colSpan="7" className="p-10 text-center">กำลังโหลดข้อมูล...</td></tr>
+                  <tr><td colSpan="8" className="p-10 text-center">กำลังโหลดข้อมูล...</td></tr>
                 ) : registrations.map((reg, index) => {
                   const isEditing = editingId === reg.id;
                   return (
@@ -250,13 +297,28 @@ export default function AllRegistrantsPage() {
                       <td className="p-4 text-gray-600 font-mono text-xs">
                         {isEditing ? <input type="text" value={editStates[reg.id]?.nationalId} onChange={e => handleInputChange(reg.id, 'nationalId', e.target.value)} className="w-full p-1.5 border rounded-lg text-sm" /> : reg.nationalId}
                       </td>
-                      <td className="p-4 text-gray-600">
-                         <span className="inline-flex items-center px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-xs border border-blue-100 truncate max-w-[140px]">
-                            {activitiesMap[reg.activityId] || 'Unknown'}
-                         </span>
+                      <td className="p-4 text-center">
+                        {reg.lineUserId ? (
+                          <button
+                            onClick={() => handleCopyLineId(reg.lineUserId)}
+                            title="ผูก LINE แล้ว - คลิกเพื่อคัดลอก LINE User ID"
+                            className="inline-flex items-center justify-center p-2 bg-[#00B900]/10 text-[#00B900] rounded-full hover:bg-[#00B900]/20 transition-all shadow-sm"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                              <path d="M8 0c4.411 0 8 2.912 8 6.492 0 3.145-2.73 5.865-6.31 6.388-.671.1-1.232.363-1.425.536-.183.163-.329.544-.216 1.059l.065.341c.046.253.116.591-.01.761-.122.164-.326.173-.556.173-.243 0-.615-.084-1.214-.268C1.56 14.546 0 11.233 0 6.492 0 2.912 3.59 0 8 0zM5.022 7.15h1.968a.324.324 0 1 0 0-.648H5.346V4.65a.324.324 0 1 0-.648 0v2.176c0 .179.145.324.324.324zm3.36 0h.648a.324.324 0 1 0 0-.648H8.382a.324.324 0 1 0 0 .648zm2.146 0h.648a.324.324 0 0 0 0-.648h-.648a.324.324 0 0 0 0 .648zM11.512 4.65a.324.324 0 1 0-.648 0v2.176a.324.324 0 1 0 .648 0V4.65z" />
+                            </svg>
+                          </button>
+                        ) : (
+                          <span className="text-gray-300 font-bold" title="ยังไม่ได้ผูก LINE">-</span>
+                        )}
                       </td>
                       <td className="p-4 text-gray-600">
-                         {reg.status}
+                        <span className="inline-flex items-center px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-xs border border-blue-100 truncate max-w-[140px]">
+                          {activitiesMap[reg.activityId] || 'Unknown'}
+                        </span>
+                      </td>
+                      <td className="p-4 text-gray-600">
+                        {reg.status}
                       </td>
                       <td className="p-4 text-center">
                         {isEditing ? (
@@ -277,6 +339,33 @@ export default function AllRegistrantsPage() {
               </tbody>
             </table>
             {!isLoading && registrations.length === 0 && <div className="p-12 text-center text-gray-400">ไม่พบข้อมูล</div>}
+
+            {/* Pagination Controls */}
+            {!searchTerm.trim() && registrations.length > 0 && (
+              <div className="bg-gray-50 p-4 border-t border-gray-100 flex items-center justify-between">
+                <div className="text-sm text-gray-500 font-medium">
+                  หน้า {currentPage}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => fetchRegistrations(false, 'prev')}
+                    disabled={currentPage === 1 || isLoading}
+                    className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center transition-all ${currentPage === 1 || isLoading ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300 shadow-sm'}`}
+                  >
+                    <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                    ก่อนหน้า
+                  </button>
+                  <button
+                    onClick={() => fetchRegistrations(false, 'next')}
+                    disabled={!hasNext || isLoading}
+                    className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center transition-all ${!hasNext || isLoading ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300 shadow-sm'}`}
+                  >
+                    ถัดไป
+                    <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </main>

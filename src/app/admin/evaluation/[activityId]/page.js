@@ -19,6 +19,7 @@ export default function EvaluationResultPage() {
     const { activityId } = params;
     const [activity, setActivity] = useState(null);
     const [evaluations, setEvaluations] = useState([]);
+    const [totalParticipants, setTotalParticipants] = useState(0);
     const [stats, setStats] = useState({});
     const [isLoading, setIsLoading] = useState(true);
     const [currentPage, setCurrentPage] = useState(1);
@@ -43,6 +44,18 @@ export default function EvaluationResultPage() {
                 const q = query(collection(db, 'evaluations'), where('activityId', '==', activityId));
                 const querySnapshot = await getDocs(q);
                 const evals = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+                // Fetch Registrations for "checked-in" and "completed" count
+                const qReg = query(collection(db, 'registrations'), where('activityId', '==', activityId));
+                const regSnapshot = await getDocs(qReg);
+                let participantCount = 0;
+                regSnapshot.forEach((doc) => {
+                    const data = doc.data();
+                    if (data.status === 'checked-in' || data.status === 'completed') {
+                        participantCount++;
+                    }
+                });
+                setTotalParticipants(participantCount);
 
                 // 3. Enrich with Student Profile
                 const enrichedEvals = await Promise.all(evals.map(async (evaluation) => {
@@ -195,7 +208,7 @@ export default function EvaluationResultPage() {
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
                     <div>
                         <h1 className="text-2xl font-bold text-gray-900">ผลการประเมิน: {activity?.name}</h1>
-                        <p className="text-gray-500">ผู้ตอบแบบสอบถามทั้งหมด {evaluations.length} คน</p>
+                        <p className="text-gray-500">ผู้ตอบแบบสอบถามทั้งหมด {evaluations.length} คน {totalParticipants > 0 && `(จากผู้เข้าร่วม ${totalParticipants} คน, ยังไม่ประเมิน ${Math.max(0, totalParticipants - evaluations.length)} คน)`}</p>
                     </div>
                     {evaluations.length > 0 && (
                         <CSVLink

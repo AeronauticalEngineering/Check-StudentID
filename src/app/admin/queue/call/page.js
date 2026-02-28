@@ -18,11 +18,13 @@ export default function SelectQueueActivityPage() {
         const querySnapshot = await getDocs(q);
         const activities = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-        // กรองกิจกรรมที่ยังไม่จบ (วันที่กิจกรรม >= วันนี้)
+        // กรองกิจกรรมที่ยังไม่จบ (วันที่กิจกรรม >= วันนี้ตอนสิ้นสุดวัน)
         const now = new Date();
         const ongoingActivities = activities.filter(activity => {
-          const activityDate = activity.activityDate?.toDate();
-          return !activityDate || activityDate >= now;
+          if (!activity.activityDate?.toDate) return true;
+          const dt = activity.activityDate.toDate();
+          const endOfDay = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate(), 23, 59, 59, 999);
+          return endOfDay >= now;
         });
 
         setQueueActivities(ongoingActivities);

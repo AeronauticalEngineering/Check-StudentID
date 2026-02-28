@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 export async function POST(request) {
   // 👇 1. เปลี่ยนจากการรับ `message` มาเป็น `flexMessage` ให้ตรงกัน
-  const { userId, flexMessage } = await request.json(); 
+  const { userId, flexMessage } = await request.json();
   const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 
   // 👇 2. ตรวจสอบพารามิเตอร์ `flexMessage` แทน
@@ -27,7 +27,7 @@ export async function POST(request) {
             // 👇 3. เปลี่ยน type เป็น 'flex' และส่ง flexMessage ที่ได้รับมา
             type: 'flex',
             altText: 'คุณได้รับการแจ้งเตือนใหม่', // ข้อความสำหรับแสดงบน notification และหน้าแชท
-            contents: flexMessage, 
+            contents: flexMessage,
           },
         ],
       }),
@@ -44,7 +44,7 @@ export async function POST(request) {
   } catch (error) {
     console.error('Internal Server Error:', error);
     return NextResponse.json(
-      { message: 'Internal Server Error', error: error.message },
+      { message: `LINE API Error: ${error.message}`, details: error },
       { status: 500 }
     );
   }

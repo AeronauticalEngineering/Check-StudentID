@@ -17,6 +17,7 @@ const translateStatus = (status) => {
     case 'registered': return 'ลงทะเบียนแล้ว';
     case 'cancelled': return 'ยกเลิกแล้ว';
     case 'waitlisted': return 'รอคิว';
+    case 'interviewing': return 'สอบสัมภาษณ์';
     case 'completed': return 'สำเร็จแล้ว';
     default: return status || '';
   }
@@ -29,6 +30,7 @@ const StatusBadge = ({ status }) => {
     case 'registered': colorClass = 'bg-blue-100 text-blue-800 border-blue-200'; break;
     case 'cancelled': colorClass = 'bg-red-100 text-red-800 border-red-200'; break;
     case 'waitlisted': colorClass = 'bg-amber-100 text-amber-800 border-amber-200'; break;
+    case 'interviewing': colorClass = 'bg-indigo-100 text-indigo-800 border-indigo-200'; break;
     case 'completed': colorClass = 'bg-purple-100 text-purple-800 border-purple-200'; break;
   }
   return (
@@ -922,21 +924,21 @@ export default function SeatAssignmentPage({ params }) {
 
             <form onSubmit={handleAddParticipant} className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
               <div className="col-span-2 sm:col-span-1">
-                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">Full Name *</p>
+                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">ชื่อ-นามสกุล *</p>
                 <input type="text" value={form.fullName} onChange={e => setForm({ ...form, fullName: e.target.value })} placeholder="ชื่อ-นามสกุล" className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-blue-500 outline-none transition-all" required />
               </div>
               <div className="col-span-2 sm:col-span-1">
-                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">Student ID</p>
+                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">รหัสผู้สมัคร</p>
                 <input type="text" value={form.studentId} onChange={e => setForm({ ...form, studentId: e.target.value })} placeholder="รหัสผู้สมัคร" className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-blue-500 outline-none transition-all" />
               </div>
               <div className="col-span-2">
-                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">National ID *</p>
+                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">เลขบัตรประชาชน *</p>
                 <input type="text" value={form.nationalId} onChange={e => setForm({ ...form, nationalId: e.target.value })} placeholder="เลขบัตรประชาชน" className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-blue-500 outline-none transition-all" required />
               </div>
               <div className="col-span-2 sm:col-span-1">
-                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">Course</p>
+                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">หลักสูตร</p>
                 <select value={form.course} onChange={e => setForm({ ...form, course: e.target.value })} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-blue-500 outline-none transition-all appearance-none cursor-pointer">
-                  <option value="">Select Course</option>
+                  <option value="">เลือกหลักสูตร</option>
                   {courseOptions.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                 </select>
               </div>
@@ -944,22 +946,22 @@ export default function SeatAssignmentPage({ params }) {
               {activity?.type === 'queue' && (
                 <>
                   <div className="col-span-2 sm:col-span-1">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">Time Slot *</p>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">ช่วงเวลา *</p>
                     <select value={form.timeSlot} onChange={e => setForm({ ...form, timeSlot: e.target.value })} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-blue-500 outline-none transition-all appearance-none cursor-pointer" required>
-                      <option value="">Select Time</option>
+                      <option value="">เลือกช่วงเวลา</option>
                       {timeSlotOptions.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
                     </select>
                   </div>
                   <div className="col-span-2 sm:col-span-1">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">Manual Queue</p>
-                    <input type="text" value={form.displayQueueNumber} onChange={e => setForm({ ...form, displayQueueNumber: e.target.value })} placeholder="Optional" className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-blue-500 outline-none transition-all" />
+                    <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">หมายเลขคิว (กำหนดเอง)</p>
+                    <input type="text" value={form.displayQueueNumber} onChange={e => setForm({ ...form, displayQueueNumber: e.target.value })} placeholder="เว้นว่างได้" className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-blue-500 outline-none transition-all" />
                   </div>
                 </>
               )}
 
               <div className="col-span-2 mt-2">
                 <button type="submit" className="w-full px-4 py-2.5 bg-blue-600 text-white text-xs font-bold rounded hover:bg-blue-700 transition-all shadow-sm active:scale-[0.98]">
-                  Add Participant Record
+                  เพิ่มรายชื่อผู้ลงทะเบียน
                 </button>
               </div>
             </form>
@@ -1069,6 +1071,8 @@ export default function SeatAssignmentPage({ params }) {
                           <select value={editStates[reg.id]?.status || 'registered'} onChange={(e) => handleInputChange(reg.id, 'status', e.target.value)} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm">
                             <option value="registered">ลงทะเบียนแล้ว</option>
                             <option value="checked-in">เช็คอินแล้ว</option>
+                            <option value="waitlisted">รอคิว</option>
+                            <option value="interviewing">สอบสัมภาษณ์</option>
                             <option value="completed">สำเร็จแล้ว</option>
                             <option value="cancelled">ยกเลิกแล้ว</option>
                           </select>
@@ -1161,7 +1165,7 @@ export default function SeatAssignmentPage({ params }) {
 
             <div className="p-6 space-y-8">
               {/* Key Metrics */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                 <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100">
                   <p className="text-sm text-blue-600 font-medium mb-1">ทั้งหมด</p>
                   <p className="text-3xl font-bold text-blue-800">{stats.total}</p>
@@ -1176,6 +1180,11 @@ export default function SeatAssignmentPage({ params }) {
                   <p className="text-sm text-amber-600 font-medium mb-1">รอคิว</p>
                   <p className="text-3xl font-bold text-amber-800">{stats.byStatus['waitlisted'] || 0}</p>
                   <p className="text-xs text-amber-500 mt-1">คน</p>
+                </div>
+                <div className="bg-indigo-50 p-4 rounded-2xl border border-indigo-100">
+                  <p className="text-sm text-indigo-600 font-medium mb-1">สอบสัมภาษณ์</p>
+                  <p className="text-3xl font-bold text-indigo-800">{stats.byStatus['interviewing'] || 0}</p>
+                  <p className="text-xs text-indigo-500 mt-1">คน</p>
                 </div>
                 <div className="bg-purple-50 p-4 rounded-2xl border border-purple-100">
                   <p className="text-sm text-purple-600 font-medium mb-1">สำเร็จ</p>

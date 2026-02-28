@@ -245,13 +245,15 @@ export default function QueueCallPage() {
 
             const batch = writeBatch(db);
             const channelRef = doc(db, 'queueChannels', channel.id);
+            const timestamp = new Date().getTime();
             batch.update(channelRef, {
                 currentQueueNumber: registrant.queueNumber || null,
                 currentDisplayQueueNumber: registrant.displayQueueNumber || null,
-                currentStudentName: registrant.fullName || null
+                currentStudentName: registrant.fullName || null,
+                pingId: timestamp
             });
             const regRef = doc(db, 'registrations', registrant.id);
-            batch.update(regRef, { calledAt: serverTimestamp() });
+            batch.update(regRef, { calledAt: serverTimestamp(), status: 'interviewing' });
             await batch.commit();
 
             // อ่านออกเสียงเลขคิว
@@ -296,13 +298,18 @@ export default function QueueCallPage() {
     };
 
     const handleRecall = async (channel) => {
-        if (!channel.currentQueueNumber) {
+        if (!channel.currentDisplayQueueNumber) {
             alert('ยังไม่มีคิวที่ถูกเรียกในช่องนี้');
             return;
         }
-        const currentRegistrant = registrants.find(r => r.queueNumber === channel.currentQueueNumber && r.course === channel.servingCourse);
+
+        // Search for registrant matching current queue being called exactly
+        const currentRegistrant = registrants.find(r =>
+            r.displayQueueNumber === channel.currentDisplayQueueNumber
+        );
+
         if (!currentRegistrant) {
-            alert(`ไม่พบข้อมูลผู้ลงทะเบียนสำหรับคิวที่ ${channel.currentQueueNumber}`);
+            alert(`ไม่พบข้อมูลผู้ลงทะเบียนสำหรับคิวที่ ${channel.currentDisplayQueueNumber}`);
             return;
         }
         await callSpecificRegistrant(channel, currentRegistrant);
@@ -310,7 +317,7 @@ export default function QueueCallPage() {
     };
 
     const handleInsertQueue = async (channel, displayQueueNumber) => {
-        const registrantToCall = registrants.find(r => r.displayQueueNumber === displayQueueNumber && r.status === 'checked-in');
+        const registrantToCall = registrants.find(r => r.displayQueueNumber === displayQueueNumber && (r.status === 'checked-in' || r.status === 'interviewing'));
         if (!registrantToCall) {
             alert(`ไม่พบคิว ${displayQueueNumber} ที่ได้ทำการเช็คอินไว้`);
             setInsertingOnChannel(null);
@@ -361,7 +368,7 @@ export default function QueueCallPage() {
                     onCancel={() => setInsertingOnChannel(null)}
                 />
             )}
-            <main className="container mx-auto p-4 md:p-8">
+            <main className="max-w-7xl mx-auto pt-4 ">
                 <h1 className="text-3xl font-bold mb-6 text-gray-800">เรียกคิวสำหรับ: {activity?.name}</h1>
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -410,7 +417,7 @@ export default function QueueCallPage() {
                                                 <NextIcon /> <span className="ml-2">เรียกคิวถัดไป</span>
                                             </button>
                                             <div className="grid grid-cols-2 gap-2">
-                                                <button onClick={() => handleRecall(channel)} className="w-full py-2 flex items-center justify-center bg-card text-white font-semibold rounded-md hover:opacity-90 disabled:bg-gray-400 transition-colors text-sm" disabled={!channel.currentQueueNumber}>
+                                                <button onClick={() => handleRecall(channel)} className="w-full py-2 flex items-center justify-center bg-card text-white font-semibold rounded-md hover:opacity-90 disabled:bg-gray-400 transition-colors text-sm" disabled={!channel.currentDisplayQueueNumber}>
                                                     เรียกซ้ำ
                                                 </button>
                                                 <button onClick={() => setInsertingOnChannel(channel.id)} className="w-full py-2 flex items-center justify-center bg-gray-600 text-white font-semibold rounded-md hover:bg-gray-700 transition-colors text-sm">
@@ -418,8 +425,15 @@ export default function QueueCallPage() {
                                                 </button>
                                             </div>
                                         </div>
-                                        <div className="text-center">
-                                            <button onClick={() => handleDeleteChannel(channel.id)} className="text-xs text-red-500 hover:text-red-700 hover:underline inline-flex items-center gap-1">
+                                        <div className="grid grid-cols-2 gap-2 text-center pt-2 border-t border-gray-100">
+                                            <button onClick={() => {
+                                                navigator.clipboard.writeText(`${window.location.origin}/admin/queue/control/${channel.id}`);
+                                                alert('คัดลอกลิงก์ควบคุมช่องบริการนี้สำเร็จ!');
+                                            }} className="text-xs text-blue-500 hover:text-blue-700 hover:underline inline-flex items-center justify-center gap-1">
+                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                                                คัดลอกลิงก์โต๊ะ
+                                            </button>
+                                            <button onClick={() => handleDeleteChannel(channel.id)} className="text-xs text-red-500 hover:text-red-700 hover:underline inline-flex items-center justify-center gap-1">
                                                 <TrashIcon /> ลบช่อง
                                             </button>
                                         </div>

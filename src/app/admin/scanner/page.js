@@ -7,12 +7,13 @@ import {
   doc, getDoc, updateDoc, collection,
   serverTimestamp, query, where, getDocs, runTransaction, Timestamp, limit, addDoc, orderBy
 } from 'firebase/firestore';
-import { createCheckInSuccessFlex, createEvaluationRequestFlex, createQueueCheckInSuccessFlex } from '../../../lib/flexMessageTemplates';
+import { createCheckInSuccessFlex, createActivityCompleteFlex, createQueueCheckInSuccessFlex } from '../../../lib/flexMessageTemplates';
 
 // --- Helper Functions ---
 const translateStatus = (status) => {
   switch (status) {
     case 'checked-in': return 'เช็คอินแล้ว';
+    case 'interviewing': return 'เข้าสอบสัมภาษณ์';
     case 'registered': return 'ลงทะเบียนแล้ว';
     case 'completed': return 'จบกิจกรรมแล้ว';
     case 'cancelled': return 'ยกเลิกแล้ว';
@@ -25,6 +26,7 @@ const StatusBadge = ({ status }) => {
   let colorClass = 'bg-gray-100 text-gray-800';
   switch (status) {
     case 'checked-in': colorClass = 'bg-green-100 text-green-800 border-green-200'; break;
+    case 'interviewing': colorClass = 'bg-purple-100 text-purple-800 border-purple-200'; break;
     case 'registered': colorClass = 'bg-blue-100 text-blue-800 border-blue-200'; break;
     case 'cancelled': colorClass = 'bg-red-100 text-red-800 border-red-200'; break;
     case 'waitlisted': colorClass = 'bg-amber-100 text-amber-800 border-amber-200'; break;
@@ -141,7 +143,7 @@ export default function UniversalScannerPage() {
 
       const registrationData = { id: regDoc.id, ...regDoc.data() };
 
-      if (scanMode === 'check-in' && registrationData.status === 'checked-in') {
+      if (scanMode === 'check-in' && (registrationData.status === 'checked-in' || registrationData.status === 'interviewing')) {
         const queueInfo = registrationData.displayQueueNumber ? ` (${registrationData.displayQueueNumber})` : '';
         setMessage(`✅ ${registrationData.fullName} ได้เช็คอินแล้ว${queueInfo}`);
         setScannerState('idle');
@@ -239,9 +241,13 @@ export default function UniversalScannerPage() {
             // ตรวจสอบว่าคิวนี้ถูกใช้งานโดยคนอื่นที่เช็คอินแล้วหรือยัง
             const result = await runTransaction(db, async (transaction) => {
               const regRef = doc(db, 'registrations', registration.id);
+              const activityRef = doc(db, 'activities', activity.id);
               const existingDisplayQueue = registration.displayQueueNumber;
 
-              // ตรวจสอบว่ามีคนอื่นใช้คิวนี้และเช็คอินไปแล้วหรือยัง
+              // READ 1: Get activity document state
+              const activityDoc = await transaction.get(activityRef);
+
+              // READ 2: Check for duplicates
               const registrationsRef = collection(db, 'registrations');
               const duplicateQuery = query(registrationsRef,
                 where("activityId", "==", activity.id),
@@ -252,12 +258,12 @@ export default function UniversalScannerPage() {
 
               let finalDisplayQueue = existingDisplayQueue;
               let finalQueueNumber;
+              let needsNewQueue = false;
 
               if (!duplicateSnapshot.empty) {
-                // มีคนอื่นใช้คิวนี้ไปแล้ว - ต้องสร้างคิวใหม่
+                needsNewQueue = true;
+                // READ 3 (If duplicated): Get max queue number
                 const courseName = registration.course;
-
-                // หาเลขคิวสูงสุดจาก displayQueueNumber
                 const allRegsQuery = query(registrationsRef,
                   where("activityId", "==", activity.id),
                   where("course", "==", courseName)
@@ -285,25 +291,18 @@ export default function UniversalScannerPage() {
                 const prefix = courseInfo?.shortName || '';
                 const paddedNumber = String(finalQueueNumber).padStart(3, '0');
                 finalDisplayQueue = `${prefix}-${paddedNumber}`;
-
-                transaction.update(regRef, {
-                  status: 'checked-in',
-                  queueNumber: finalQueueNumber,
-                  displayQueueNumber: finalDisplayQueue
-                });
               } else {
-                // ยังไม่มีใครใช้คิวนี้ - ใช้คิวเดิมได้
                 finalQueueNumber = parseInt(existingDisplayQueue.replace(/\D/g, ''), 10) || 0;
-
-                transaction.update(regRef, {
-                  status: 'checked-in',
-                  queueNumber: finalQueueNumber
-                });
               }
 
+              // --- ALL READS DONE. START WRITES ---
+              transaction.update(regRef, {
+                status: 'checked-in',
+                queueNumber: finalQueueNumber,
+                ...(needsNewQueue && { displayQueueNumber: finalDisplayQueue })
+              });
+
               // อัพเดท Counter ใน Activity
-              const activityRef = doc(db, 'activities', activity.id);
-              const activityDoc = await transaction.get(activityRef);
               if (activityDoc.exists()) {
                 const activityData = activityDoc.data();
                 const courseName = registration.course;
@@ -447,7 +446,19 @@ export default function UniversalScannerPage() {
         }
         setMessage(successMessage);
 
-      } else if (scanMode === 'check-out' && activity.enableEvaluation !== false) {
+      } else if (scanMode === 'check-out') {
+        // Require evaluation before check-out if evaluation is enabled
+        if (activity.enableEvaluation !== false) {
+          const evalQuery = query(collection(db, 'evaluations'), where("activityId", "==", activity.id), where("nationalId", "==", registration.nationalId));
+          const evalSnapshot = await getDocs(evalQuery);
+
+          if (evalSnapshot.empty) {
+            setMessage(`❌ ${registration.fullName} ยังไม่ได้ทำแบบประเมิน ไม่สามารถจบกิจกรรมได้`);
+            setScannerState('found');
+            return;
+          }
+        }
+
         const regRef = doc(db, 'registrations', registration.id);
         await updateDoc(regRef, { status: 'completed', completedAt: serverTimestamp() });
 
@@ -462,9 +473,11 @@ export default function UniversalScannerPage() {
         });
 
         if (settings.onCheckOut && lineUserId) {
-          const flexMessage = createEvaluationRequestFlex({
+          const flexMessage = createActivityCompleteFlex({
             activityId: registration.activityId,
             activityName: activity.name,
+            requireEvaluation: false, // บังคับว่าถ้ามีการกดจบกิจกรรม = ทำประเมินมาแล้ว (หรือปิดประเมินอยู่) จะไม่ส่งปุ่มให้ซ้ำ
+            isQueueType: activity.type === 'queue'
           });
           await fetch('/api/send-notification', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: lineUserId, flexMessage }) });
         }

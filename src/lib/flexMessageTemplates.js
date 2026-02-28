@@ -16,7 +16,7 @@ export const createCheckInSuccessFlex = ({ courseName, activityName, fullName, s
     type: "box",
     layout: "horizontal",
     contents: [
-     
+
       {
         type: "text",
         text: "ยืนยันการเข้าร่วมกิจกรรม",
@@ -189,7 +189,7 @@ export const createRegistrationSuccessFlex = ({ categoryName, activityName, full
       }
     ],
     paddingAll: "15px",
-    backgroundColor: "#FAFAFA" 
+    backgroundColor: "#FAFAFA"
   },
   body: {
     type: "box",
@@ -232,36 +232,75 @@ export const createRegistrationSuccessFlex = ({ categoryName, activityName, full
 });
 
 /**
- * สร้าง Flex Message สำหรับส่งแบบประเมิน
+ * สร้าง Flex Message สำหรับเสร็จสิ้นกิจกรรม / สัมภาษณ์ (ปรับแต่งได้)
+ * @param {object} param
+ * @param {string} param.activityId - ID ของกิจกรรม
+ * @param {string} param.activityName - ชื่อกิจกรรม
+ * @param {boolean} param.requireEvaluation - แทรกปุ่มแบบประเมินหรือไม่
+ * @param {boolean} param.isQueueType - เป็นการสัมภาษณ์(คิว) หรือ อบรมปกติ
  */
-export const createEvaluationRequestFlex = ({ activityId, activityName }) => ({
-  type: "bubble",
-  body: {
-    type: "box",
-    layout: "vertical",
-    contents: [
-      { type: "text", text: "สัมภาษณ์สมบูรณ์!!", weight: "bold", size: "xl" },
-      { type: "text", text: `กิจกรรม: ${activityName}`, margin: "md" },
-      { type: "text", text: "กรุณาทำแบบประเมินเพื่อสำเร็จกระบวนการสอบ", wrap: true, margin: "md" }
-    ]
-  },
-  footer: {
-    type: "box",
-    layout: "vertical",
-    contents: [
-      {
-        type: "button",
-        action: {
-          type: "uri",
-          label: "ทำแบบประเมิน",
-          uri: `https://line.me/R/app/${process.env.NEXT_PUBLIC_LIFF_ID}/student/evaluation/${activityId}`
-        },
-        style: "primary",
-        color: "#071D4A"
-      }
-    ]
+export const createActivityCompleteFlex = ({ activityId, activityName, requireEvaluation = true, isQueueType = false }) => {
+  const titleText = isQueueType ? "สัมภาษณ์เสร็จสมบูรณ์ 🎉" : "จบกิจกรรมเรียบร้อย 🎉";
+  const descText = requireEvaluation
+    ? "กรุณาทำแบบประเมินด้านล่างเพื่อสำเร็จกระบวนการ"
+    : "ขอขอบคุณที่เข้าร่วมกิจกรรมในครั้งนี้ 🙏";
+
+  const flexObj = {
+    type: "bubble",
+    body: {
+      type: "box",
+      layout: "vertical",
+      spacing: "md",
+      contents: [
+        { type: "text", text: titleText, weight: "bold", size: "xl", color: "#071D4A", wrap: true },
+        { type: "text", text: `กิจกรรม: ${activityName}`, margin: "md", wrap: true },
+        { type: "text", text: descText, wrap: true, margin: "md", color: "#666666" }
+      ]
+    }
+  };
+
+  if (requireEvaluation) {
+    flexObj.footer = {
+      type: "box",
+      layout: "vertical",
+      contents: [
+        {
+          type: "button",
+          action: {
+            type: "uri",
+            label: "ทำแบบประเมิน",
+            uri: `https://line.me/R/app/${process.env.NEXT_PUBLIC_LIFF_ID}/student/evaluation/${activityId}`
+          },
+          style: "primary",
+          color: "#071D4A"
+        }
+      ]
+    };
+  } else {
+    flexObj.footer = {
+      type: "box",
+      layout: "vertical",
+      contents: [
+        { type: "text", text: "ขอบคุณที่ให้ความร่วมมือ", align: "center", color: "#AAAAAA", size: "sm" }
+      ],
+      paddingAll: "15px"
+    };
   }
-});
+
+  return flexObj;
+};
+
+/**
+ * สร้าง Flex Message สำหรับส่งแบบประเมิน (คงไว้เพื่อ Backward Compatibility)
+ */
+export const createEvaluationRequestFlex = ({ activityId, activityName }) => {
+  return createActivityCompleteFlex({
+    activityId,
+    activityName,
+    requireEvaluation: true,
+    isQueueType: true
+  });
+};
 
 /**
  * สร้าง Flex Message สำหรับแจ้งเตือนเมื่อถึงคิว
@@ -298,7 +337,7 @@ export const createQueueCallFlex = ({ activityName, channelName, queueNumber, co
     contents: [
       {
         type: "text",
-        text: activityName,
+        text: activityName || "-",
         wrap: true,
         weight: "bold",
         size: "lg"
@@ -316,7 +355,7 @@ export const createQueueCallFlex = ({ activityName, channelName, queueNumber, co
           },
           {
             type: "text",
-            text: courseName,
+            text: courseName || "-",
             wrap: true,
             color: "#4a4a4a",
             size: "md",
@@ -341,7 +380,7 @@ export const createQueueCallFlex = ({ activityName, channelName, queueNumber, co
       },
       {
         type: "text",
-        text: channelName,
+        text: channelName || "-",
         weight: "bold",
         size: "xxl",
         align: "center",
@@ -350,7 +389,7 @@ export const createQueueCallFlex = ({ activityName, channelName, queueNumber, co
       },
       {
         type: "text",
-        text: `หมายเลขคิว ${queueNumber}`,
+        text: `หมายเลขคิว ${queueNumber || "-"}`,
         size: "lg",
         align: "center",
         color: "#4A4A4A",

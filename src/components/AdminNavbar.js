@@ -8,6 +8,11 @@ export default function AdminNavbar() {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
 
+  // Hide navbar on specific routes like the individual queue control screen
+  if (pathname?.includes('/admin/queue/control')) {
+    return null;
+  }
+
   // --- จุดที่แก้ไข: เพิ่ม "ข้อมูลนักเรียน" เข้าไปในเมนู ---
   const navLinks = [
     { name: 'แดชบอร์ดกิจกรรม', href: '/admin/activity' },
