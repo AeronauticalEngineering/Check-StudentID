@@ -51,6 +51,17 @@ export default function EvaluationPage() {
         setAnswers(prev => ({ ...prev, [questionId]: value }));
     };
 
+    const handleCheckboxChange = (questionId, optionValue, isChecked) => {
+        setAnswers(prev => {
+            const currentAnswers = prev[questionId] || [];
+            if (isChecked) {
+                return { ...prev, [questionId]: [...currentAnswers, optionValue] };
+            } else {
+                return { ...prev, [questionId]: currentAnswers.filter(item => item !== optionValue) };
+            }
+        });
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         setIsSubmitting(true);
@@ -60,7 +71,14 @@ export default function EvaluationPage() {
         if (activity?.evaluationQuestions) {
             // Dynamic Validation
             for (const q of activity.evaluationQuestions) {
-                if (!answers[q.id] || (typeof answers[q.id] === 'string' && !answers[q.id].trim())) {
+                const answer = answers[q.id];
+                if (q.type === 'checkbox') {
+                    if (!answer || !Array.isArray(answer) || answer.length === 0) {
+                        setMessage('กรุณากรอกข้อมูลให้ครบทุกข้อ');
+                        setIsSubmitting(false);
+                        return;
+                    }
+                } else if (!answer || (typeof answer === 'string' && !answer.trim())) {
                     setMessage('กรุณากรอกข้อมูลให้ครบทุกข้อ');
                     setIsSubmitting(false);
                     return;
@@ -159,6 +177,45 @@ export default function EvaluationPage() {
                                     rows="3"
                                     placeholder="พิมพ์คำตอบของคุณที่นี่..."
                                 ></textarea>
+                            )}
+
+                            {q.type === 'radio' && q.options && (
+                                <div className="space-y-2">
+                                    {q.options.map((opt, optIdx) => (
+                                        <label key={optIdx} className="flex items-center p-3 border rounded-xl hover:bg-gray-50 has-[:checked]:bg-blue-50 has-[:checked]:border-blue-200 cursor-pointer transition-all">
+                                            <input
+                                                type="radio"
+                                                name={`q_${q.id}`}
+                                                value={opt}
+                                                checked={answers[q.id] === opt}
+                                                onChange={(e) => handleAnswerChange(q.id, e.target.value)}
+                                                className="h-5 w-5 text-blue-600 focus:ring-blue-500 border-gray-300"
+                                            />
+                                            <span className="ml-3 text-gray-700 font-medium">{opt}</span>
+                                        </label>
+                                    ))}
+                                </div>
+                            )}
+
+                            {q.type === 'checkbox' && q.options && (
+                                <div className="space-y-2">
+                                    {q.options.map((opt, optIdx) => {
+                                        const isChecked = (answers[q.id] || []).includes(opt);
+                                        return (
+                                            <label key={optIdx} className="flex items-center p-3 border rounded-xl hover:bg-gray-50 has-[:checked]:bg-blue-50 has-[:checked]:border-blue-200 cursor-pointer transition-all">
+                                                <input
+                                                    type="checkbox"
+                                                    name={`q_${q.id}`}
+                                                    value={opt}
+                                                    checked={isChecked}
+                                                    onChange={(e) => handleCheckboxChange(q.id, opt, e.target.checked)}
+                                                    className="h-5 w-5 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                                />
+                                                <span className="ml-3 text-gray-700 font-medium">{opt}</span>
+                                            </label>
+                                        );
+                                    })}
+                                </div>
                             )}
                         </div>
                     ))

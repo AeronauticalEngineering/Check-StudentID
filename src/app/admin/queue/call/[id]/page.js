@@ -267,6 +267,8 @@ export default function QueueCallPage() {
                     channelName: channel.channelName || `ช่องบริการ ${channel.channelNumber}`,
                     queueNumber: registrant.displayQueueNumber,
                     courseName: registrant.course,
+                    activityId: registrant.activityId,
+                    requireEvaluation: activity.enableEvaluation !== false
                 });
 
                 const response = await fetch('/api/send-notification', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: lineUserId, flexMessage }) });

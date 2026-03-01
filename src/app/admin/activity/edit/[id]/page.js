@@ -54,9 +54,47 @@ export default function EditActivityPage({ params }) {
   };
 
   const handleQuestionChange = (id, field, value) => {
-    setEvaluationQuestions(evaluationQuestions.map(q =>
-      q.id === id ? { ...q, [field]: value } : q
-    ));
+    setEvaluationQuestions(evaluationQuestions.map(q => {
+      if (q.id === id) {
+        let newQ = { ...q, [field]: value };
+        if (field === 'type' && (value === 'checkbox' || value === 'radio') && (!newQ.options || newQ.options.length === 0)) {
+          newQ.options = ['ตัวเลือก 1', 'ตัวเลือก 2'];
+        }
+        return newQ;
+      }
+      return q;
+    }));
+  };
+
+  const handleOptionChange = (qId, optionIndex, value) => {
+    setEvaluationQuestions(evaluationQuestions.map(q => {
+      if (q.id === qId) {
+        const newOptions = [...(q.options || [])];
+        newOptions[optionIndex] = value;
+        return { ...q, options: newOptions };
+      }
+      return q;
+    }));
+  };
+
+  const handleAddOption = (qId) => {
+    setEvaluationQuestions(evaluationQuestions.map(q => {
+      if (q.id === qId) {
+        const newOptions = [...(q.options || []), `ตัวเลือก ${(q.options?.length || 0) + 1}`];
+        return { ...q, options: newOptions };
+      }
+      return q;
+    }));
+  };
+
+  const handleRemoveOption = (qId, optionIndex) => {
+    setEvaluationQuestions(evaluationQuestions.map(q => {
+      if (q.id === qId) {
+        const newOptions = q.options.filter((_, idx) => idx !== optionIndex);
+        return { ...q, options: newOptions };
+      }
+      return q;
+    }));
   };
 
   useEffect(() => {
@@ -258,30 +296,67 @@ export default function EditActivityPage({ params }) {
                   <p className="text-sm text-gray-600 mb-3">กำหนดหัวข้อคำถามที่ต้องการให้ผู้เข้าร่วมประเมิน</p>
                   <div className="space-y-3">
                     {evaluationQuestions.map((q, index) => (
-                      <div key={q.id} className="flex gap-2 items-start">
-                        <span className="pt-2 text-gray-500 text-sm">{index + 1}.</span>
-                        <input
-                          type="text"
-                          value={q.text}
-                          onChange={(e) => handleQuestionChange(q.id, 'text', e.target.value)}
-                          placeholder="คำถาม..."
-                          className="flex-grow p-2 border border-gray-300 rounded-md text-sm"
-                        />
-                        <select
-                          value={q.type}
-                          onChange={(e) => handleQuestionChange(q.id, 'type', e.target.value)}
-                          className="p-2 border border-gray-300 rounded-md text-sm w-32"
-                        >
-                          <option value="rating">ให้คะแนน (1-5)</option>
-                          <option value="text">ข้อความ</option>
-                        </select>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveQuestion(q.id)}
-                          className="p-2 text-red-500 hover:bg-red-50 rounded-md"
-                        >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                        </button>
+                      <div key={q.id} className="flex flex-col gap-2 bg-white p-3 rounded-lg border border-gray-100">
+                        <div className="flex gap-2 items-start">
+                          <span className="pt-2 text-gray-400 font-bold text-sm w-4">{index + 1}.</span>
+                          <input
+                            type="text"
+                            value={q.text}
+                            onChange={(e) => handleQuestionChange(q.id, 'text', e.target.value)}
+                            placeholder="คำถาม..."
+                            className="flex-grow p-2 border border-gray-300 rounded-md text-sm"
+                          />
+                          <select
+                            value={q.type}
+                            onChange={(e) => handleQuestionChange(q.id, 'type', e.target.value)}
+                            className="p-2 border border-gray-300 rounded-md text-sm w-36 bg-gray-50"
+                          >
+                            <option value="rating">ให้คะแนน (1-5)</option>
+                            <option value="text">ข้อความ</option>
+                            <option value="radio">ตัวเลือก (ข้อเดียว)</option>
+                            <option value="checkbox">ตัวเลือก (หลายข้อ)</option>
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveQuestion(q.id)}
+                            className="p-2 text-red-500 hover:bg-red-50 rounded-md"
+                          >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          </button>
+                        </div>
+
+                        {/* Options Editor for Checkbox / Radio */}
+                        {(q.type === 'checkbox' || q.type === 'radio') && (
+                          <div className="ml-6 pl-2 border-l-2 border-gray-200 mt-2 space-y-2">
+                            {q.options && q.options.map((opt, optIdx) => (
+                              <div key={optIdx} className="flex items-center gap-2">
+                                <div className={`w-3 h-3 border border-gray-400 ${q.type === 'radio' ? 'rounded-full' : 'rounded-sm'}`}></div>
+                                <input
+                                  type="text"
+                                  value={opt}
+                                  onChange={(e) => handleOptionChange(q.id, optIdx, e.target.value)}
+                                  className="text-sm p-1.5 border-b border-gray-200 focus:border-blue-500 focus:outline-none flex-grow bg-transparent"
+                                />
+                                {q.options.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveOption(q.id, optIdx)}
+                                    className="text-red-400 hover:text-red-600 p-1"
+                                  >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                            <button
+                              type="button"
+                              onClick={() => handleAddOption(q.id)}
+                              className="text-xs text-blue-500 hover:text-blue-700 font-medium ml-5 flex items-center gap-1 mt-1"
+                            >
+                              + เพิ่มตัวเลือก
+                            </button>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>

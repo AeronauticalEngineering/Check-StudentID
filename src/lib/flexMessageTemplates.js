@@ -8,6 +8,8 @@
  * @param {string} data.fullName - ชื่อเต็มของนักเรียน
  * @param {string} data.studentId - รหัสผู้สมัคร
  * @param {string} data.seatNumber - เลขที่นั่ง
+ * @param {string} data.studentId - รหัสผู้สมัคร
+ * @param {string} data.seatNumber - เลขที่นั่ง
  * @returns {object} - JSON Object ของ Flex Message
  */
 export const createCheckInSuccessFlex = ({ courseName, activityName, fullName, studentId, seatNumber }) => ({
@@ -73,7 +75,7 @@ export const createCheckInSuccessFlex = ({ courseName, activityName, fullName, s
     layout: "vertical",
     contents: [
       { type: "text", text: "เลขที่นั่ง", color: "#E6E6FA" },
-      { type: "text", text: seatNumber || "-", size: "4xl", weight: "bold", color: "#FFFFFF" }
+      { type: "text", text: seatNumber || "-", size: "3xl", weight: "bold", color: "#FFFFFF", wrap: true }
     ],
     backgroundColor: "#071D4A",
     alignItems: "center",
@@ -160,7 +162,7 @@ export const createQueueCheckInSuccessFlex = ({ activityName, fullName, course, 
     layout: "vertical",
     contents: [
       { type: "text", text: "หมายเลขคิวของคุณคือ", color: "#E6E6FA" },
-      { type: "text", text: String(queueNumber) || "-", size: "4xl", weight: "bold", color: "#FFFFFF" }
+      { type: "text", text: String(queueNumber) || "-", size: "3xl", weight: "bold", color: "#FFFFFF", wrap: true }
     ],
     backgroundColor: "#071D4A",
     alignItems: "center",
@@ -305,69 +307,72 @@ export const createEvaluationRequestFlex = ({ activityId, activityName }) => {
 /**
  * สร้าง Flex Message สำหรับแจ้งเตือนเมื่อถึงคิว
  */
-export const createQueueCallFlex = ({ activityName, channelName, queueNumber, courseName }) => ({
-  type: "bubble",
-  header: {
-    type: "box",
-    layout: "vertical",
-    contents: [
-      {
-        type: "text",
-        text: "NOTIFICATION",
-        color: "#ffffff66",
-        size: "sm"
-      },
-      {
-        type: "text",
-        text: "ถึงคิวของคุณแล้ว",
-        color: "#ffffff",
-        size: "xl",
-        flex: 4,
-        weight: "bold"
-      }
-    ],
-    paddingAll: "20px",
-    backgroundColor: "#071D4A",
-    spacing: "md",
-    paddingTop: "22px"
-  },
-  body: {
-    type: "box",
-    layout: "vertical",
-    contents: [
-      {
-        type: "text",
-        text: activityName || "-",
-        wrap: true,
-        weight: "bold",
-        size: "lg"
-      },
-      {
-        type: "box",
-        layout: "baseline",
-        contents: [
-          {
-            type: "text",
-            text: "หลักสูตร:",
-            color: "#8c8c8c",
-            size: "md",
-            flex: 2
-          },
-          {
-            type: "text",
-            text: courseName || "-",
-            wrap: true,
-            color: "#4a4a4a",
-            size: "md",
-            flex: 5
-          }
-        ],
-        spacing: "sm",
-        margin: "md"
-      }
-    ]
-  },
-  footer: {
+export const createQueueCallFlex = ({ activityName, channelName, queueNumber, courseName, activityId, requireEvaluation = false }) => {
+  const flexObj = {
+    type: "bubble",
+    header: {
+      type: "box",
+      layout: "vertical",
+      contents: [
+        {
+          type: "text",
+          text: "NOTIFICATION",
+          color: "#ffffff66",
+          size: "sm"
+        },
+        {
+          type: "text",
+          text: "ถึงคิวของคุณแล้ว",
+          color: "#ffffff",
+          size: "xl",
+          flex: 4,
+          weight: "bold"
+        }
+      ],
+      paddingAll: "20px",
+      backgroundColor: "#071D4A",
+      spacing: "md",
+      paddingTop: "22px"
+    },
+    body: {
+      type: "box",
+      layout: "vertical",
+      contents: [
+        {
+          type: "text",
+          text: activityName || "-",
+          wrap: true,
+          weight: "bold",
+          size: "lg"
+        },
+        {
+          type: "box",
+          layout: "baseline",
+          contents: [
+            {
+              type: "text",
+              text: "หลักสูตร:",
+              color: "#8c8c8c",
+              size: "md",
+              flex: 2
+            },
+            {
+              type: "text",
+              text: courseName || "-",
+              wrap: true,
+              color: "#4a4a4a",
+              size: "md",
+              flex: 5
+            }
+          ],
+          spacing: "sm",
+          margin: "md"
+        }
+      ]
+    }
+  };
+
+  flexObj.footer = {
     type: "box",
     layout: "vertical",
     contents: [
@@ -393,9 +398,26 @@ export const createQueueCallFlex = ({ activityName, channelName, queueNumber, co
         size: "lg",
         align: "center",
         color: "#4A4A4A",
-        margin: "md"
+        margin: "md",
+        wrap: true
       }
     ],
     spacing: "sm"
+  };
+
+  if (requireEvaluation) {
+    flexObj.footer.contents.push({
+      type: "button",
+      action: {
+        type: "uri",
+        label: "ทำแบบประเมิน",
+        uri: `https://line.me/R/app/${process.env.NEXT_PUBLIC_LIFF_ID}/student/evaluation/${activityId}`
+      },
+      style: "primary",
+      color: "#f59e0b",
+      margin: "md"
+    });
   }
-});
+
+  return flexObj;
+};

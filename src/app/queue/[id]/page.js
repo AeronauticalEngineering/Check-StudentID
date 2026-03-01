@@ -204,11 +204,11 @@ export default function QueueDisplayPage() {
                 <div
                   key={channel.id}
                   className={`rounded-2xl shadow-lg overflow-hidden transition-all duration-300 transform 
-                  ${isPulsing ? 'scale-110 ring-8 ring-primary ring-opacity-50 z-10' : 'hover:scale-105'} 
+                  ${isPulsing ? 'scale-110 ring-8 ring-red-500 ring-opacity-50 z-10' : 'hover:scale-105'} 
                   ${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}
                 `}
                 >
-                  <div className={`p-6 transition-colors duration-500 ${isPulsing ? 'bg-primary text-white' : ''}`}>
+                  <div className={`p-6 transition-colors duration-500 ${isPulsing ? 'bg-red-600 text-white' : ''}`}>
                     <h3 className={`text-xl font-bold truncate ${isPulsing ? 'text-white' : 'text-gray-800'}`}>
                       {channel.channelName || `ช่องบริการ ${channel.channelNumber}`}
                     </h3>
@@ -217,14 +217,14 @@ export default function QueueDisplayPage() {
                     </p>
                   </div>
 
-                  <div className={`px-6 py-8 text-center transition-colors duration-500 ${isPulsing ? 'bg-white border-4 border-primary' : 'bg-gradient-to-br from-blue-50 to-indigo-100'}`}>
-                    <p className={`text-sm font-medium ${isPulsing ? 'text-primary animate-pulse' : 'text-gray-500'}`}>
+                  <div className={`px-6 py-8 text-center transition-colors duration-500 ${isPulsing ? 'bg-white border-4 border-red-600' : 'bg-gradient-to-br from-blue-50 to-indigo-100'}`}>
+                    <p className={`text-sm font-medium ${isPulsing ? 'text-red-600 animate-pulse' : 'text-gray-500'}`}>
                       {isPulsing ? 'กำลังเรียกคิว!' : 'คิวปัจจุบัน'}
                     </p>
-                    <p className={`text-5xl font-bold tracking-tighter my-2 ${isPulsing ? 'text-green-600 animate-bounce' : 'text-primary'}`}>
+                    <p className={`text-5xl font-bold tracking-tighter my-2 ${isPulsing ? 'text-red-600 animate-bounce' : 'text-primary'}`}>
                       {channel.currentDisplayQueueNumber || '-'}
                     </p>
-                    <p className={`text-xl font-bold h-8 truncate ${isPulsing ? 'text-gray-900' : 'text-gray-700 font-medium'}`}>
+                    <p className={`text-xl font-bold h-8 truncate ${isPulsing ? 'text-red-800' : 'text-gray-700 font-medium'}`}>
                       {channel.currentStudentName || 'ว่าง'}
                     </p>
                   </div>

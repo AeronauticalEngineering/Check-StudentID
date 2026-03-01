@@ -117,7 +117,9 @@ export default function QueueControlPage() {
                     activityName: activity?.name || '',
                     channelName: channel.channelName || `ช่องบริการ ${channel.channelNumber}`,
                     queueNumber: registrant.displayQueueNumber,
-                    courseName: registrant.course
+                    courseName: registrant.course,
+                    activityId: registrant.activityId,
+                    requireEvaluation: activity?.enableEvaluation !== false
                 });
 
                 await fetch('/api/send-notification', {
