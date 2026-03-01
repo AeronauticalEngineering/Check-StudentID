@@ -71,17 +71,22 @@ export default function EvaluationPage() {
         if (activity?.evaluationQuestions) {
             // Dynamic Validation
             for (const q of activity.evaluationQuestions) {
-                const answer = answers[q.id];
-                if (q.type === 'checkbox') {
-                    if (!answer || !Array.isArray(answer) || answer.length === 0) {
-                        setMessage('กรุณากรอกข้อมูลให้ครบทุกข้อ');
+                // By default, if isRequired is undefined, it is assumed to be true.
+                const isRequired = q.isRequired !== false;
+
+                if (isRequired) {
+                    const answer = answers[q.id];
+                    if (q.type === 'checkbox') {
+                        if (!answer || !Array.isArray(answer) || answer.length === 0) {
+                            setMessage('กรุณากรอกข้อมูลในข้อที่บังคับให้ครบถ้วน');
+                            setIsSubmitting(false);
+                            return;
+                        }
+                    } else if (!answer || (typeof answer === 'string' && !answer.trim())) {
+                        setMessage('กรุณากรอกข้อมูลในข้อที่บังคับให้ครบถ้วน');
                         setIsSubmitting(false);
                         return;
                     }
-                } else if (!answer || (typeof answer === 'string' && !answer.trim())) {
-                    setMessage('กรุณากรอกข้อมูลให้ครบทุกข้อ');
-                    setIsSubmitting(false);
-                    return;
                 }
             }
         } else {
@@ -147,7 +152,10 @@ export default function EvaluationPage() {
                 {activity.evaluationQuestions ? (
                     activity.evaluationQuestions.map((q, index) => (
                         <div key={q.id} className="border-b border-gray-100 pb-6 last:border-0">
-                            <p className="font-semibold text-gray-800 mb-3">{index + 1}. {q.text}</p>
+                            <p className="font-semibold text-gray-800 mb-3">
+                                {index + 1}. {q.text}
+                                {q.isRequired !== false && <span className="text-red-500 ml-1">*</span>}
+                            </p>
 
                             {q.type === 'rating' && (
                                 <div className="space-y-2">

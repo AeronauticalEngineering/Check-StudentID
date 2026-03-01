@@ -77,7 +77,7 @@ export default function AddActivityPage() {
   const handleAddQuestion = () => {
     setEvaluationQuestions([
       ...evaluationQuestions,
-      { id: Date.now(), text: '', type: 'rating' }
+      { id: Date.now(), text: '', type: 'rating', isRequired: true }
     ]);
   };
 
@@ -301,6 +301,15 @@ export default function AddActivityPage() {
                             <option value="radio">ตัวเลือก (ข้อเดียว)</option>
                             <option value="checkbox">ตัวเลือก (หลายข้อ)</option>
                           </select>
+                          <label className="flex items-center gap-1 mt-2 text-sm text-gray-600 whitespace-nowrap cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={q.isRequired !== false} // Default is true if undefined
+                              onChange={(e) => handleQuestionChange(q.id, 'isRequired', e.target.checked)}
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                            />
+                            บังคับตอบ
+                          </label>
                           <button
                             type="button"
                             onClick={() => handleRemoveQuestion(q.id)}
