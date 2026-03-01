@@ -125,8 +125,7 @@ export default function EvaluationPage() {
 
             await addDoc(collection(db, 'evaluations'), evaluationData);
 
-            setMessage('ขอบคุณสำหรับการประเมิน!');
-            setTimeout(() => router.push('/student/my-registrations'), 2000);
+            router.push('/student/my-registrations');
         } catch (error) {
             console.error("Submit error:", error);
             setMessage('เกิดข้อผิดพลาดในการส่งข้อมูล');
@@ -143,10 +142,11 @@ export default function EvaluationPage() {
 
     return (
         <div className="max-w-2xl mx-auto p-4 md:p-8">
-            <h1 className="text-2xl font-bold mb-2">แบบประเมินกิจกรรม</h1>
-            <p className="text-gray-600 mb-6">{activity.name}</p>
-
-            <form onSubmit={handleSubmit} className="bg-white p-6 rounded-lg shadow-md space-y-6">
+            <form onSubmit={handleSubmit} className="bg-white shadow-lg border border-gray-100 rounded-2xl p-6 md:p-8 space-y-6">
+                <h1 className="text-xl font-bold text-center text-gray-800">
+                    แบบประเมินกิจกรรม
+                </h1>
+                <p className="text-center text-gray-500 text-sm -mt-3">{activity?.name}</p>
 
                 {/* Dynamic Questions */}
                 {activity.evaluationQuestions ? (
@@ -181,10 +181,10 @@ export default function EvaluationPage() {
                                 <textarea
                                     value={answers[q.id] || ''}
                                     onChange={(e) => handleAnswerChange(q.id, e.target.value)}
-                                    className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
+                                    className="w-full p-3 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
                                     rows="3"
-                                    placeholder="พิมพ์คำตอบของคุณที่นี่..."
-                                ></textarea>
+                                    placeholder="พิมพ์คำตอบของคุณ..."
+                                />
                             )}
 
                             {q.type === 'radio' && q.options && (
@@ -199,7 +199,7 @@ export default function EvaluationPage() {
                                                 onChange={(e) => handleAnswerChange(q.id, e.target.value)}
                                                 className="h-5 w-5 text-blue-600 focus:ring-blue-500 border-gray-300"
                                             />
-                                            <span className="ml-3 text-gray-700 font-medium">{opt}</span>
+                                            <span className="ml-3 text-gray-700">{opt}</span>
                                         </label>
                                     ))}
                                 </div>
@@ -213,13 +213,12 @@ export default function EvaluationPage() {
                                             <label key={optIdx} className="flex items-center p-3 border rounded-xl hover:bg-gray-50 has-[:checked]:bg-blue-50 has-[:checked]:border-blue-200 cursor-pointer transition-all">
                                                 <input
                                                     type="checkbox"
-                                                    name={`q_${q.id}`}
                                                     value={opt}
                                                     checked={isChecked}
                                                     onChange={(e) => handleCheckboxChange(q.id, opt, e.target.checked)}
                                                     className="h-5 w-5 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                                                 />
-                                                <span className="ml-3 text-gray-700 font-medium">{opt}</span>
+                                                <span className="ml-3 text-gray-700">{opt}</span>
                                             </label>
                                         );
                                     })}
@@ -231,7 +230,7 @@ export default function EvaluationPage() {
                     /* Legacy Fallback */
                     <>
                         <div>
-                            <p className="font-semibold">1. ความพึงพอใจโดยรวมต่อกระบวนการรับสมัคร</p>
+                            <p className="font-semibold">1. ท่านมีความพึงพอใจต่อกิจกรรมนี้มากน้อยเพียงใด</p>
                             <div className="mt-2 space-y-2">
                                 {satisfactionOptions.map((option) => (
                                     <label key={option} className="flex items-center p-3 border rounded-md has-[:checked]:bg-blue-50 has-[:checked]:border-primary cursor-pointer">

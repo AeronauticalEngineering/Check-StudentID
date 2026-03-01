@@ -71,24 +71,51 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
           <div className="flex justify-between items-start">
             <div className="flex items-center gap-2 text-sm font-semibold">{getStatusDisplay()}</div>
             <div className="flex flex-col items-end gap-2">
-              {((reg.status === 'registered') ||
-                ((reg.status === 'checked-in' || reg.status === 'interviewing') &&
-                  (!(activity.enableEvaluation === true || activity.enableEvaluation === undefined) || hasEvaluated))) && (
-                  <button
-                    onClick={() => onShowQr(reg.id)}
-                    className="px-3 py-1.5 bg-gray-800 text-white text-[12px] font-bold rounded-full hover:bg-gray-900 transition-all active:scale-95 whitespace-nowrap"
-                  >
-                    {reg.status === 'registered' ? 'QR เช็คอิน' : 'QR จบกิจกรรม'}
-                  </button>
-                )}
-              {(reg.status === 'completed' || reg.status === 'interviewing' || reg.status === 'checked-in') && !hasEvaluated && (activity.enableEvaluation === true || activity.enableEvaluation === undefined) && (
-                <Link
-                  href={`/student/evaluation/${reg.activityId}`}
-                  className="px-3 py-1.5 bg-yellow-500 text-white text-[12px] font-bold rounded-full hover:bg-yellow-600 transition-all active:scale-95 whitespace-nowrap"
+              {/* ปุ่ม QR เช็คอิน - แสดงเฉพาะสถานะ registered */}
+              {reg.status === 'registered' && (
+                <button
+                  onClick={() => onShowQr(reg.id)}
+                  className="px-3 py-1.5 bg-gray-800 text-white text-[12px] font-bold rounded-full hover:bg-gray-900 transition-all active:scale-95 whitespace-nowrap"
                 >
-                  ประเมินกิจกรรม
-                </Link>
+                  QR เช็คอิน
+                </button>
               )}
+              {/* ข้อความ รอเรียกคิว - แสดงเมื่อ checked-in + กิจกรรมคิว */}
+              {reg.status === 'checked-in' && activity.type === 'queue' && (
+                <span className="px-3 py-1.5 bg-orange-100 text-orange-700 text-[12px] font-bold rounded-full whitespace-nowrap">
+                  ⏳ รอเรียกคิว
+                </span>
+              )}
+              {/* ปุ่ม QR จบกิจกรรม - แสดงเมื่อ interviewing + ประเมินแล้ว (หรือปิดการประเมิน) */}
+              {reg.status === 'interviewing' && (hasEvaluated || activity.enableEvaluation === false) && (
+                <button
+                  onClick={() => onShowQr(reg.id)}
+                  className="px-3 py-1.5 bg-gray-800 text-white text-[12px] font-bold rounded-full hover:bg-gray-900 transition-all active:scale-95 whitespace-nowrap"
+                >
+                  QR จบกิจกรรม
+                </button>
+              )}
+              {/* ปุ่ม QR จบกิจกรรม (กิจกรรมปกติ ไม่ใช่คิว) */}
+              {reg.status === 'checked-in' && activity.type !== 'queue' && (hasEvaluated || activity.enableEvaluation === false) && (
+                <button
+                  onClick={() => onShowQr(reg.id)}
+                  className="px-3 py-1.5 bg-gray-800 text-white text-[12px] font-bold rounded-full hover:bg-gray-900 transition-all active:scale-95 whitespace-nowrap"
+                >
+                  QR จบกิจกรรม
+                </button>
+              )}
+              {/* ปุ่มประเมินกิจกรรม - กิจกรรมคิว: แสดงเฉพาะ interviewing | กิจกรรมปกติ: แสดงเมื่อ checked-in/completed */}
+              {!hasEvaluated && (activity.enableEvaluation === true || activity.enableEvaluation === undefined) && (
+                (activity.type === 'queue' && reg.status === 'interviewing') ||
+                (activity.type !== 'queue' && (reg.status === 'checked-in' || reg.status === 'completed'))
+              ) && (
+                  <Link
+                    href={`/student/evaluation/${reg.activityId}`}
+                    className="px-3 py-1.5 bg-yellow-500 text-white text-[12px] font-bold rounded-full hover:bg-yellow-600 transition-all active:scale-95 whitespace-nowrap"
+                  >
+                    ประเมินกิจกรรม
+                  </Link>
+                )}
             </div>
           </div>
           <h2 className="text-lg font-bold text-gray-800 mt-2 line-clamp-2">{activity.name}</h2>
