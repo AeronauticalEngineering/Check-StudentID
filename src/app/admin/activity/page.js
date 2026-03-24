@@ -256,118 +256,120 @@ export default function ActivityDashboardPage() {
               const isPastEvent = activityDate && activityDate < new Date() && activityDate.toDateString() !== new Date().toDateString();
               const isToday = activityDate && activityDate.toDateString() === new Date().toDateString();
 
-              let statusConfig = { text: 'เปิดรับ', bg: 'bg-emerald-50', textCol: 'text-emerald-700', border: 'border-emerald-100' };
+              let statusConfig = { text: 'เปิดรับ', bg: 'bg-blue-50', textCol: 'text-blue-700', border: 'border-blue-200' };
 
               if (isPastEvent) {
                 statusConfig = { text: 'สิ้นสุด', bg: 'bg-gray-100', textCol: 'text-gray-600', border: 'border-gray-200' };
               } else if (isToday) {
-                statusConfig = { text: 'วันนี้', bg: 'bg-amber-50', textCol: 'text-amber-700', border: 'border-amber-100' };
+                statusConfig = { text: 'วันนี้', bg: 'bg-orange-50', textCol: 'text-orange-700', border: 'border-orange-200' };
               } else if (isFullyBooked) {
-                statusConfig = { text: 'เต็ม', bg: 'bg-rose-50', textCol: 'text-rose-700', border: 'border-rose-100' };
+                statusConfig = { text: 'เต็ม', bg: 'bg-red-50', textCol: 'text-red-700', border: 'border-red-200' };
               }
 
               return (
                 <div
                   key={activity.id}
-                  className={`bg-white rounded-xl transition-all duration-200 border-2 border-gray-200 hover:border-gray-300 flex flex-col h-full overflow-hidden ${isPastEvent ? 'grayscale opacity-75' : ''}`}
+                  className={`bg-white rounded-2xl transition-all duration-300 border-2 border-gray-100 hover:border-orange-300 hover:shadow-xl hover:shadow-orange-100/50 flex flex-col h-full overflow-hidden font-sans group ${isPastEvent ? 'grayscale opacity-75' : ''}`}
                 >
                   {/* Card Header Area */}
-                  <div className="px-5 py-4 border-b border-gray-50 flex justify-between items-start">
-                    <span className={`px-2 py-0.5 text-[10px] font-bold rounded uppercase tracking-wider border ${statusConfig.bg} ${statusConfig.textCol} ${statusConfig.border}`}>
+                  <div className="px-5 py-4 border-b border-gray-50 flex justify-between items-start bg-gradient-to-r from-blue-50/50 to-transparent">
+                    <span className={`px-2 py-1 text-[10px] font-bold rounded-md uppercase tracking-wider border ${statusConfig.bg} ${statusConfig.textCol} ${statusConfig.border}`}>
                       {statusConfig.text}
                     </span>
-                    <span className="text-[10px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded border-2 border-gray-200 uppercase tracking-tight">
+                    <span className="text-[10px] font-bold text-orange-600 bg-orange-50 px-2.5 py-1 rounded-md border border-orange-200 uppercase tracking-tight shadow-sm">
                       {activity.type === 'exam' ? 'สอบ' : activity.type === 'interview' ? 'สัมภาษณ์' : activity.type === 'queue' ? 'คิว' : activity.type === 'graduation' ? 'รับปริญญา' : activity.type === 'event' ? 'กิจกรรม' : 'อื่นๆ'}
                     </span>
                   </div>
 
                   <div className="p-5 flex-grow">
-                    <h3 className="text-base font-bold text-gray-800 leading-snug line-clamp-2 mb-4 h-10">
+                    <h3 className="text-lg font-bold text-blue-900 leading-snug line-clamp-2 mb-5 h-12 group-hover:text-orange-600 transition-colors">
                       {activity.name}
                     </h3>
 
                     {/* Metadata Grid */}
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-3 pt-2">
-                      <div className="flex items-center gap-2">
-                        <div className="p-1.5 bg-gray-100 rounded text-gray-400">
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                        </div>
-                        <div className="overflow-hidden">
-                          <p className="text-[10px] uppercase text-gray-500 font-bold leading-none mb-0.5">วันที่</p>
-                          <p className="text-xs font-bold text-gray-800 truncate">{activityDate ? activityDate.toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: '2-digit' }) : '-'}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="p-1.5 bg-gray-100 rounded text-gray-400">
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                        </div>
-                        <div className="overflow-hidden">
-                          <p className="text-[10px] uppercase text-gray-500 font-bold leading-none mb-0.5">เวลา</p>
-                          <p className="text-xs font-bold text-gray-800">{activityDate ? activityDate.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '-'}</p>
-                        </div>
-                      </div>
-                      <div className="col-span-2 flex items-center gap-2">
-                        <div className="p-1.5 bg-gray-100 rounded text-gray-400">
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /></svg>
-                        </div>
-                        <div className="overflow-hidden">
-                          <p className="text-[10px] uppercase text-gray-500 font-bold leading-none mb-0.5">สถานที่</p>
-                          <p className="text-xs font-bold text-gray-800 truncate">{activity.location || 'ไม่ระบุสถานที่'}</p>
-                        </div>
-                      </div>
-                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-4 pt-2">
+                       <div className="flex items-center gap-2">
+                         <div className="p-2 bg-blue-50 text-blue-500 rounded-lg">
+                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                         </div>
+                         <div className="overflow-hidden">
+                           <p className="text-[10px] uppercase text-gray-400 font-bold leading-none mb-1">วันที่</p>
+                           <p className="text-xs font-bold text-gray-700 truncate">{activityDate ? activityDate.toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: '2-digit' }) : '-'}</p>
+                         </div>
+                       </div>
+                       <div className="flex items-center gap-2">
+                         <div className="p-2 bg-orange-50 text-orange-500 rounded-lg">
+                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                         </div>
+                         <div className="overflow-hidden">
+                           <p className="text-[10px] uppercase text-gray-400 font-bold leading-none mb-1">เวลา</p>
+                           <p className="text-xs font-bold text-gray-700">{activityDate ? activityDate.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '-'}</p>
+                         </div>
+                       </div>
+                       <div className="col-span-2 flex items-center gap-2">
+                         <div className="p-2 bg-gray-50 text-gray-500 rounded-lg">
+                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /></svg>
+                         </div>
+                         <div className="overflow-hidden">
+                           <p className="text-[10px] uppercase text-gray-400 font-bold leading-none mb-1">สถานที่</p>
+                           <p className="text-xs font-medium text-gray-700 truncate">{activity.location || 'ไม่ระบุสถานที่'}</p>
+                         </div>
+                       </div>
+                     </div>
                   </div>
 
                   {/* Operational Controls (Compact) */}
-                  <div className="bg-gray-50/50 px-5 py-3 border-t-2 border-gray-100 space-y-2">
-                    <div className="flex justify-between items-center text-[11px] font-bold text-gray-600">
+                  <div className="px-5 py-3 border-t border-gray-50 bg-gray-50/30 space-y-2.5">
+                    <div className="flex justify-between items-center text-xs font-bold text-gray-500">
                       <span>เปิดรับลงทะเบียน</span>
                       <button
                         onClick={(e) => { e.preventDefault(); handleToggleRegistration(activity.id, activity.isRegistrationOpen); }}
-                        className={`w-8 h-4 rounded-full relative transition-colors ${activity.isRegistrationOpen ? 'bg-green-500' : 'bg-gray-300'}`}
+                        className={`w-9 h-5 rounded-full relative transition-colors shadow-inner ${activity.isRegistrationOpen ? 'bg-blue-500' : 'bg-gray-300'}`}
                       >
-                        <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-transform ${activity.isRegistrationOpen ? 'left-[17px]' : 'left-[3px]'}`} />
+                        <span className={`absolute top-[2px] w-4 h-4 bg-white rounded-full transition-transform shadow ${activity.isRegistrationOpen ? 'left-[18px]' : 'left-[2px]'}`} />
                       </button>
                     </div>
-                    <div className="flex justify-between items-center text-[11px] font-bold text-gray-600">
+                    <div className="flex justify-between items-center text-xs font-bold text-gray-500">
                       <span>เปิดทำแบบประเมิน</span>
                       <button
                         onClick={(e) => { e.preventDefault(); handleToggleEvaluation(activity.id, activity.enableEvaluation); }}
-                        className={`w-8 h-4 rounded-full relative transition-colors ${activity.enableEvaluation ? 'bg-blue-500' : 'bg-gray-300'}`}
+                        className={`w-9 h-5 rounded-full relative transition-colors shadow-inner ${activity.enableEvaluation ? 'bg-orange-500' : 'bg-gray-300'}`}
                       >
-                        <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-transform ${activity.enableEvaluation ? 'left-[17px]' : 'left-[3px]'}`} />
+                        <span className={`absolute top-[2px] w-4 h-4 bg-white rounded-full transition-transform shadow ${activity.enableEvaluation ? 'left-[18px]' : 'left-[2px]'}`} />
                       </button>
                     </div>
                   </div>
 
                   {/* Actions & Progress Area */}
-                  <div className="p-5 bg-white space-y-4">
-                    <div className="space-y-1.5">
-                      <div className="flex justify-between text-[11px] font-bold uppercase tracking-wider text-gray-500">
-                        <span>จำนวนที่นั่ง (ความจุ)</span>
-                        <span className="text-gray-800">
-                          <span className={isFullyBooked ? 'text-red-600 font-bold' : 'text-primary font-bold'}>{count}</span> / {activity.capacity}
-                        </span>
-                      </div>
-                      <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full transition-all duration-500 rounded-full ${isFullyBooked ? 'bg-red-500' : (count / activity.capacity) > 0.8 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                          style={{ width: `${Math.min((count / activity.capacity) * 100, 100)}%` }}
-                        />
-                      </div>
-                    </div>
+                  <div className="p-5 bg-white border-t border-gray-100 flex flex-col gap-4">
+                    <div className="space-y-2">
+                       <div className="flex justify-between text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                         <span>จำนวนคนลงทะเบียน</span>
+                         <span className="text-gray-800">
+                           <span className={isFullyBooked ? 'text-red-500' : 'text-blue-600'}>{count}</span> / {activity.capacity}
+                         </span>
+                       </div>
+                       <div className="w-full bg-gray-100 h-2.5 rounded-full overflow-hidden shadow-inner">
+                         <div
+                           className={`h-full transition-all duration-500 rounded-full ${isFullyBooked ? 'bg-red-400' : (count / activity.capacity) > 0.8 ? 'bg-orange-400' : 'bg-blue-500'}`}
+                           style={{ width: `${Math.min((count / activity.capacity) * 100, 100)}%` }}
+                         />
+                       </div>
+                     </div>
 
                     <div className="flex gap-2">
                       <Link
                         href={`/admin/activity/seats/${activity.id}`}
-                        className="flex-1 bg-gray-800 text-white text-xs font-bold py-2.5 rounded border-2 border-gray-800 hover:bg-black transition-colors text-center"
+                        className="flex-1 bg-gradient-to-r from-blue-700 to-blue-600 text-white text-xs font-bold py-2.5 rounded-lg border border-blue-800 hover:from-orange-500 hover:to-orange-500 hover:border-orange-600 shadow-sm hover:shadow-orange-200 transition-all text-center flex items-center justify-center gap-1.5"
                       >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                         จัดการ
                       </Link>
                       <Link
                         href={`/admin/activity/edit/${activity.id}`}
-                        className="px-4 border-2 border-gray-300 text-gray-700 text-xs font-bold py-2.5 rounded hover:bg-gray-100 transition-colors text-center"
+                        className="px-4 bg-white border border-gray-200 text-gray-600 text-xs font-bold py-2.5 rounded-lg hover:bg-gray-50 hover:text-orange-600 hover:border-orange-200 transition-colors text-center shadow-sm flex items-center justify-center gap-1.5"
                       >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                         แก้ไข
                       </Link>
                     </div>

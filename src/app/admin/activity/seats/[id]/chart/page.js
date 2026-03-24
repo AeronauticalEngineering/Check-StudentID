@@ -172,15 +172,15 @@ export default function SeatingChartPage({ params }) {
         );
     }
 
-    // Render EXAM Chart (6 Zones: A-F, 10x10 each)
+    // Render EXAM Chart (10 Zones: A-J, 10x10 each)
     const renderExamChart = () => {
-        const zones = ['A', 'B', 'C', 'D', 'E', 'F'];
+        const zones = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
 
         return (
             <div className="bg-white rounded-lg shadow-lg p-6 overflow-x-auto">
                 <div className="text-center mb-6">
                     <h2 className="text-xl font-bold text-gray-800">ผังที่นั่งสอบข้อเขียน (10 x 10 ต่อโซน)</h2>
-                    <p className="text-sm text-gray-500">เลขที่นั่งเรียงจาก 001-600 แบ่งเป็น 6 โซน (A-F)</p>
+                    <p className="text-sm text-gray-500">เลขที่นั่งเรียงจาก 001-1000 แบ่งเป็น 10 โซน (A-J)</p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8 justify-items-center">

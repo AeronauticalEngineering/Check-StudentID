@@ -406,8 +406,8 @@ export default function SeatAssignmentPage({ params }) {
           let currentSeatIndex = 0;
 
           if (activity.type === 'exam') {
-            // EXAM Logic: A001-F600
-            const zones = ['A', 'B', 'C', 'D', 'E', 'F'];
+            // EXAM Logic: A001-J1000
+            const zones = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
             const seatsPerZone = 100;
 
             for (const reg of sortedRegistrants) {

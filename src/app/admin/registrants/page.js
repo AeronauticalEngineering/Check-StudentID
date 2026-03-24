@@ -15,11 +15,8 @@ export default function AllRegistrantsPage() {
   const [message, setMessage] = useState('');
   const [selectedIds, setSelectedIds] = useState(new Set());
 
-  // Pagination States
-  const [lastVisible, setLastVisible] = useState(null);
+  const [allRegistrations, setAllRegistrations] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageCursors, setPageCursors] = useState([]);
-  const [hasNext, setHasNext] = useState(true);
   const ITEMS_PER_PAGE = 20;
 
   // โหลดรายชื่อกิจกรรมมาเก็บไว้ก่อน (Activities มักจะไม่เยอะมาก)
@@ -33,71 +30,19 @@ export default function AllRegistrantsPage() {
     fetchActivities();
   }, []);
 
-  const fetchRegistrations = async (isSearch = false, mode = 'initial') => {
+  const fetchRegistrations = async () => {
     setIsLoading(true);
     try {
-      let q;
-      const regsRef = collection(db, 'registrations');
-
-      if (searchTerm.trim()) {
-        q = query(regsRef, where('nationalId', '==', searchTerm.trim()));
-      } else {
-        if (mode === 'initial') {
-          q = query(regsRef, orderBy('registeredAt', 'desc'), limit(ITEMS_PER_PAGE));
-        } else if (mode === 'next' && lastVisible) {
-          q = query(regsRef, orderBy('registeredAt', 'desc'), startAfter(lastVisible), limit(ITEMS_PER_PAGE));
-        } else if (mode === 'prev' && currentPage > 1) {
-          const targetStartDoc = pageCursors[currentPage - 2];
-          q = query(regsRef, orderBy('registeredAt', 'desc'), startAt(targetStartDoc), limit(ITEMS_PER_PAGE));
-        }
-      }
-
-      const snapshot = await getDocs(q);
-
-      if (!searchTerm.trim()) {
-        const docsLength = snapshot.docs.length;
-        if (docsLength > 0) {
-          setLastVisible(snapshot.docs[docsLength - 1]);
-
-          if (mode === 'initial') {
-            setCurrentPage(1);
-            setPageCursors([snapshot.docs[0]]);
-            setHasNext(docsLength === ITEMS_PER_PAGE);
-          } else if (mode === 'next') {
-            const nextCursors = [...pageCursors];
-            nextCursors[currentPage] = snapshot.docs[0];
-            setPageCursors(nextCursors);
-            setCurrentPage(prev => prev + 1);
-            setHasNext(docsLength === ITEMS_PER_PAGE);
-          } else if (mode === 'prev') {
-            setCurrentPage(prev => prev - 1);
-            setHasNext(true); // Since we went back, there's always a next page
-          }
-        } else {
-          if (mode === 'initial') {
-            setRegistrations([]);
-            setHasNext(false);
-          } else if (mode === 'next') {
-            setHasNext(false);
-            setIsLoading(false);
-            return;
-          }
-        }
-      } else {
-        setHasNext(false); // No pagination during search
-      }
-
-      // แปลงข้อมูล
+      const snapshot = await getDocs(query(collection(db, 'registrations'), orderBy('registeredAt', 'desc')));
+      
       const data = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data(),
-        // แปลง timestamp เป็น object เพื่อการ sort/display
         registeredAtDate: doc.data().registeredAt ? doc.data().registeredAt.toDate() : null
       }));
 
-      setRegistrations(data);
+      setAllRegistrations(data);
 
-      // Prepare edit states
       const initialEdits = {};
       data.forEach(r => {
         initialEdits[r.id] = {
@@ -108,7 +53,6 @@ export default function AllRegistrantsPage() {
         };
       });
       setEditStates(initialEdits);
-
     } catch (error) {
       console.error(error);
       setMessage(`❌ ไม่สามารถโหลดข้อมูลได้: ${error.message}`);
@@ -117,14 +61,41 @@ export default function AllRegistrantsPage() {
     }
   };
 
-  // โหลดข้อมูลเมื่อเปิดหน้า หรือกดค้นหา
   useEffect(() => {
-    // Debounce search เล็กน้อย
-    const timeoutId = setTimeout(() => {
-      fetchRegistrations(!!searchTerm, 'initial');
-    }, 500);
-    return () => clearTimeout(timeoutId);
+    fetchRegistrations();
+  }, []);
+
+  useEffect(() => {
+    setCurrentPage(1);
   }, [searchTerm]);
+
+  const filteredRegistrations = allRegistrations.filter(r => 
+    !searchTerm.trim() || 
+    (r.nationalId && r.nationalId.includes(searchTerm.trim())) || 
+    (r.fullName && r.fullName.includes(searchTerm.trim())) || 
+    (r.studentId && r.studentId.includes(searchTerm.trim()))
+  );
+
+  const totalPages = Math.max(1, Math.ceil(filteredRegistrations.length / ITEMS_PER_PAGE));
+  const currentRegistrations = filteredRegistrations.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+
+  const getPageNumbers = () => {
+    const pages = [];
+    let startPage = Math.max(1, currentPage - 2);
+    let endPage = Math.min(totalPages, currentPage + 2);
+
+    if (currentPage <= 3) {
+      endPage = Math.min(totalPages, 5);
+    }
+    if (currentPage >= totalPages - 2) {
+      startPage = Math.max(1, totalPages - 4);
+    }
+
+    for (let i = startPage; i <= endPage; i++) {
+      pages.push(i);
+    }
+    return pages;
+  };
 
   const handleInputChange = (registrantId, field, value) => {
     setEditStates(prev => ({
@@ -147,7 +118,7 @@ export default function AllRegistrantsPage() {
       });
 
       // พยายามอัปเดตใน studentProfiles ด้วย (ค้นหาจาก nationalId เดิม)
-      const oldData = registrations.find(r => r.id === registrantId);
+      const oldData = allRegistrations.find(r => r.id === registrantId);
       if (oldData && oldData.nationalId) {
         const profileQ = query(collection(db, 'studentProfiles'), where('nationalId', '==', oldData.nationalId), limit(1));
         const profileSnap = await getDocs(profileQ);
@@ -195,7 +166,7 @@ export default function AllRegistrantsPage() {
     // Export เฉพาะที่เห็น หรือต้องระวังถ้าระบบใหญ่มาก
     // ในที่นี้ Export ข้อมูลที่โหลดมาปัจจุบัน
     try {
-      const csvData = registrations.map((reg, index) => ({
+      const csvData = filteredRegistrations.map((reg, index) => ({
         'ลำดับ': index + 1,
         'ชื่อ-สกุล': reg.fullName || '',
         'รหัสนักศึกษา': reg.studentId || '',
@@ -243,7 +214,7 @@ export default function AllRegistrantsPage() {
             <div className="relative w-full md:w-80">
               <input
                 type="text"
-                placeholder="🔍 ค้นหาด้วยเลขบัตรประชาชน..."
+                placeholder="🔍 ค้นหาด้วยชื่อ, รหัส นศ., บัตร ปชช..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all shadow-sm"
@@ -254,9 +225,9 @@ export default function AllRegistrantsPage() {
 
         <div className="mb-6 flex flex-wrap gap-3">
           <button onClick={handleExportCSV} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 shadow-sm flex items-center gap-2 text-sm font-medium">
-            Export CSV (หน้านี้)
+            Export CSV (ทั้งหมดที่ค้นพบ)
           </button>
-          <button onClick={() => fetchRegistrations(!!searchTerm, 'initial')} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm flex items-center gap-2 text-sm font-medium">
+          <button onClick={() => fetchRegistrations()} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm flex items-center gap-2 text-sm font-medium">
             รีเฟรชข้อมูล
           </button>
         </div>
@@ -281,8 +252,9 @@ export default function AllRegistrantsPage() {
               <tbody className="divide-y divide-gray-100">
                 {isLoading ? (
                   <tr><td colSpan="8" className="p-10 text-center">กำลังโหลดข้อมูล...</td></tr>
-                ) : registrations.map((reg, index) => {
+                ) : currentRegistrations.map((reg, index) => {
                   const isEditing = editingId === reg.id;
+                  const itemIndex = (currentPage - 1) * ITEMS_PER_PAGE + index + 1;
                   return (
                     <tr key={reg.id} className={`group transition-colors ${isEditing ? 'bg-amber-50' : 'hover:bg-gray-50/50'}`}>
                       <td className="p-4">
@@ -304,8 +276,8 @@ export default function AllRegistrantsPage() {
                             title="ผูก LINE แล้ว - คลิกเพื่อคัดลอก LINE User ID"
                             className="inline-flex items-center justify-center p-2 bg-[#00B900]/10 text-[#00B900] rounded-full hover:bg-[#00B900]/20 transition-all shadow-sm"
                           >
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                              <path d="M8 0c4.411 0 8 2.912 8 6.492 0 3.145-2.73 5.865-6.31 6.388-.671.1-1.232.363-1.425.536-.183.163-.329.544-.216 1.059l.065.341c.046.253.116.591-.01.761-.122.164-.326.173-.556.173-.243 0-.615-.084-1.214-.268C1.56 14.546 0 11.233 0 6.492 0 2.912 3.59 0 8 0zM5.022 7.15h1.968a.324.324 0 1 0 0-.648H5.346V4.65a.324.324 0 1 0-.648 0v2.176c0 .179.145.324.324.324zm3.36 0h.648a.324.324 0 1 0 0-.648H8.382a.324.324 0 1 0 0 .648zm2.146 0h.648a.324.324 0 0 0 0-.648h-.648a.324.324 0 0 0 0 .648zM11.512 4.65a.324.324 0 1 0-.648 0v2.176a.324.324 0 1 0 .648 0V4.65z" />
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M24 10.304c0-5.369-5.383-9.738-12-9.738-6.616 0-12 4.369-12 9.738 0 4.814 4.269 8.846 10.036 9.608.391.084.922.258 1.057.592.121.303.079.778.039 1.085l-.171 1.027c-.053.303-.242 1.186 1.039.647 1.281-.54 6.911-4.069 9.428-6.967 1.739-1.9 2.572-3.843 2.572-5.992zm-18.988-2.595c.179 0 .324.145.324.324v3.236h1.942c.179 0 .324.145.324.324v.648c0 .179-.145.324-.324.324H4.688c-.179 0-.324-.145-.324-.324v-4.208c0-.179.145-.324.324-.324h.324zm3.885 4.532c-.179 0-.324-.145-.324-.324v-4.208c0-.179.145-.324.324-.324h.324c.179 0 .324.145.324.324v4.208c0 .179-.145.324-.324.324h-.324zm5.044 0c-.179 0-.324-.145-.324-.324v-2.846l-2.028 2.943c-.071.103-.189.171-.318.171h-.25c-.179 0-.324-.145-.324-.324v-4.208c0-.179.145-.324.324-.324h.324c.179 0 .324.145.324.324v2.793l1.998-2.893c.071-.103.189-.171.318-.171h.279c.179 0 .324.145.324.324v4.208c0 .179-.145.324-.324.324h-.324zm4.846-3.56v1.23h-1.942v1.358h1.942c.179 0 .324.145.324.324v.648c0 .179-.145.324-.324.324h-2.59c-.179 0-.324-.145-.324-.324v-4.208c0-.179.145-.324.324-.324h2.59c.179 0 .324.145.324.324v.648c0 .179-.145.324-.324.324h-1.942z"/>
                             </svg>
                           </button>
                         ) : (
@@ -338,30 +310,56 @@ export default function AllRegistrantsPage() {
                 })}
               </tbody>
             </table>
-            {!isLoading && registrations.length === 0 && <div className="p-12 text-center text-gray-400">ไม่พบข้อมูล</div>}
+            {!isLoading && filteredRegistrations.length === 0 && <div className="p-12 text-center text-gray-400">ไม่พบข้อมูล</div>}
 
             {/* Pagination Controls */}
-            {!searchTerm.trim() && registrations.length > 0 && (
-              <div className="bg-gray-50 p-4 border-t border-gray-100 flex items-center justify-between">
+            {filteredRegistrations.length > 0 && (
+              <div className="bg-gray-50 p-4 border-t border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div className="text-sm text-gray-500 font-medium">
-                  หน้า {currentPage}
+                  แสดง {((currentPage - 1) * ITEMS_PER_PAGE) + 1} - {Math.min(currentPage * ITEMS_PER_PAGE, filteredRegistrations.length)} จาก {filteredRegistrations.length} รายการ
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-1 items-center justify-center">
                   <button
-                    onClick={() => fetchRegistrations(false, 'prev')}
+                    onClick={() => setCurrentPage(1)}
                     disabled={currentPage === 1 || isLoading}
-                    className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center transition-all ${currentPage === 1 || isLoading ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300 shadow-sm'}`}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${currentPage === 1 || isLoading ? 'text-gray-400 cursor-not-allowed' : 'text-gray-700 hover:bg-gray-200'}`}
                   >
-                    <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-                    ก่อนหน้า
+                    หน้าสุด
                   </button>
                   <button
-                    onClick={() => fetchRegistrations(false, 'next')}
-                    disabled={!hasNext || isLoading}
-                    className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center transition-all ${!hasNext || isLoading ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300 shadow-sm'}`}
+                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                    disabled={currentPage === 1 || isLoading}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium flex items-center transition-all ${currentPage === 1 || isLoading ? 'text-gray-400 cursor-not-allowed' : 'text-gray-700 hover:bg-gray-200'}`}
+                  >
+                    ก่อนหน้า
+                  </button>
+
+                  <div className="flex items-center gap-1 mx-2">
+                    {getPageNumbers().map(num => (
+                      <button
+                        key={num}
+                        onClick={() => setCurrentPage(num)}
+                        disabled={isLoading}
+                        className={`min-w-[32px] h-8 rounded-lg text-sm font-bold flex items-center justify-center transition-all ${currentPage === num ? 'bg-blue-600 text-white shadow-md' : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300'}`}
+                      >
+                        {num}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                    disabled={currentPage === totalPages || isLoading}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium flex items-center transition-all ${currentPage === totalPages || isLoading ? 'text-gray-400 cursor-not-allowed' : 'text-gray-700 hover:bg-gray-200'}`}
                   >
                     ถัดไป
-                    <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(totalPages)}
+                    disabled={currentPage === totalPages || isLoading}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${currentPage === totalPages || isLoading ? 'text-gray-400 cursor-not-allowed' : 'text-gray-700 hover:bg-gray-200'}`}
+                  >
+                    หลังสุด
                   </button>
                 </div>
               </div>
