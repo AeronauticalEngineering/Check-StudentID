@@ -188,7 +188,7 @@ export default function StudentSeatingChartPage({ params }) {
     }
 
     const renderExamChart = () => {
-        const zones = ['A', 'B', 'C', 'D', 'E', 'F'];
+        const zones = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
         return (
             <div className="bg-white rounded-lg shadow-lg p-4 overflow-x-auto" ref={chartContainerRef}>
                 <div className="text-center mb-6">
@@ -208,8 +208,7 @@ export default function StudentSeatingChartPage({ params }) {
                                     const col = i % 10;
                                     const seatNum = (col * 10) + row + 1;
 
-                                    const runningNumber = (zoneIndex * 100) + seatNum;
-                                    const displaySeatLabel = `${zoneChar}${runningNumber.toString().padStart(3, '0')}`;
+                                    const displaySeatLabel = `${zoneChar}${seatNum.toString().padStart(3, '0')}`;
                                     const registrant = seatMap[displaySeatLabel];
                                     const isMySeat = displaySeatLabel === mySeatNumber;
                                     const courseColor = registrant ? getCourseColor(registrant.course) : null;

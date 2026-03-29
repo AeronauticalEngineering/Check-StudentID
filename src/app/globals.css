@@ -13,7 +13,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #ffffff;
+    --background: #dbdbdb;
     --foreground: #171717;
     --card: #eb8012;
     --border: #eb8012;
@@ -32,7 +32,7 @@ body {
 }
 
 .bg-primary {
-  background: linear-gradient(180deg, var(--primary-hover) 0%, var(--primary) 100%);
+  background: #0b0084;
 }
 
 .bg-border {

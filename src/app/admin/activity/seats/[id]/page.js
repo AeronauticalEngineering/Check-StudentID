@@ -418,7 +418,7 @@ export default function SeatAssignmentPage({ params }) {
               const zoneChar = zones[zoneIndex];
 
               const runningNumber = (zoneIndex * 100) + seatInZone;
-              const seatLabel = `${zoneChar}${runningNumber.toString().padStart(3, '0')}`;
+              const seatLabel = `${zoneChar}${seatInZone.toString().padStart(3, '0')}`;
 
               const regRef = doc(db, 'registrations', reg.id);
               batch.update(regRef, { seatNumber: seatLabel });

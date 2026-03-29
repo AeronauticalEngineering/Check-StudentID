@@ -180,7 +180,7 @@ export default function SeatingChartPage({ params }) {
             <div className="bg-white rounded-lg shadow-lg p-6 overflow-x-auto">
                 <div className="text-center mb-6">
                     <h2 className="text-xl font-bold text-gray-800">ผังที่นั่งสอบข้อเขียน (10 x 10 ต่อโซน)</h2>
-                    <p className="text-sm text-gray-500">เลขที่นั่งเรียงจาก 001-1000 แบ่งเป็น 10 โซน (A-J)</p>
+                    <p className="text-sm text-gray-500">เลขที่นั่ง 001-100 ในแต่ละโซน แบ่งเป็น 10 โซน (A-J)</p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8 justify-items-center">
@@ -196,8 +196,7 @@ export default function SeatingChartPage({ params }) {
                                     const col = i % 10;
                                     const seatNum = (col * 10) + row + 1;
 
-                                    const runningNumber = (zoneIndex * 100) + seatNum;
-                                    const displaySeatLabel = `${zoneChar}${runningNumber.toString().padStart(3, '0')}`;
+                                    const displaySeatLabel = `${zoneChar}${seatNum.toString().padStart(3, '0')}`;
 
                                     const registrant = seatMap[displaySeatLabel];
                                     const isHighlighted = highlightedSeats.has(displaySeatLabel);
