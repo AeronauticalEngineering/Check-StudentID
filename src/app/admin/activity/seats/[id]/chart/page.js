@@ -180,14 +180,14 @@ export default function SeatingChartPage({ params }) {
             <div className="bg-white rounded-lg shadow-lg p-6 overflow-x-auto">
                 <div className="text-center mb-6">
                     <h2 className="text-xl font-bold text-gray-800">ผังที่นั่งสอบข้อเขียน (10 x 10 ต่อโซน)</h2>
-                    <p className="text-sm text-gray-500">เลขที่นั่ง 001-100 ในแต่ละโซน แบ่งเป็น 10 โซน (A-J)</p>
+                    <p className="text-sm text-gray-500">เลขที่นั่งต่อเนื่อง A001 - J1000 แบ่งเป็น 10 โซน</p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8 justify-items-center">
                     {zones.map((zoneChar, zoneIndex) => (
                         <div key={zoneChar} className="border-2 border-gray-200 rounded-xl p-4 bg-gray-50">
                             <div className="text-center font-bold text-lg mb-3 text-blue-800 bg-blue-100 py-1 rounded-lg">
-                                Zone {zoneChar} ({zoneChar}001 - {zoneChar}100)
+                                Zone {zoneChar} ({zoneChar}{((zoneIndex * 100) + 1).toString().padStart(3, '0')} - {zoneChar}{((zoneIndex + 1) * 100).toString().padStart(3, '0')})
                             </div>
                             <div className="grid grid-cols-10 gap-1">
                                 {Array.from({ length: 100 }, (_, i) => {
@@ -195,8 +195,8 @@ export default function SeatingChartPage({ params }) {
                                     const row = Math.floor(i / 10);
                                     const col = i % 10;
                                     const seatNum = (col * 10) + row + 1;
-
-                                    const displaySeatLabel = `${zoneChar}${seatNum.toString().padStart(3, '0')}`;
+                                    const runningNumber = (zoneIndex * 100) + seatNum;
+                                    const displaySeatLabel = `${zoneChar}${runningNumber.toString().padStart(3, '0')}`;
 
                                     const registrant = seatMap[displaySeatLabel];
                                     const isHighlighted = highlightedSeats.has(displaySeatLabel);
@@ -214,7 +214,7 @@ export default function SeatingChartPage({ params }) {
                                             }}
                                             title={registrant ? `${displaySeatLabel}: ${registrant.fullName}\n${registrant.course}` : displaySeatLabel}
                                         >
-                                            {seatNum}
+                                            {runningNumber}
 
                                             {/* Tooltip */}
                                             <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50 hidden md:block">
