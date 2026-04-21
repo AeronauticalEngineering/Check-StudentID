@@ -565,7 +565,7 @@ export default function UniversalScannerPage() {
               )}
 
               {/* Scanner Area */}
-              {searchMode === 'scan' && (
+              {searchMode === 'scan' && scannerState !== 'found' && (
                 <div className="flex flex-col items-center justify-center min-h-[300px] bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200 relative overflow-hidden">
                   <div id="reader" style={{ display: scannerState === 'scanning' ? 'block' : 'none' }} className="w-full h-full"></div>
 
