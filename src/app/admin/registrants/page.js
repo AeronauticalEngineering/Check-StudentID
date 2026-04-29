@@ -137,15 +137,45 @@ export default function AllRegistrantsPage() {
     }
   };
 
-  const handleDeleteRegistrant = async (registrantId) => {
-    if (window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลนี้?`)) {
+  const handleDeleteRegistrant = async (registrantId, lineUserId) => {
+    if (window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลนี้? (ระบบจะลบประวัติการผูก LINE ของนักเรียนออกด้วย)`)) {
       try {
-        await deleteDoc(doc(db, 'registrations', registrantId));
-        setMessage('✅ ลบข้อมูลสำเร็จ');
+        const batch = writeBatch(db);
+        
+        // 1. ลบข้อมูลการลงทะเบียน
+        batch.delete(doc(db, 'registrations', registrantId));
+        
+        // 2. ลบโปรไฟล์นักเรียน (ถอน LINE) ถ้ามีการผูกไว้
+        if (lineUserId) {
+          batch.delete(doc(db, 'studentProfiles', lineUserId));
+        }
+        
+        await batch.commit();
+        setMessage('✅ ลบข้อมูลการลงทะเบียนและรีเซต LINE สำเร็จ');
         fetchRegistrations();
         setTimeout(() => setMessage(''), 3000);
       } catch (error) {
         setMessage(`❌ เกิดข้อผิดพลาดในการลบ: ${error.message}`);
+      }
+    }
+  };
+
+  const handleResetLineBinding = async (lineUserId, registrantId) => {
+    if (!lineUserId) return;
+    if (window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการ "รีเซตการผูกบัญชี LINE" สำหรับนักเรียนคนนี้?\n\n(ระบบจะลบโปรไฟล์ของนักเรียนออก แต่นักเรียนจะสามารถเริ่มกรอกข้อมูลและผูกบัญชี LINE ใหม่อีกครั้งได้)`)) {
+      try {
+        const batch = writeBatch(db);
+        // 1. ลบโปรไฟล์จาก studentProfiles
+        batch.delete(doc(db, 'studentProfiles', lineUserId));
+        // 2. ล้างค่า lineUserId ใน registrations
+        batch.update(doc(db, 'registrations', registrantId), { lineUserId: null });
+        
+        await batch.commit();
+        setMessage('✅ รีเซตการผูกบัญชี LINE สำเร็จ');
+        fetchRegistrations();
+        setTimeout(() => setMessage(''), 3000);
+      } catch (error) {
+        setMessage(`❌ เกิดข้อผิดพลาดในการรีเซต LINE: ${error.message}`);
       }
     }
   };
@@ -300,8 +330,15 @@ export default function AllRegistrantsPage() {
                           </div>
                         ) : (
                           <div className="flex justify-center gap-2">
-                            <button onClick={() => setEditingId(reg.id)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg></button>
-                            <button onClick={() => handleDeleteRegistrant(reg.id)} className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
+                            {reg.lineUserId && (
+                              <button onClick={() => handleResetLineBinding(reg.lineUserId, reg.id)} className="p-1.5 text-orange-500 hover:bg-orange-50 rounded-lg transition-colors" title="รีเซตการผูกบัญชี LINE">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7a4 4 0 11-8 0 4 4 0 018 0zM9 14a6 6 0 00-6 6v1h12v-1a6 6 0 00-6-6zM21 12h-6" />
+                                </svg>
+                              </button>
+                            )}
+                            <button onClick={() => setEditingId(reg.id)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="แก้ไข"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg></button>
+                            <button onClick={() => handleDeleteRegistrant(reg.id, reg.lineUserId)} className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="ลบข้อมูลและรีเซต LINE"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
                           </div>
                         )}
                       </td>
