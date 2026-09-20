@@ -8,9 +8,12 @@ import { db } from '../../../lib/firebase';
 import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
 import Image from 'next/image';
 import { QRCodeSVG } from 'qrcode.react'; 
+import { useModal } from '../../../context/ModalContext';
 
 export default function RegisterLiffPage() {
+  const { showAlert } = useModal();
   const [userProfile, setUserProfile] = useState(null);
+
   const [registration, setRegistration] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const liffId = process.env.NEXT_PUBLIC_LIFF_ID;
@@ -66,11 +69,20 @@ export default function RegisterLiffPage() {
       };
       const docRef = await addDoc(collection(db, 'registrations'), newRegistration);
       setRegistration({ id: docRef.id, ...newRegistration });
-      alert('ลงทะเบียนสำเร็จ!');
+      showAlert({
+        title: 'สำเร็จ',
+        message: 'ลงทะเบียนสำเร็จ!',
+        type: 'success'
+      });
     } catch (e) {
       console.error("Error adding document:", e);
-      alert('เกิดข้อผิดพลาดในการลงทะเบียน');
+      showAlert({
+        title: 'เกิดข้อผิดพลาด',
+        message: 'เกิดข้อผิดพลาดในการลงทะเบียน กรุณาลองใหม่อีกครั้ง',
+        type: 'error'
+      });
     }
+
   };
 
   if (isLoading) return <div>กำลังโหลดข้อมูล...</div>;
@@ -79,14 +91,28 @@ export default function RegisterLiffPage() {
   return (
     <div style={{ padding: '20px', fontFamily: 'sans-serif' }}>
       <h1>ระบบลงทะเบียน</h1>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '15px', marginBottom: '20px' }}>
-            <Image  src={userProfile.pictureUrl}  alt={userProfile.displayName} 
-            width={64} // Specify width
-            height={64} // Specify height
-            className="w-16 h-16 rounded-full border-2 border-white"
-          />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '15px', marginBottom: '20px' }}>
+          {userProfile.pictureUrl ? (
+            <img
+              src={userProfile.pictureUrl}
+              alt={userProfile.displayName || 'Profile'}
+              className="w-16 h-16 rounded-full border-2 border-slate-200 object-cover"
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+                if (e.currentTarget.nextSibling) {
+                  e.currentTarget.nextSibling.style.display = 'flex';
+                }
+              }}
+            />
+          ) : null}
+          <div 
+            className="w-16 h-16 rounded-full bg-slate-700 text-white flex items-center justify-center text-2xl border-2 border-slate-200 shadow"
+            style={{ display: userProfile.pictureUrl ? 'none' : 'flex' }}
+          >
+            👤
+          </div>
           <h2>สวัสดี, {userProfile.displayName}!</h2>
-      </div>
+        </div>
 
       {registration ? (
         <div style={{ textAlign: 'center' }}>

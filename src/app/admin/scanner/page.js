@@ -5,11 +5,11 @@ import { Html5Qrcode } from 'html5-qrcode';
 import { db } from '../../../lib/firebase';
 import {
   doc, getDoc, updateDoc, collection,
-  serverTimestamp, query, where, getDocs, runTransaction, Timestamp, limit, addDoc, orderBy
+  serverTimestamp, query, where, getDocs, runTransaction, Timestamp, limit, addDoc
 } from 'firebase/firestore';
 import { createCheckInSuccessFlex, createActivityCompleteFlex, createQueueCheckInSuccessFlex } from '../../../lib/flexMessageTemplates';
 
-// --- Helper Functions ---
+// Helper Functions
 const translateStatus = (status) => {
   switch (status) {
     case 'checked-in': return 'เช็คอินแล้ว';
@@ -23,24 +23,24 @@ const translateStatus = (status) => {
 };
 
 const StatusBadge = ({ status }) => {
-  let colorClass = 'bg-gray-100 text-gray-800';
+  let colorClass = 'bg-slate-100 text-slate-700 border-slate-200';
   switch (status) {
-    case 'checked-in': colorClass = 'bg-green-100 text-green-800 border-green-200'; break;
-    case 'interviewing': colorClass = 'bg-purple-100 text-purple-800 border-purple-200'; break;
-    case 'registered': colorClass = 'bg-blue-100 text-blue-800 border-blue-200'; break;
-    case 'cancelled': colorClass = 'bg-red-100 text-red-800 border-red-200'; break;
-    case 'waitlisted': colorClass = 'bg-amber-100 text-amber-800 border-amber-200'; break;
-    case 'completed': colorClass = 'bg-purple-100 text-purple-800 border-purple-200'; break;
+    case 'checked-in': colorClass = 'bg-emerald-50 text-emerald-700 border-emerald-200'; break;
+    case 'interviewing': colorClass = 'bg-purple-50 text-purple-700 border-purple-200'; break;
+    case 'registered': colorClass = 'bg-blue-50 text-blue-700 border-blue-200'; break;
+    case 'cancelled': colorClass = 'bg-red-50 text-red-700 border-red-200'; break;
+    case 'waitlisted': colorClass = 'bg-amber-50 text-amber-700 border-amber-200'; break;
+    case 'completed': colorClass = 'bg-slate-100 text-slate-700 border-slate-200'; break;
   }
   return (
-    <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${colorClass}`}>
+    <span className={`inline-flex px-2.5 py-0.5 rounded-md text-sm font-normal border ${colorClass}`}>
       {translateStatus(status)}
     </span>
   );
 };
 
 const CameraIcon = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mb-2 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-[#000946]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
     <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
   </svg>
 );
@@ -58,7 +58,7 @@ export default function UniversalScannerPage() {
   const [seatNumberInput, setSeatNumberInput] = useState('');
   const [message, setMessage] = useState('');
   const qrScannerRef = useRef(null);
-  const isProcessingRef = useRef(false); // [แก้ไข 1] เพิ่ม Ref
+  const isProcessingRef = useRef(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -114,7 +114,7 @@ export default function UniversalScannerPage() {
     setMessage('');
     setNationalIdInput('');
     setScannerState('idle');
-    isProcessingRef.current = false; // [แก้ไข 4] Reset lock
+    isProcessingRef.current = false;
   };
 
   const handleActivityChange = (e) => {
@@ -131,9 +131,125 @@ export default function UniversalScannerPage() {
     });
   };
 
-  const processId = async (registrationId) => {
+  const executeAdminCheckOut = async (registration, activity) => {
     setScannerState('submitting');
     try {
+      const settingsRef = doc(db, 'systemSettings', 'notifications');
+      const settingsSnap = await getDoc(settingsRef);
+      const settings = settingsSnap.exists() ? settingsSnap.data() : { onCheckIn: true, onCheckOut: true };
+      const lineUserId = registration.lineUserId || await findLineUserId(registration.nationalId);
+
+      // Robust Evaluation Check
+      if (activity.enableEvaluation !== false) {
+        let hasEval = false;
+        if (registration.hasEvaluated || registration.evaluated || registration.evaluationScore?.isScored) {
+          hasEval = true;
+        }
+
+        if (!hasEval && registration.nationalId) {
+          const rawNat = String(registration.nationalId).trim();
+          const cleanNat = rawNat.replace(/\D/g, '');
+          const evalQueryNat = query(
+            collection(db, 'evaluations'),
+            where("activityId", "==", activity.id),
+            where("nationalId", "==", rawNat)
+          );
+          const evalSnapshotNat = await getDocs(evalQueryNat);
+          if (!evalSnapshotNat.empty) {
+            hasEval = true;
+          } else if (cleanNat && cleanNat !== rawNat) {
+            const evalQueryClean = query(
+              collection(db, 'evaluations'),
+              where("activityId", "==", activity.id),
+              where("nationalId", "==", cleanNat)
+            );
+            const snapClean = await getDocs(evalQueryClean);
+            if (!snapClean.empty) hasEval = true;
+          }
+        }
+
+        if (!hasEval && (registration.lineUserId || lineUserId)) {
+          const targetLineUser = registration.lineUserId || lineUserId;
+          const evalQueryLine = query(
+            collection(db, 'evaluations'),
+            where("activityId", "==", activity.id),
+            where("userId", "==", targetLineUser)
+          );
+          const evalSnapshotLine = await getDocs(evalQueryLine);
+          if (!evalSnapshotLine.empty) {
+            hasEval = true;
+          } else {
+            const evalQueryLine2 = query(
+              collection(db, 'evaluations'),
+              where("activityId", "==", activity.id),
+              where("lineUserId", "==", targetLineUser)
+            );
+            const evalSnapshotLine2 = await getDocs(evalQueryLine2);
+            if (!evalSnapshotLine2.empty) hasEval = true;
+          }
+        }
+
+        if (!hasEval) {
+          setMessage(`❌ ${registration.fullName} ยังไม่ได้ทำแบบประเมิน ไม่สามารถจบกิจกรรมได้ กรุณาให้นักเรียนทำแบบประเมินก่อน`);
+          setFoundData({ registration, activity });
+          setScannerState('found');
+          return false;
+        }
+      }
+
+      const regRef = doc(db, 'registrations', registration.id);
+      await updateDoc(regRef, {
+        status: 'completed',
+        queueStatus: 'completed',
+        completedAt: serverTimestamp(),
+        checkedOut: true,
+        checkedOutAt: serverTimestamp(),
+        checkedOutBy: 'admin'
+      });
+
+      await addDoc(collection(db, 'checkInLogs'), {
+        activityId: activity.id,
+        activityName: activity.name,
+        studentName: registration.fullName,
+        nationalId: registration.nationalId,
+        status: 'check-out',
+        timestamp: serverTimestamp(),
+        adminId: 'admin'
+      });
+
+      if (settings.onCheckOut && lineUserId) {
+        const flexMessage = createActivityCompleteFlex({
+          activityId: registration.activityId,
+          activityName: activity.name,
+          requireEvaluation: false,
+          isQueueType: activity.type === 'queue'
+        });
+        await fetch('/api/send-notification', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: lineUserId, flexMessage }) });
+      }
+
+      setMessage(`🏁 ${registration.fullName} จบกิจกรรมและสแกนออกเรียบร้อยแล้ว`);
+      setFoundData({ registration: { ...registration, checkedOut: true }, activity });
+      setScannerState('found');
+      setTimeout(() => resetState(), 3500);
+      return true;
+    } catch (err) {
+      setMessage(`เกิดข้อผิดพลาด: ${err.message}`);
+      setScannerState('found');
+      return false;
+    }
+  };
+
+  const processId = async (qrPayload) => {
+    setScannerState('submitting');
+    try {
+      let registrationId = qrPayload;
+      let explicitAction = null;
+      try {
+        const parsed = JSON.parse(qrPayload);
+        registrationId = parsed.registrationId || parsed.id || qrPayload;
+        explicitAction = parsed.action;
+      } catch {}
+
       const regRef = doc(db, 'registrations', registrationId);
       const regDoc = await getDoc(regRef);
 
@@ -142,19 +258,40 @@ export default function UniversalScannerPage() {
       }
 
       const registrationData = { id: regDoc.id, ...regDoc.data() };
+      const isCheckOut = explicitAction === 'check-out' || scanMode === 'check-out';
 
-      if (scanMode === 'check-in' && (registrationData.status === 'checked-in' || registrationData.status === 'interviewing')) {
-        const queueInfo = registrationData.displayQueueNumber ? ` (${registrationData.displayQueueNumber})` : '';
-        setMessage(`✅ ${registrationData.fullName} ได้เช็คอินแล้ว${queueInfo}`);
+      // Check if already checked out
+      if (registrationData.checkedOut || registrationData.checkedOutAt) {
+        setMessage(`ℹ️ ${registrationData.fullName} ได้สแกนจบกิจกรรม (เช็คเอาท์) ไปแล้ว`);
         setScannerState('idle');
         setTimeout(() => resetState(), 3000);
         return;
       }
-      if (registrationData.status === 'completed') {
-        setMessage(`✅ ${registrationData.fullName} ได้จบกิจกรรมไปแล้ว`);
-        setScannerState('idle');
-        setTimeout(() => resetState(), 3000);
+
+      // Auto-detect Check-Out if QR is from "QR code ออก"
+      if (isCheckOut) {
+        setScanMode('check-out');
+        await executeAdminCheckOut(registrationData, selectedActivity);
         return;
+      }
+
+      // If in check-in mode, check if candidate already finished interview
+      if (registrationData.status === 'completed' || registrationData.queueStatus === 'completed' || registrationData.interviewedAt) {
+        setFoundData({ registration: registrationData, activity: selectedActivity, canCheckOutNow: true });
+        setScanMode('check-out');
+        setMessage(`ℹ️ ${registrationData.fullName} สัมภาษณ์เสร็จแล้ว คุณสามารถกดยืนยันจบกิจกรรม (สแกนออก) ได้ทันที`);
+        setScannerState('found');
+        return;
+      }
+
+      if (scanMode === 'check-in') {
+        if (registrationData.status === 'checked-in' || registrationData.status === 'interviewing') {
+          const queueInfo = registrationData.displayQueueNumber ? ` (${registrationData.displayQueueNumber})` : '';
+          setMessage(`✅ ${registrationData.fullName} ได้เช็คอินแล้ว${queueInfo}`);
+          setScannerState('idle');
+          setTimeout(() => resetState(), 3000);
+          return;
+        }
       }
 
       setFoundData({ registration: registrationData, activity: selectedActivity });
@@ -165,7 +302,6 @@ export default function UniversalScannerPage() {
     } catch (err) {
       setMessage(`❌ ${err.message}`);
       setScannerState('idle');
-      // [แก้ไข 5] ถ้า error ให้ปลดล็อค (กรณีไม่ได้ไปต่อ)
       setTimeout(() => { isProcessingRef.current = false; }, 1000);
     }
   };
@@ -176,7 +312,6 @@ export default function UniversalScannerPage() {
       return;
     }
 
-    // [แก้ไข 2] Reset Lock ก่อนเริ่ม
     isProcessingRef.current = false;
 
     stopScanner().then(() => {
@@ -185,11 +320,10 @@ export default function UniversalScannerPage() {
         setScannerState('scanning');
         qrScannerRef.current = new Html5Qrcode("reader");
         qrScannerRef.current.start(
-          { facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 250 } },
+          { facingMode: "environment" }, { fps: 10, qrbox: { width: 240, height: 240 } },
           (decodedText) => {
-            // [แก้ไข 3] Check Lock
             if (isProcessingRef.current) return;
-            isProcessingRef.current = true; // Lock ทันที
+            isProcessingRef.current = true;
 
             stopScanner();
             processId(decodedText);
@@ -237,17 +371,13 @@ export default function UniversalScannerPage() {
 
         if (activity.type === 'queue') {
           if (registration.displayQueueNumber) {
-            // กรณีมี displayQueueNumber อยู่แล้ว (Pre-assigned เช่น ANE-085) 
-            // ตรวจสอบว่าคิวนี้ถูกใช้งานโดยคนอื่นที่เช็คอินแล้วหรือยัง
             const result = await runTransaction(db, async (transaction) => {
               const regRef = doc(db, 'registrations', registration.id);
               const activityRef = doc(db, 'activities', activity.id);
               const existingDisplayQueue = registration.displayQueueNumber;
 
-              // READ 1: Get activity document state
               const activityDoc = await transaction.get(activityRef);
 
-              // READ 2: Check for duplicates
               const registrationsRef = collection(db, 'registrations');
               const duplicateQuery = query(registrationsRef,
                 where("activityId", "==", activity.id),
@@ -262,7 +392,6 @@ export default function UniversalScannerPage() {
 
               if (!duplicateSnapshot.empty) {
                 needsNewQueue = true;
-                // READ 3 (If duplicated): Get max queue number
                 const courseName = registration.course;
                 const allRegsQuery = query(registrationsRef,
                   where("activityId", "==", activity.id),
@@ -285,8 +414,6 @@ export default function UniversalScannerPage() {
                 });
 
                 finalQueueNumber = maxQueueNumber + 1;
-
-                // สร้าง displayQueueNumber ใหม่
                 const courseInfo = courseOptions.find(c => c.name === courseName);
                 const prefix = courseInfo?.shortName || '';
                 const paddedNumber = String(finalQueueNumber).padStart(3, '0');
@@ -295,14 +422,12 @@ export default function UniversalScannerPage() {
                 finalQueueNumber = parseInt(existingDisplayQueue.replace(/\D/g, ''), 10) || 0;
               }
 
-              // --- ALL READS DONE. START WRITES ---
               transaction.update(regRef, {
                 status: 'checked-in',
                 queueNumber: finalQueueNumber,
                 ...(needsNewQueue && { displayQueueNumber: finalDisplayQueue })
               });
 
-              // อัพเดท Counter ใน Activity
               if (activityDoc.exists()) {
                 const activityData = activityDoc.data();
                 const courseName = registration.course;
@@ -319,7 +444,6 @@ export default function UniversalScannerPage() {
             finalQueueData = result;
             successMessage = `✅ สำเร็จ! ${finalQueueData.fullName} ได้รับคิว ${finalQueueData.displayQueueNumber} (${finalQueueData.course})`;
           } else {
-            // กรณีไม่มี displayQueueNumber - ต้องสร้างใหม่ โดยใช้ queueCounters จาก Activity
             const result = await runTransaction(db, async (transaction) => {
               const regRef = doc(db, 'registrations', registration.id);
               const regDoc = await transaction.get(regRef);
@@ -328,8 +452,6 @@ export default function UniversalScannerPage() {
               if (!regData.course) throw new Error('นักเรียนยังไม่ได้ถูกกำหนดหลักสูตร');
 
               const courseName = regData.course;
-
-              // อ่านข้อมูล Activity เพื่อดูตัวนับ (Counter)
               const activityRef = doc(db, 'activities', selectedActivity.id);
               const activityDoc = await transaction.get(activityRef);
 
@@ -339,12 +461,9 @@ export default function UniversalScannerPage() {
               let currentCounters = activityData.queueCounters || {};
               let nextQueueNumber;
 
-              // ใช้ Counter ที่บันทึกไว้ (รองรับค่า 0 คือรีเซ็ตแล้ว) หรือหาเลขคิวสูงสุดที่เคยแจกไป
               if (currentCounters[courseName] !== undefined) {
-                // Counter มีค่า (รวม 0 ที่ถูกรีเซ็ต) - ใช้ counter + 1
                 nextQueueNumber = currentCounters[courseName] + 1;
               } else {
-                // Fallback: หาเลขคิวสูงสุดจาก displayQueueNumber (เพราะข้อมูลที่ import อาจไม่มี queueNumber)
                 const registrationsRef = collection(db, 'registrations');
                 const allRegsQuery = query(registrationsRef,
                   where("activityId", "==", selectedActivity.id),
@@ -355,14 +474,12 @@ export default function UniversalScannerPage() {
                 let maxQueueNumber = 0;
                 allRegsSnapshot.forEach((docSnap) => {
                   const data = docSnap.data();
-                  // ดึงเลขจาก displayQueueNumber (เช่น "ANE-086" -> 86)
                   if (data.displayQueueNumber) {
                     const extractedNum = parseInt(data.displayQueueNumber.replace(/\D/g, ''), 10) || 0;
                     if (extractedNum > maxQueueNumber) {
                       maxQueueNumber = extractedNum;
                     }
                   }
-                  // ดึงจาก queueNumber ด้วย (กรณีมีอยู่แล้ว)
                   if (data.queueNumber && data.queueNumber > maxQueueNumber) {
                     maxQueueNumber = data.queueNumber;
                   }
@@ -371,13 +488,11 @@ export default function UniversalScannerPage() {
                 nextQueueNumber = maxQueueNumber + 1;
               }
 
-              // สร้าง displayQueueNumber จาก prefix ของ course (รูปแบบ: ANE-001, ANE-002, ...)
               const courseInfo = courseOptions.find(c => c.name === courseName);
               const prefix = courseInfo?.shortName || '';
               const paddedNumber = String(nextQueueNumber).padStart(3, '0');
               const displayQueueNumber = `${prefix}-${paddedNumber}`;
 
-              // บันทึก Counter ใหม่ลง Activity
               const newCounters = { ...currentCounters, [courseName]: nextQueueNumber };
               transaction.update(activityRef, { queueCounters: newCounters });
 
@@ -412,7 +527,7 @@ export default function UniversalScannerPage() {
             queueNumber: finalQueueData.displayQueueNumber
           });
 
-        } else { // Event type check-in
+        } else if (activity.type === 'exam' || activity.type === 'graduation') {
           if (!seatNumberInput.trim()) {
             setMessage("กรุณากำหนดเลขที่นั่ง");
             setScannerState('found');
@@ -439,6 +554,27 @@ export default function UniversalScannerPage() {
             studentId: registration.studentId,
             seatNumber: seatNumberInput.trim()
           });
+        } else {
+          // General Event (No seat required)
+          const regRef = doc(db, 'registrations', registration.id);
+          await updateDoc(regRef, { status: 'checked-in', checkedInAt: serverTimestamp() });
+
+          await addDoc(collection(db, 'checkInLogs'), {
+            activityId: activity.id,
+            activityName: activity.name,
+            studentName: registration.fullName,
+            nationalId: registration.nationalId,
+            status: 'checked-in',
+            timestamp: serverTimestamp(),
+            adminId: 'admin'
+          });
+
+          flexMessage = createCheckInSuccessFlex({
+            courseName: courses[activity.categoryId] || 'ทั่วไป',
+            activityName: activity.name,
+            fullName: registration.fullName,
+            studentId: registration.studentId
+          });
         }
 
         if (settings.onCheckIn && lineUserId && flexMessage) {
@@ -447,41 +583,8 @@ export default function UniversalScannerPage() {
         setMessage(successMessage);
 
       } else if (scanMode === 'check-out') {
-        // Require evaluation before check-out if evaluation is enabled
-        if (activity.enableEvaluation !== false) {
-          const evalQuery = query(collection(db, 'evaluations'), where("activityId", "==", activity.id), where("nationalId", "==", registration.nationalId));
-          const evalSnapshot = await getDocs(evalQuery);
-
-          if (evalSnapshot.empty) {
-            setMessage(`❌ ${registration.fullName} ยังไม่ได้ทำแบบประเมิน ไม่สามารถจบกิจกรรมได้`);
-            setScannerState('found');
-            return;
-          }
-        }
-
-        const regRef = doc(db, 'registrations', registration.id);
-        await updateDoc(regRef, { status: 'completed', completedAt: serverTimestamp() });
-
-        await addDoc(collection(db, 'checkInLogs'), {
-          activityId: activity.id,
-          activityName: activity.name,
-          studentName: registration.fullName,
-          nationalId: registration.nationalId,
-          status: 'completed',
-          timestamp: serverTimestamp(),
-          adminId: 'admin'
-        });
-
-        if (settings.onCheckOut && lineUserId) {
-          const flexMessage = createActivityCompleteFlex({
-            activityId: registration.activityId,
-            activityName: activity.name,
-            requireEvaluation: false, // บังคับว่าถ้ามีการกดจบกิจกรรม = ทำประเมินมาแล้ว (หรือปิดประเมินอยู่) จะไม่ส่งปุ่มให้ซ้ำ
-            isQueueType: activity.type === 'queue'
-          });
-          await fetch('/api/send-notification', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: lineUserId, flexMessage }) });
-        }
-        setMessage(`✅ ${registration.fullName} จบกิจกรรมแล้ว`);
+        await executeAdminCheckOut(registration, activity);
+        return;
       } else {
         const regRef = doc(db, 'registrations', registration.id);
         await updateDoc(regRef, { status: 'completed', completedAt: serverTimestamp() });
@@ -495,189 +598,248 @@ export default function UniversalScannerPage() {
     }
   };
 
-
   return (
-    <div className="bg-gray-50/50 min-h-screen p-6 md:p-10">
-      <div className="max-w-xl mx-auto">
-        <h1 className="text-2xl font-bold text-gray-800 mb-6 text-center">ระบบสแกน QR Code</h1>
+    <div className="p-4 md:p-6 space-y-4 max-w-2xl mx-auto font-sans">
+      {/* Top Header Card */}
+      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-1">
+        <h1 className="text-base font-bold text-slate-900">ระบบสแกน QR Code & เช็คอิน (QR Code Scanner)</h1>
+        <p className="text-sm font-normal text-slate-500">สแกน QR Code ของผู้เข้าร่วมกิจกรรม หรือค้นหาด้วยเลขบัตรประชาชนเพื่อเช็คอินหรือจบกิจกรรม</p>
+      </div>
 
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-          {/* Activity Selector */}
-          <div className="p-6 border-b border-gray-100 bg-gray-50/30">
-            <label className="block text-sm font-medium text-gray-700 mb-2">เลือกกิจกรรมที่ต้องการดำเนินการ</label>
-            <div className="relative">
-              <select
-                onChange={handleActivityChange}
-                defaultValue=""
-                required
-                className="w-full pl-4 pr-10 py-3 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all appearance-none text-gray-700"
-              >
-                <option value="" disabled>-- กรุณาเลือกกิจกรรม --</option>
-                {activities.map(act => <option key={act.id} value={act.id}>{act.name}</option>)}
-              </select>
-              <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-gray-500">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-              </div>
+      {/* Main Scanner Container Card */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden space-y-0">
+        {/* Activity Selector Bar */}
+        <div className="p-4 border-b border-slate-200 bg-slate-50/60 space-y-1.5">
+          <label className="block text-sm font-normal text-slate-700">เลือกกิจกรรมที่ต้องการดำเนินการ</label>
+          <div className="relative">
+            <select
+              onChange={handleActivityChange}
+              defaultValue=""
+              required
+              className="w-full pl-3.5 pr-10 py-2.5 bg-white border border-slate-200 rounded-lg text-sm text-slate-900 font-normal outline-none focus:border-[#000946] focus:ring-1 focus:ring-[#000946]/20 transition-all appearance-none cursor-pointer"
+            >
+              <option value="" disabled>-- กรุณาเลือกกิจกรรม --</option>
+              {activities.map(act => <option key={act.id} value={act.id}>{act.name}</option>)}
+            </select>
+            <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-slate-400 text-sm">
+              ▼
             </div>
           </div>
+        </div>
 
-          {selectedActivity && (
-            <div className="p-6">
-              {/* Mode Toggles */}
-              <div className="flex flex-col gap-4 mb-8">
-                <div className="flex bg-gray-100 p-1 rounded-xl">
-                  <button
-                    onClick={() => handleModeChange('check-in', 'scan')}
-                    className={`flex-1 py-2.5 text-sm font-semibold rounded-lg transition-all ${scanMode === 'check-in' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                  >
-                    เช็คอินเข้างาน
-                  </button>
-                  <button
-                    onClick={() => handleModeChange('check-out', 'scan')}
-                    className={`flex-1 py-2.5 text-sm font-semibold rounded-lg transition-all ${scanMode === 'check-out' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                  >
-                    จบกิจกรรม
-                  </button>
-                </div>
-
-                <div className="flex bg-gray-100 p-1 rounded-xl">
-                  <button
-                    onClick={() => handleModeChange('scan', 'search')}
-                    className={`flex-1 py-2.5 text-sm font-semibold rounded-lg transition-all ${searchMode === 'scan' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                  >
-                    สแกน QR Code
-                  </button>
-                  <button
-                    onClick={() => handleModeChange('manual', 'search')}
-                    className={`flex-1 py-2.5 text-sm font-semibold rounded-lg transition-all ${searchMode === 'manual' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                  >
-                    ค้นหาด้วยเลขบัตร
-                  </button>
-                </div>
+        {selectedActivity ? (
+          <div className="p-5 space-y-4">
+            {/* Mode Selector Segmented Tabs */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {/* Operation Mode */}
+              <div className="flex p-1 bg-slate-100 rounded-lg border border-slate-200 text-sm font-normal">
+                <button
+                  type="button"
+                  onClick={() => handleModeChange('check-in', 'scan')}
+                  className={`flex-1 py-2 rounded-md text-center transition-all cursor-pointer ${
+                    scanMode === 'check-in'
+                      ? 'bg-emerald-600 text-white font-normal shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 font-normal'
+                  }`}
+                >
+                  ✓ เช็คอินเข้างาน
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleModeChange('check-out', 'scan')}
+                  className={`flex-1 py-2 rounded-md text-center transition-all cursor-pointer ${
+                    scanMode === 'check-out'
+                      ? 'bg-red-600 text-white font-normal shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 font-normal'
+                  }`}
+                >
+                  ✕ จบกิจกรรม
+                </button>
               </div>
 
-              {/* Feedback Message */}
-              {message && (
-                <div className={`mb-6 p-4 rounded-xl flex items-center gap-3 ${message.includes('✅') ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-red-50 text-red-700 border border-red-100'}`}>
-                  <span className="text-xl">{message.includes('✅') ? '🎉' : '⚠️'}</span>
-                  <p className="font-medium">{message.replace('✅ ', '').replace('❌ ', '')}</p>
-                </div>
-              )}
+              {/* Input Method */}
+              <div className="flex p-1 bg-slate-100 rounded-lg border border-slate-200 text-sm font-normal">
+                <button
+                  type="button"
+                  onClick={() => handleModeChange('scan', 'search')}
+                  className={`flex-1 py-2 rounded-md text-center transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                    searchMode === 'scan'
+                      ? 'bg-[#000946] text-white font-normal shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 font-normal'
+                  }`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  <span>สแกน QR Code</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleModeChange('manual', 'search')}
+                  className={`flex-1 py-2 rounded-md text-center transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                    searchMode === 'manual'
+                      ? 'bg-[#000946] text-white font-normal shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 font-normal'
+                  }`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  <span>ค้นหาด้วยเลขบัตร</span>
+                </button>
+              </div>
+            </div>
 
-              {/* Scanner Area */}
-              {searchMode === 'scan' && scannerState !== 'found' && (
-                <div className="flex flex-col items-center justify-center min-h-[300px] bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200 relative overflow-hidden">
-                  <div id="reader" style={{ display: scannerState === 'scanning' ? 'block' : 'none' }} className="w-full h-full"></div>
+            {/* Feedback Alert Message */}
+            {message && (
+              <div className={`p-3 rounded-lg text-sm font-normal border flex items-center gap-2 ${
+                message.includes('✅') || message.includes('สำเร็จ')
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  : 'bg-red-50 border-red-200 text-red-800'
+              }`}>
+                {message.includes('✅') || message.includes('สำเร็จ') ? (
+                  <svg className="w-5 h-5 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5 text-red-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                )}
+                <span>{message.replace(/^[✅❌⚠️]\s*/, '')}</span>
+              </div>
+            )}
 
-                  {scannerState === 'idle' && (
-                    <button
-                      onClick={handleStartScanner}
-                      className="flex flex-col items-center justify-center w-full h-full py-12 text-gray-400 hover:text-primary hover:bg-gray-100 transition-all group"
-                    >
-                      <div className="w-20 h-20 bg-white rounded-full shadow-sm flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                        <CameraIcon />
-                      </div>
-                      <span className="text-lg font-semibold">แตะเพื่อเปิดกล้อง</span>
-                      <span className="text-sm mt-1">อนุญาตให้เข้าถึงกล้องเพื่อสแกน</span>
-                    </button>
-                  )}
-                </div>
-              )}
+            {/* Scanner Area */}
+            {searchMode === 'scan' && scannerState !== 'found' && (
+              <div className="flex flex-col items-center justify-center min-h-[290px] bg-slate-50 rounded-xl border-2 border-dashed border-slate-300 relative overflow-hidden p-4">
+                <div id="reader" style={{ display: scannerState === 'scanning' ? 'block' : 'none' }} className="w-full h-full max-w-sm rounded-lg overflow-hidden"></div>
 
-              {/* Manual Search Area */}
-              {searchMode === 'manual' && scannerState === 'idle' && (
-                <form onSubmit={handleManualSearch} className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">เลขบัตรประชาชน</label>
-                    <input
-                      type="tel"
-                      value={nationalIdInput}
-                      onChange={e => setNationalIdInput(e.target.value)}
-                      required
-                      pattern="\d{13}"
-                      placeholder="กรอกเลขบัตร 13 หลัก"
-                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all text-lg tracking-wide"
-                    />
-                  </div>
+                {scannerState === 'idle' && (
                   <button
-                    type="submit"
-                    className="w-full py-3 bg-primary text-white font-bold rounded-xl hover:bg-primary-hover shadow-lg shadow-primary/20 active:scale-95 transition-all"
+                    type="button"
+                    onClick={handleStartScanner}
+                    className="flex flex-col items-center justify-center w-full h-full py-8 text-slate-500 hover:text-[#000946] transition-colors group cursor-pointer"
                   >
-                    ค้นหาข้อมูล
-                  </button>
-                </form>
-              )}
-
-              {/* Found Data / Confirmation Area */}
-              {scannerState === 'found' && foundData && (
-                <div className="mt-6 animate-fade-in">
-                  <div className="bg-blue-50/50 rounded-2xl p-5 border border-blue-100 mb-6">
-                    <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-                      <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-                      ข้อมูลผู้ลงทะเบียน
-                    </h3>
-                    <div className="space-y-3">
-                      <div className="flex justify-between items-start">
-                        <span className="text-gray-500 text-sm">ชื่อ-สกุล</span>
-                        <span className="font-semibold text-gray-900 text-right">{foundData.registration.fullName}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-500 text-sm">สถานะปัจจุบัน</span>
-                        <StatusBadge status={foundData.registration.status} />
-                      </div>
-                      {foundData.registration.studentId && (
-                        <div className="flex justify-between items-center">
-                          <span className="text-gray-500 text-sm">รหัสผู้สมัคร</span>
-                          <span className="font-mono text-gray-700">{foundData.registration.studentId}</span>
-                        </div>
-                      )}
+                    <div className="w-14 h-14 bg-white rounded-full border border-slate-200 flex items-center justify-center mb-2.5 group-hover:border-[#000946] transition-colors shadow-xs">
+                      <CameraIcon />
                     </div>
-                  </div>
+                    <span className="text-sm font-semibold text-slate-800 group-hover:text-[#000946]">แตะเพื่อเปิดกล้องสแกน</span>
+                    <span className="text-sm text-slate-400 font-normal mt-0.5">อนุญาตการเข้าถึงกล้องเพื่อสแกน QR Code</span>
+                  </button>
+                )}
+              </div>
+            )}
 
-                  <form onSubmit={handleConfirm} className="space-y-4">
-                    {scanMode === 'check-in' && selectedActivity.type !== 'queue' && (
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">ระบุเลขที่นั่ง (ถ้ามี)</label>
-                        <input
-                          type="text"
-                          value={seatNumberInput}
-                          onChange={e => setSeatNumberInput(e.target.value)}
-                          required
-                          placeholder="เช่น A1, 12, แถวหน้า"
-                          className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
-                        />
+            {/* Manual Search Area */}
+            {searchMode === 'manual' && scannerState === 'idle' && (
+              <form onSubmit={handleManualSearch} className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-normal text-slate-700">เลขบัตรประจำตัวประชาชน</label>
+                  <input
+                    type="tel"
+                    value={nationalIdInput}
+                    onChange={e => setNationalIdInput(e.target.value)}
+                    required
+                    pattern="\d{13}"
+                    placeholder="กรอกเลขบัตร 13 หลัก..."
+                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-lg text-sm font-normal text-slate-900 outline-none focus:border-[#000946] focus:ring-1 focus:ring-[#000946]/20 transition-all placeholder:text-slate-400"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="w-full py-2.5 bg-[#000946] hover:bg-[#000c5a] text-white text-sm font-normal rounded-lg shadow-sm transition-all active:scale-95 cursor-pointer"
+                >
+                  ค้นหาข้อมูลนักเรียน
+                </button>
+              </form>
+            )}
+
+            {/* Found Data / Confirmation Area */}
+            {scannerState === 'found' && foundData && (
+              <div className="space-y-4 pt-1">
+                <div className="bg-slate-50/70 rounded-xl p-4 border border-slate-200 space-y-3">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
+                    <span className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                      <svg className="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                      ข้อมูลผู้ลงทะเบียน
+                    </span>
+                    <StatusBadge status={foundData.registration.status} />
+                  </div>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between items-start">
+                      <span className="text-slate-500 font-normal">ชื่อ-สกุล:</span>
+                      <span className="font-normal text-slate-900 text-right">{foundData.registration.fullName}</span>
+                    </div>
+                    {foundData.registration.studentId && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-500 font-normal">รหัสผู้สมัคร:</span>
+                        <span className="font-normal text-slate-700">{foundData.registration.studentId}</span>
                       </div>
                     )}
-                    <div className="flex gap-3">
-                      <button
-                        type="button"
-                        onClick={resetState}
-                        className="flex-1 py-3 bg-white border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-all"
-                      >
-                        ยกเลิก
-                      </button>
-                      <button
-                        type="submit"
-                        className={`flex-[2] py-3 text-white font-bold rounded-xl shadow-lg active:scale-95 transition-all ${scanMode === 'check-in' ? 'bg-green-600 hover:bg-green-700 shadow-green-600/20' : 'bg-red-600 hover:bg-red-700 shadow-red-600/20'}`}
-                      >
-                        {scanMode === 'check-in' ? 'ยืนยันเช็คอิน' : 'ยืนยันจบกิจกรรม'}
-                      </button>
-                    </div>
-                  </form>
+                    {foundData.registration.course && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-500 font-normal">หลักสูตร:</span>
+                        <span className="font-normal text-slate-800">{foundData.registration.course}</span>
+                      </div>
+                    )}
+                    {foundData.registration.displayQueueNumber && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-500 font-normal">เลขคิวที่ได้รับ:</span>
+                        <span className="font-bold text-[#000946]">{foundData.registration.displayQueueNumber}</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              )}
-            </div>
-          )}
 
-          {!selectedActivity && (
-            <div className="p-10 text-center text-gray-400">
-              <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg className="w-8 h-8 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                <form onSubmit={handleConfirm} className="space-y-4">
+                  {scanMode === 'check-in' && (selectedActivity.type === 'exam' || selectedActivity.type === 'graduation') && (
+                    <div className="space-y-1.5">
+                      <label className="block text-sm font-normal text-slate-700">ระบุเลขที่นั่ง (ถ้ามี)</label>
+                      <input
+                        type="text"
+                        value={seatNumberInput}
+                        onChange={e => setSeatNumberInput(e.target.value)}
+                        required
+                        placeholder="เช่น A1, B12, แถวหน้า"
+                        className="w-full px-3.5 py-2 bg-white border border-slate-200 rounded-lg text-sm font-normal text-slate-900 outline-none focus:border-[#000946] focus:ring-1 focus:ring-[#000946]/20 transition-all"
+                      />
+                    </div>
+                  )}
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={resetState}
+                      className="flex-1 py-2.5 bg-white border border-slate-200 text-slate-700 text-sm font-normal rounded-lg hover:bg-slate-50 transition-colors cursor-pointer"
+                    >
+                      ยกเลิก
+                    </button>
+                    <button
+                      type="submit"
+                      className={`flex-1 py-2.5 text-white text-sm font-normal rounded-lg shadow-sm transition-all active:scale-95 cursor-pointer ${
+                        scanMode === 'check-in'
+                          ? 'bg-emerald-600 hover:bg-emerald-700'
+                          : 'bg-red-600 hover:bg-red-700'
+                      }`}
+                    >
+                      {scanMode === 'check-in' ? 'ยืนยันการเช็คอิน' : 'ยืนยันจบกิจกรรม'}
+                    </button>
+                  </div>
+                </form>
               </div>
-              <p>กรุณาเลือกกิจกรรมด้านบนเพื่อเริ่มใช้งาน</p>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        ) : (
+          <div className="p-10 text-center text-slate-400 space-y-2 text-sm">
+            <svg className="w-10 h-10 mx-auto text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            <p className="font-normal text-slate-500">กรุณาเลือกกิจกรรมด้านบนเพื่อเริ่มการสแกน</p>
+          </div>
+        )}
       </div>
     </div>
   );

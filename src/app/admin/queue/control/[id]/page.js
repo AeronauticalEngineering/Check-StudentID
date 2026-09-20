@@ -1,30 +1,49 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, use, useMemo } from 'react';
 import { db } from '../../../../../lib/firebase';
 import {
-    doc, getDoc, collection, query, where, onSnapshot, writeBatch, serverTimestamp, getDocs, limit
+    doc, getDoc, collection, query, where, onSnapshot, writeBatch, serverTimestamp, getDocs, limit, updateDoc, orderBy
 } from 'firebase/firestore';
-import { useParams, useRouter } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { createQueueCallFlex } from '../../../../../lib/flexMessageTemplates';
+import ExaminerScoringModal from '../../../../../components/ExaminerScoringModal';
+import { useModal } from '../../../../../context/ModalContext';
 
-export default function QueueControlPage() {
-    const params = useParams();
+export default function QueueControlPage({ params }) {
+    const unwrappedParams = use(params);
+    const channelId = unwrappedParams.id;
     const router = useRouter();
-    const { id: channelId } = params;
+    const { showAlert, showConfirm, showToast } = useModal();
+
 
     const [channel, setChannel] = useState(null);
+    const [channels, setChannels] = useState([]);
+    const [examiners, setExaminers] = useState([]);
     const [activity, setActivity] = useState(null);
     const [registrants, setRegistrants] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [scoringRegistrant, setScoringRegistrant] = useState(null);
+    const [examinerName, setExaminerName] = useState('');
 
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('aero_examiner_name') || '';
+            setExaminerName(saved);
+        }
+    }, []);
 
+    const handleExaminerNameChange = (val) => {
+        setExaminerName(val);
+        if (typeof window !== 'undefined') {
+            localStorage.setItem('aero_examiner_name', val);
+        }
+    };
 
     const fetchData = useCallback(async () => {
         setIsLoading(true);
         try {
-            // 1. Fetch Channel
             const channelRef = doc(db, 'queueChannels', channelId);
             const unsubscribeChannel = onSnapshot(channelRef, async (snap) => {
                 if (!snap.exists()) {
@@ -35,7 +54,6 @@ export default function QueueControlPage() {
                 const channelData = { id: snap.id, ...snap.data() };
                 setChannel(channelData);
 
-                // 2. Fetch Activity (only once)
                 if (!activity) {
                     const activityRef = doc(db, 'activities', channelData.activityId);
                     const activitySnap = await getDoc(activityRef);
@@ -45,7 +63,6 @@ export default function QueueControlPage() {
                 }
             });
 
-            // 3. Setup Registrants Listener (needs activityId from channel)
             const channelSnap = await getDoc(channelRef);
             if (channelSnap.exists()) {
                 const actId = channelSnap.data().activityId;
@@ -57,10 +74,26 @@ export default function QueueControlPage() {
                     }
                 );
 
+                const unsubAllChannels = onSnapshot(
+                    query(collection(db, 'queueChannels'), where('activityId', '==', actId)),
+                    (snap) => {
+                        setChannels(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                    }
+                );
+
+                const unsubExaminers = onSnapshot(
+                    query(collection(db, 'examiners'), orderBy('name')),
+                    (snap) => {
+                        setExaminers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                    }
+                );
+
                 setIsLoading(false);
                 return () => {
                     unsubscribeChannel();
                     unsubRegistrants();
+                    unsubAllChannels();
+                    unsubExaminers();
                 };
             }
 
@@ -72,13 +105,118 @@ export default function QueueControlPage() {
             setError('เกิดข้อผิดพลาดในการโหลดข้อมูล');
             setIsLoading(false);
         }
-    }, [channelId]); // Removed activity dependency to avoid infinite loops
+    }, [channelId]);
 
     useEffect(() => {
         let cleanup;
         fetchData().then(fn => { cleanup = fn; });
         return () => { if (cleanup) cleanup(); };
     }, [fetchData]);
+
+    // Map of currently assigned examiners: { [name]: { channelId, channelName, slot } }
+    const assignedExaminersMap = useMemo(() => {
+        const map = {};
+        channels.forEach(ch => {
+            const chName = ch.name || ch.channelName || `โต๊ะที่ ${ch.channelNumber || ''}`;
+            if (ch.examiner1) {
+                map[ch.examiner1] = { channelId: ch.id, channelName: chName, slot: 1 };
+            }
+            if (ch.examiner2) {
+                map[ch.examiner2] = { channelId: ch.id, channelName: chName, slot: 2 };
+            }
+        });
+        return map;
+    }, [channels]);
+
+    // Build Dropdown Options for Examiner Slot 1 or 2 with Duplicate Prevention
+    const getExaminerOptions = (slotIndex) => {
+        if (!channel) return null;
+        const currentVal = slotIndex === 1 ? channel.examiner1 : channel.examiner2;
+        const otherSlotVal = slotIndex === 1 ? channel.examiner2 : channel.examiner1;
+
+        const masterNames = examiners.map(e => e.name);
+        const optionsList = [...examiners];
+        if (currentVal && !masterNames.includes(currentVal)) {
+            optionsList.unshift({ id: `legacy-${currentVal}`, name: currentVal, role: 'ระบุไว้ก่อนหน้า' });
+        }
+
+        return optionsList.map(ex => {
+            const isCurrentValue = ex.name === currentVal;
+            const isOtherSlotOnSameTable = ex.name === otherSlotVal;
+            const assignedInfo = assignedExaminersMap[ex.name];
+            const isAssignedToOtherTable = assignedInfo && assignedInfo.channelId !== channel.id;
+
+            const isDisabled = !isCurrentValue && (isOtherSlotOnSameTable || isAssignedToOtherTable);
+
+            let tag = '';
+            if (isOtherSlotOnSameTable) {
+                tag = ` (เลือกเป็นคนที่ ${slotIndex === 1 ? 2 : 1} แล้ว)`;
+            } else if (isAssignedToOtherTable) {
+                tag = ` (ประจำ${assignedInfo.channelName}แล้ว)`;
+            }
+
+            return (
+                <option
+                    key={ex.id || ex.name}
+                    value={ex.name}
+                    disabled={isDisabled}
+                    className={isDisabled ? 'text-slate-400 bg-slate-100' : 'text-slate-800'}
+                >
+                    {ex.name}{tag || (ex.role ? ` (${ex.role})` : '')}
+                </option>
+            );
+        });
+    };
+
+    const handleChannelExaminerChange = async (slotIndex, newName) => {
+        try {
+            if (!channel) return;
+            const trimmed = (newName || '').trim();
+            const ex1 = slotIndex === 1 ? trimmed : (channel.examiner1 || '');
+            const ex2 = slotIndex === 2 ? trimmed : (channel.examiner2 || '');
+
+            if (ex1 && ex2 && ex1 === ex2) {
+                showAlert({
+                    title: 'ไม่สามารถเลือกซ้ำได้',
+                    message: 'กรรมการคนที่ 1 และคนที่ 2 ต้องไม่ใช่บุคคลเดียวกัน',
+                    type: 'warning'
+                });
+                return;
+            }
+
+            if (trimmed) {
+                const conflict = channels.find(c =>
+                    c.id !== channel.id && (c.examiner1 === trimmed || c.examiner2 === trimmed)
+                );
+                if (conflict) {
+                    const cName = conflict.name || conflict.channelName || `โต๊ะที่ ${conflict.channelNumber}`;
+                    showAlert({
+                        title: 'กรรมการถูกเลือกแล้ว',
+                        message: `คุณ "${trimmed}" ได้รับมอบหมายประจำอยู่ที่ "${cName}" แล้ว`,
+                        type: 'warning'
+                    });
+                    return;
+                }
+            }
+
+            const channelRef = doc(db, 'queueChannels', channel.id);
+            const examinersList = [ex1, ex2].filter(Boolean);
+            await updateDoc(channelRef, {
+                examiner1: ex1 || null,
+                examiner2: ex2 || null,
+                examiners: examinersList,
+                updatedAt: serverTimestamp()
+            });
+
+            showToast({
+                message: trimmed ? `มอบหมาย ${trimmed} ประจำโต๊ะสำเร็จ` : 'ปลดรายชื่อกรรมการเรียบร้อย',
+                type: 'success'
+            });
+        } catch (err) {
+            console.error('Error updating channel examiner:', err);
+            showToast({ message: `เกิดข้อผิดพลาด: ${err.message}`, type: 'error' });
+        }
+    };
 
     const findLineUserId = async (nationalId) => {
         if (!nationalId) return null;
@@ -94,23 +232,46 @@ export default function QueueControlPage() {
         try {
             const batch = writeBatch(db);
             const channelRef = doc(db, 'queueChannels', channel.id);
-
-            // Generate a unique ping ID for animation
             const timestamp = new Date().getTime();
 
             batch.update(channelRef, {
                 currentQueueNumber: registrant.queueNumber || null,
                 currentDisplayQueueNumber: registrant.displayQueueNumber || null,
+                currentQueue: registrant.displayQueueNumber || null,
                 currentStudentName: registrant.fullName || null,
+                status: 'calling',
                 lastCalledAt: serverTimestamp(),
-                pingId: timestamp // Add this to trigger animation on display screen
+                pingId: timestamp
             });
 
+            const channelExaminersCombined = [channel.examiner1, channel.examiner2].filter(Boolean).join(', ') || examinerName || 'Examiner';
+            const channelExaminersArray = [channel.examiner1, channel.examiner2].filter(Boolean);
+
+            // Auto-complete previous candidate on this channel if they were being served
+            if (channel.currentDisplayQueueNumber && channel.currentDisplayQueueNumber !== registrant.displayQueueNumber) {
+                const prevReg = registrants.find(r => r.displayQueueNumber === channel.currentDisplayQueueNumber && r.id !== registrant.id);
+                if (prevReg && prevReg.status !== 'completed' && prevReg.status !== 'evaluated') {
+                    const prevRegRef = doc(db, 'registrations', prevReg.id);
+                    batch.update(prevRegRef, {
+                        status: 'completed',
+                        queueStatus: 'completed',
+                        interviewedAt: serverTimestamp(),
+                        completedAt: serverTimestamp(),
+                        interviewedBy: channelExaminersCombined,
+                        examiners: channelExaminersArray
+                    });
+                }
+            }
+
             const regRef = doc(db, 'registrations', registrant.id);
-            batch.update(regRef, { calledAt: serverTimestamp(), status: 'interviewing' });
+            batch.update(regRef, {
+                calledAt: serverTimestamp(),
+                status: 'interviewing',
+                interviewedBy: channelExaminersCombined,
+                examiners: channelExaminersArray
+            });
             await batch.commit();
 
-            // Notify LINE
             const lineUserId = registrant.lineUserId || await findLineUserId(registrant.nationalId);
             if (lineUserId) {
                 const flexMessage = createQueueCallFlex({
@@ -134,152 +295,338 @@ export default function QueueControlPage() {
 
         } catch (error) {
             console.error("Error calling queue:", error);
-            alert(`เกิดข้อผิดพลาดในการเรียกคิว: ${error.message}`);
+            showAlert({
+                title: 'เกิดข้อผิดพลาด',
+                message: `ไม่สามารถเรียกคิวได้: ${error.message}`,
+                type: 'error'
+            });
         }
     };
 
     const handleCallNext = async () => {
-        if (!channel.servingCourse) {
-            alert('ช่องบริการนี้ยังไม่ได้ระบุหลักสูตร กรุณาติดต่อ Admin หลัก');
-            return;
-        }
         const waitingForCourse = registrants
-            .filter(r => r.course === channel.servingCourse && r.status === 'checked-in' && !r.calledAt)
-            .sort((a, b) => a.queueNumber - b.queueNumber);
+            .filter(r => (!channel.servingCourse || r.course === channel.servingCourse) && r.status === 'checked-in' && !r.calledAt)
+            .sort((a, b) => {
+                const numA = parseInt(a.displayQueueNumber?.replace(/\D/g, '') || a.queueNumber || '0');
+                const numB = parseInt(b.displayQueueNumber?.replace(/\D/g, '') || b.queueNumber || '0');
+                if (numA !== numB) return numA - numB;
+                const timeA = a.checkedInAt?.toMillis?.() || a.checkedInAt?.seconds || 0;
+                const timeB = b.checkedInAt?.toMillis?.() || b.checkedInAt?.seconds || 0;
+                return timeA - timeB;
+            });
 
         if (waitingForCourse.length === 0) {
-            alert(`ไม่มีคิวรอสำหรับหลักสูตร: ${channel.servingCourse}`);
+            showAlert({
+                title: 'ไม่มีคิวรอ',
+                message: channel.servingCourse
+                    ? `ไม่มีคิวรอสำหรับหลักสูตร: ${channel.servingCourse}`
+                    : 'ไม่มีคิวรอในขณะนี้',
+                type: 'info'
+            });
             return;
         }
         const nextInQueue = waitingForCourse[0];
         await callSpecificRegistrant(nextInQueue);
     };
 
+    const handleCompleteCurrent = async () => {
+        if (!channel.currentDisplayQueueNumber) return;
+        try {
+            const batch = writeBatch(db);
+            const currentReg = registrants.find(r => r.displayQueueNumber === channel.currentDisplayQueueNumber);
+            const channelExaminersCombined = [channel.examiner1, channel.examiner2].filter(Boolean).join(', ') || examinerName || 'Examiner';
+            const channelExaminersArray = [channel.examiner1, channel.examiner2].filter(Boolean);
+
+            if (currentReg) {
+                const regRef = doc(db, 'registrations', currentReg.id);
+                batch.update(regRef, {
+                    status: 'completed',
+                    queueStatus: 'completed',
+                    interviewedAt: serverTimestamp(),
+                    completedAt: serverTimestamp(),
+                    interviewedBy: channelExaminersCombined,
+                    examiners: channelExaminersArray
+                });
+            }
+            const channelRef = doc(db, 'queueChannels', channel.id);
+            batch.update(channelRef, {
+                currentQueueNumber: null,
+                currentDisplayQueueNumber: null,
+                currentQueue: null,
+                currentStudentName: null,
+                status: 'available',
+                updatedAt: serverTimestamp()
+            });
+            await batch.commit();
+            showToast({ message: `เสร็จสิ้นการสัมภาษณ์คิว ${channel.currentDisplayQueueNumber} เรียบร้อยแล้ว`, type: 'success' });
+        } catch (error) {
+            console.error('Error completing interview:', error);
+            showAlert({ title: 'เกิดข้อผิดพลาด', message: `ไม่สามารถเสร็จสิ้นคิวได้: ${error.message}`, type: 'error' });
+        }
+    };
+
     const handleRecall = async () => {
         if (!channel.currentDisplayQueueNumber) {
-            alert('ยังไม่มีคิวที่ถูกเรียกในช่องนี้');
+            showAlert({
+                title: 'แจ้งเตือน',
+                message: 'ยังไม่มีคิวที่ถูกเรียกในช่องนี้',
+                type: 'info'
+            });
             return;
         }
 
-        // ค้นหาผู้สมัครที่กำลังจะถูกเรียกซ้ำ (ต้องรวมกรณีที่สถานะเป็น interviewing แล้วด้วย)
         const currentRegistrant = registrants.find(r =>
             r.displayQueueNumber === channel.currentDisplayQueueNumber
         );
 
         if (!currentRegistrant) {
-            alert(`ไม่พบข้อมูลผู้ลงทะเบียนสำหรับคิวที่ ${channel.currentDisplayQueueNumber}`);
+            showAlert({
+                title: 'ไม่พบข้อมูล',
+                message: `ไม่พบข้อมูลผู้ลงทะเบียนสำหรับคิวที่ ${channel.currentDisplayQueueNumber}`,
+                type: 'error'
+            });
             return;
         }
         await callSpecificRegistrant(currentRegistrant);
-        alert(`ส่งแจ้งเตือนและเรียกคิว ${currentRegistrant.displayQueueNumber} ซ้ำอีกครั้งสำเร็จ!`);
+        showToast({ message: `ส่งแจ้งเตือนและเรียกคิว ${currentRegistrant.displayQueueNumber} ซ้ำสำเร็จ!`, type: 'success' });
     };
 
-    if (isLoading) return <div className="text-center p-12 text-gray-500">กำลังโหลดข้อมูล...</div>;
-    if (error) return <div className="text-center p-12 text-red-500 font-bold">{error}</div>;
-    if (!channel) return <div className="text-center p-12 text-gray-500">ไม่พบช่องบริการ</div>;
+
+    if (isLoading) return <div className="text-center p-12 text-slate-500 text-xs font-medium font-sans">กำลังโหลดข้อมูล...</div>;
+    if (error) return <div className="text-center p-12 text-red-500 font-bold text-xs font-sans">{error}</div>;
+    if (!channel) return <div className="text-center p-12 text-slate-500 text-xs font-sans">ไม่พบช่องบริการ</div>;
 
     const waitingRegistrants = registrants
-        .filter(r => r.course === channel.servingCourse && r.status === 'checked-in' && !r.calledAt)
+        .filter(r => (!channel.servingCourse || r.course === channel.servingCourse) && r.status === 'checked-in' && !r.calledAt)
         .sort((a, b) => {
-            const numA = parseInt(a.displayQueueNumber?.replace(/\D/g, '') || '0');
-            const numB = parseInt(b.displayQueueNumber?.replace(/\D/g, '') || '0');
-            return numA - numB;
+            const numA = parseInt(a.displayQueueNumber?.replace(/\D/g, '') || a.queueNumber || '0');
+            const numB = parseInt(b.displayQueueNumber?.replace(/\D/g, '') || b.queueNumber || '0');
+            if (numA !== numB) return numA - numB;
+            const timeA = a.checkedInAt?.toMillis?.() || a.checkedInAt?.seconds || 0;
+            const timeB = b.checkedInAt?.toMillis?.() || b.checkedInAt?.seconds || 0;
+            return timeA - timeB;
         });
 
     const waitingCount = waitingRegistrants.length;
 
     return (
-        <div className="bg-gray-100 min-h-screen py-8 px-4 font-sans flex flex-col items-center justify-center">
-            <div className="max-w-5xl w-full mx-auto bg-white rounded-2xl shadow-xl overflow-hidden grid grid-cols-1 md:grid-cols-5">
-
-                {/* Left Column: ควบคุมคิว */}
-                <div className="p-6 md:p-8 col-span-1 md:col-span-3 border-b md:border-b-0 md:border-r border-gray-100 flex flex-col justify-center">
-
-                    {/* Header เล็กๆ แทนของเดิม */}
-                    <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-2">
-                        <div className="text-left font-bold text-gray-600 text-lg">
-                            {channel.channelName || `ช่องบริการ ${channel.channelNumber}`}
+        <div className="bg-slate-100 min-h-screen p-4 md:p-6 font-sans flex flex-col justify-center items-center">
+            <div className="max-w-4xl w-full bg-white rounded-lg border border-slate-200 overflow-hidden grid grid-cols-1 md:grid-cols-5">
+                {/* Left Column: Queue Controls */}
+                <div className="p-6 col-span-1 md:col-span-3 border-b md:border-b-0 md:border-r border-slate-200 flex flex-col justify-between space-y-4">
+                    {/* Header */}
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                        <div>
+                            <h1 className="text-sm font-bold text-slate-900">
+                                {channel.channelName || `ช่องบริการ ${channel.channelNumber}`}
+                            </h1>
+                            <p className="text-xs text-slate-500">โต๊ะควบคุมการเรียกคิวประจำช่อง</p>
                         </div>
-                        <div className="bg-primary/10 text-primary px-4 py-1.5 rounded-full text-sm font-bold shadow-sm">
-                            หลักสูตร: {channel.servingCourse || 'ยังไม่ระบุ'}
-                        </div>
+                        <span className="inline-flex px-2.5 py-1 rounded text-xs font-bold bg-blue-50 text-blue-800 border border-blue-200">
+                            {channel.servingCourse || 'ยังไม่ระบุหลักสูตร'}
+                        </span>
                     </div>
 
-                    <div className="text-center mb-8 bg-gray-50 py-10 rounded-2xl border border-gray-100">
-                        <p className="text-gray-500 text-sm font-medium mb-2">คิวปัจจุบัน</p>
-                        <p className="text-7xl font-black text-primary tracking-tighter mb-4">
+                    {/* Active Queue Display */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-lg py-8 px-4 text-center space-y-2">
+                        <span className="text-xs text-slate-500 font-medium block">คิวปัจจุบันที่กำลังให้บริการ</span>
+                        <span className="text-6xl md:text-7xl font-black text-[#166E7C] font-mono tracking-tight block">
                             {channel.currentDisplayQueueNumber || '-'}
-                        </p>
-                        <p className="text-xl font-bold text-gray-800 h-8 line-clamp-1 px-4">
+                        </span>
+                        <span className="text-sm font-bold text-slate-800 truncate block">
                             {channel.currentStudentName || 'ยังไม่มีผู้ถูกเรียก'}
-                        </p>
+                        </span>
                     </div>
 
-                    <div className="space-y-4 mt-auto">
+                    {/* Action Buttons */}
+                    <div className="space-y-2.5 pt-2">
+                        {/* 2-Examiner Dropdowns with Duplicate Prevention */}
+                        {activity?.enableScoring && (
+                            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2.5">
+                                <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                                    <span className="flex items-center gap-1.5">
+                                        <span>👥</span>
+                                        <span>กรรมการประจำโต๊ะ (2 ท่าน)</span>
+                                    </span>
+                                    {channel.examiner1 && channel.examiner2 ? (
+                                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                            ✓ ครบ 2 ท่าน
+                                        </span>
+                                    ) : (
+                                        <span className="text-[10px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                                            {[channel.examiner1, channel.examiner2].filter(Boolean).length}/2 ท่าน
+                                        </span>
+                                    )}
+                                </div>
+
+                                <div className="space-y-1">
+                                    <div className="flex items-center justify-between text-[11px] text-slate-500 font-medium">
+                                        <span>กรรมการคนที่ 1</span>
+                                        {channel.examiner1 && (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleChannelExaminerChange(1, '')}
+                                                className="text-slate-400 hover:text-red-500 cursor-pointer"
+                                                title="ปลดกรรมการคนที่ 1"
+                                            >
+                                                ปลดออก
+                                            </button>
+                                        )}
+                                    </div>
+                                    <select
+                                        value={channel.examiner1 || ''}
+                                        onChange={(e) => handleChannelExaminerChange(1, e.target.value)}
+                                        className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 outline-none focus:border-[#166E7C] cursor-pointer"
+                                    >
+                                        <option value="">-- เลือกกรรมการคนที่ 1 --</option>
+                                        {getExaminerOptions(1)}
+                                    </select>
+                                </div>
+
+                                <div className="space-y-1">
+                                    <div className="flex items-center justify-between text-[11px] text-slate-500 font-medium">
+                                        <span>กรรมการคนที่ 2</span>
+                                        {channel.examiner2 && (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleChannelExaminerChange(2, '')}
+                                                className="text-slate-400 hover:text-red-500 cursor-pointer"
+                                                title="ปลดกรรมการคนที่ 2"
+                                            >
+                                                ปลดออก
+                                            </button>
+                                        )}
+                                    </div>
+                                    <select
+                                        value={channel.examiner2 || ''}
+                                        onChange={(e) => handleChannelExaminerChange(2, e.target.value)}
+                                        className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 outline-none focus:border-[#166E7C] cursor-pointer"
+                                    >
+                                        <option value="">-- เลือกกรรมการคนที่ 2 --</option>
+                                        {getExaminerOptions(2)}
+                                    </select>
+                                </div>
+                            </div>
+                        )}
+
                         <button
                             onClick={handleCallNext}
-                            disabled={!channel.servingCourse || waitingCount === 0}
-                            className={`w-full py-4 text-xl font-bold rounded-xl flex items-center justify-center transition-all ${!channel.servingCourse || waitingCount === 0
-                                ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                                : 'bg-green-500 text-white hover:bg-green-600 shadow-lg shadow-green-500/30 active:scale-95'
-                                }`}
+                            disabled={waitingCount === 0}
+                            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-sm shadow-sm transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
                         >
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
-                            </svg>
-                            เรียกคิวถัดไป
+                            <span>📢</span>
+                            <span>เรียกคิวถัดไป {waitingCount > 0 ? `(${waitingCount})` : '(ไม่มีคิวรอ)'}</span>
                         </button>
+
+                        {channel.currentDisplayQueueNumber && (
+                            <button
+                                onClick={handleCompleteCurrent}
+                                className="w-full py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg text-xs shadow-sm transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                            >
+                                <span>✅</span>
+                                <span>เสร็จสิ้นคิวนี้ ({channel.currentDisplayQueueNumber})</span>
+                            </button>
+                        )}
+
+                        {/* Examiner Scoring Button */}
+                        {activity?.enableScoring && (
+                            <button
+                                onClick={() => {
+                                    const currentReg = registrants.find(r => r.displayQueueNumber === channel.currentDisplayQueueNumber);
+                                    if (currentReg) setScoringRegistrant(currentReg);
+                                    else showAlert({ title: 'แจ้งเตือน', message: 'กรุณาเรียกคิวก่อนบันทึกคะแนน', type: 'warning' });
+                                }}
+
+                                disabled={!channel.currentDisplayQueueNumber}
+                                className={`w-full py-2.5 rounded-lg text-xs font-bold transition-all active:scale-95 flex items-center justify-center gap-2 border cursor-pointer ${
+                                    registrants.find(r => r.displayQueueNumber === channel.currentDisplayQueueNumber)?.evaluationScore?.isScored
+                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100'
+                                        : 'bg-teal-50 text-[#166E7C] border-teal-200 hover:bg-teal-100'
+                                } disabled:opacity-40 disabled:cursor-not-allowed`}
+                            >
+                                <span>📝</span>
+                                <span>
+                                    {registrants.find(r => r.displayQueueNumber === channel.currentDisplayQueueNumber)?.evaluationScore?.isScored
+                                        ? `บันทึกคะแนนแล้ว: ${registrants.find(r => r.displayQueueNumber === channel.currentDisplayQueueNumber)?.evaluationScore?.finalTotalScore} (แก้ไข)`
+                                        : 'บันทึกคะแนน / รูปถ่ายหลักฐาน'}
+                                </span>
+                            </button>
+                        )}
 
                         <button
                             onClick={handleRecall}
                             disabled={!channel.currentDisplayQueueNumber}
-                            className={`w-full py-3 text-lg font-semibold rounded-xl flex items-center justify-center transition-all ${!channel.currentDisplayQueueNumber
-                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                : 'bg-amber-500 text-white hover:bg-amber-600 shadow-md shadow-amber-500/20 active:scale-95'
-                                }`}
+                            className="w-full py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg text-xs shadow-sm transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
                         >
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 15l-3-3m0 0l3-3m-3 3h8M3 12a9 9 0 1118 0 9 9 0 01-18 0z" />
-                            </svg>
-                            เรียกซ้ำ
+                            <span>🔁</span>
+                            <span>เรียกซ้ำ</span>
                         </button>
                     </div>
                 </div>
 
-                {/* Right Column: รายชื่อผู้รอคิว */}
-                <div className="p-6 md:p-8 col-span-1 md:col-span-2 bg-gray-50 flex flex-col md:max-h-[80vh]">
-                    <div className="flex justify-between items-center mb-6 border-b border-gray-200 pb-4">
-                        <span className="text-gray-700 font-bold text-lg">คิวที่รอ</span>
-                        <span className="text-2xl font-black text-primary bg-primary/10 px-4 py-1.5 rounded-xl">
-                            {waitingCount}
+                {/* Right Column: Waiting List */}
+                <div className="p-6 col-span-1 md:col-span-2 bg-slate-50/70 flex flex-col justify-between space-y-3">
+                    <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+                        <span className="text-xs font-bold text-slate-900">คิวที่รอ ({channel.servingCourse || 'ทุกหลักสูตร'})</span>
+                        <span className="text-xs font-bold text-[#166E7C] font-mono bg-teal-50 border border-teal-200 px-2.5 py-1 rounded-md">
+                            {waitingCount} คน
                         </span>
                     </div>
 
-                    <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scrollbar">
+                    <div className="flex-1 overflow-y-auto space-y-1.5 max-h-[380px] pr-1">
                         {waitingCount > 0 ? (
                             waitingRegistrants.map((reg, index) => (
-                                <div key={reg.id} className="flex justify-between items-center bg-white p-4 rounded-xl border border-gray-100 shadow-sm text-sm hover:shadow-md hover:-translate-y-0.5 transition-all">
-                                    <div className="flex items-center gap-3 overflow-hidden">
-                                        <span className="font-extrabold text-primary text-base shrink-0 w-12">{reg.displayQueueNumber}</span>
-                                        <span className="text-gray-700 truncate font-semibold">{reg.fullName}</span>
+                                <div
+                                    key={reg.id}
+                                    className="flex justify-between items-center bg-white p-2.5 rounded border border-slate-200 text-xs hover:border-slate-300 transition-colors"
+                                >
+                                    <div className="flex items-center gap-2 overflow-hidden">
+                                        <span className="font-bold text-[#166E7C] font-mono text-xs shrink-0">
+                                            {reg.displayQueueNumber}
+                                        </span>
+                                        <span className="text-slate-800 truncate font-medium">
+                                            {reg.fullName}
+                                        </span>
                                     </div>
-                                    <span className="text-xs text-gray-400 font-bold shrink-0">#{index + 1}</span>
+
+                                    <span className="text-[10px] text-slate-400 font-mono shrink-0">
+                                        #{index + 1}
+                                    </span>
                                 </div>
                             ))
                         ) : (
-                            <div className="w-full flex justify-center items-center h-40 text-center text-gray-400 text-sm font-medium">
-                                ไม่มีคิวรอเรียกหลักสูตรนี้
+                            <div className="flex flex-col items-center justify-center h-40 text-center text-slate-400 text-xs">
+                                <span>⏳</span>
+                                <span>ไม่มีคิวรอเรียกในหลักสูตรนี้</span>
                             </div>
                         )}
+                    </div>
+
+                    <div className="pt-3 border-t border-slate-200 text-center">
+                        <button
+                            onClick={() => router.back()}
+                            className="text-xs text-slate-500 hover:text-slate-800 font-medium hover:underline"
+                        >
+                            ← กลับหน้าหลัก
+                        </button>
                     </div>
                 </div>
             </div>
 
-            <div className="mt-8 text-center text-sm">
-                <button onClick={() => router.back()} className="text-gray-500 hover:text-gray-800 underline font-medium transition-colors">
-                    กลับหน้าหลัก (ปิดหน้าต่าง)
-                </button>
-            </div>
-        </div >
+            {/* Examiner Scoring Modal */}
+            <ExaminerScoringModal
+                isOpen={Boolean(scoringRegistrant)}
+                onClose={() => setScoringRegistrant(null)}
+                registrant={scoringRegistrant}
+                activity={activity}
+                channel={channel}
+                defaultExaminerName={
+                    [channel?.examiner1, channel?.examiner2].filter(Boolean).join(', ') || examinerName
+                }
+                onScoreSaved={(updated) => {
+                    setRegistrants(prev => prev.map(r => r.id === updated.id ? updated : r));
+                }}
+            />
+        </div>
     );
 }

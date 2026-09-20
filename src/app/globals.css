@@ -1,29 +1,60 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-  --primary: #0b0084;
-  --primary-hover: #2718c5;
-  --card: #eb8012;
-  --border: #eb8012;
+@theme {
+  --color-primary: #000946;
+  --color-primary-hover: #00125e;
+  --color-primary-light: #0a186b;
+  --color-primary-dark: #00052b;
 
+  --color-secondary: #ff741f;
+  --color-secondary-hover: #e55e0b;
+  --color-secondary-light: #ff8e47;
+  --color-secondary-subtle: #fff4ed;
+
+  --color-navy: #000946;
+  --color-navy-dark: #00052b;
+  --color-navy-hover: #00125e;
+  --color-navy-light: #0a186b;
+
+  --color-aero-orange: #ff741f;
+  --color-aero-orange-hover: #e55e0b;
+  --color-aero-orange-light: #fff4ed;
 }
 
+:root {
+  --background: #f8fafc;
+  --foreground: #000946;
+  --primary: #000946;
+  --primary-hover: #00125e;
+  --primary-light: #0a186b;
+  --primary-dark: #00052b;
+  --secondary: #ff741f;
+  --secondary-hover: #e55e0b;
+  --secondary-light: #ff8e47;
+  --secondary-subtle: #fff4ed;
+  --navy: #000946;
+  --aero-orange: #ff741f;
+  --card: #ffffff;
+  --border: #e2e8f0;
+}
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #dbdbdb;
-    --foreground: #171717;
-    --card: #eb8012;
-    --border: #eb8012;
+    --background: #00052b;
+    --foreground: #f8fafc;
+    --card: #000946;
+    --border: #0a186b;
   }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-barlow), var(--font-noto-sans-thai), sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+input, select, textarea {
+  color: #000946;
 }
 
 .bg-card {
@@ -31,26 +62,154 @@ body {
   border: 1px solid var(--border);
 }
 
+/* Primary Theme Classes (Navy Blue) */
 .bg-primary {
-  background: #0b0084;
-}
-
-.bg-border {
-  border: 1px solid var(--primary);
-}
-
-.text-primary {
-  color: var(--primary);
-}
-
-.text-black {
-  color: var(--foreground);
+  background-color: #000946;
 }
 
 .bg-primary-hover {
   background-color: var(--primary-hover);
 }
 
+.text-primary {
+  color: #000946;
+}
+
 .text-primary-hover {
   color: var(--primary-hover);
+}
+
+.border-primary {
+  border-color: #000946;
+}
+
+/* Secondary Theme Classes (Aero Orange) */
+.bg-secondary {
+  background-color: #ff741f;
+}
+
+.bg-secondary-hover {
+  background-color: var(--secondary-hover);
+}
+
+.text-secondary {
+  color: #ff741f;
+}
+
+.text-secondary-hover {
+  color: var(--secondary-hover);
+}
+
+.border-secondary {
+  border-color: #ff741f;
+}
+
+/* Explicit Brand Utilities */
+.bg-navy {
+  background-color: #000946;
+}
+
+.text-navy {
+  color: #000946;
+}
+
+.border-navy {
+  border-color: #000946;
+}
+
+.bg-aero-orange {
+  background-color: #ff741f;
+}
+
+.text-aero-orange {
+  color: #ff741f;
+}
+
+.border-aero-orange {
+  border-color: #ff741f;
+}
+
+.bg-border {
+  border: 1px solid #000946;
+}
+
+/* =========================================================
+   LEGACY HEX OVERRIDES TO NEW BRAND PALETTE:
+   Primary: Deep Navy #000946
+   Secondary: Aero Orange #FF741F
+   ========================================================= */
+
+/* All elements styled with old primary teal #166E7C */
+.bg-\[\#166E7C\],
+[class*="bg-[#166E7C]"] {
+  background-color: #000946 !important;
+}
+
+.hover\:bg-\[\#0F5661\]:hover,
+[class*="hover:bg-[#0F5661]"]:hover,
+.hover\:bg-\[\#125863\]:hover,
+[class*="hover:bg-[#125863]"]:hover,
+.bg-\[\#0F5661\],
+[class*="bg-[#0F5661]"],
+.bg-\[\#115E69\],
+[class*="bg-[#115E69]"],
+.bg-\[\#0E5E69\],
+[class*="bg-[#0E5E69]"] {
+  background-color: #00125e !important;
+}
+
+.text-\[\#166E7C\],
+[class*="text-[#166E7C]"] {
+  color: #000946 !important;
+}
+
+.border-\[\#166E7C\],
+[class*="border-[#166E7C]"] {
+  border-color: #000946 !important;
+}
+
+/* Gradients with teal */
+.from-\[\#115E69\],
+[class*="from-[#115E69]"] {
+  --tw-gradient-from: #00062a var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: rgb(0 6 42 / 0) var(--tw-gradient-to-position) !important;
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
+}
+
+.via-\[\#166E7C\],
+[class*="via-[#166E7C]"] {
+  --tw-gradient-to: rgb(0 9 70 / 0) var(--tw-gradient-to-position) !important;
+  --tw-gradient-stops: var(--tw-gradient-from), #000946 var(--tw-gradient-via-position), var(--tw-gradient-to) !important;
+}
+
+.to-\[\#1A7B8B\],
+[class*="to-[#1A7B8B]"],
+.to-\[\#0E5E69\],
+[class*="to-[#0E5E69]"],
+.to-\[\#166E7C\],
+[class*="to-[#166E7C]"] {
+  --tw-gradient-to: #00125e var(--tw-gradient-to-position) !important;
+}
+
+/* All elements styled with old gold #C59B27 -> Aero Orange #FF741F */
+.bg-\[\#C59B27\],
+[class*="bg-[#C59B27]"] {
+  background-color: #ff741f !important;
+}
+
+.hover\:bg-\[\#AE8720\]:hover,
+[class*="hover:bg-[#AE8720]"]:hover,
+.bg-\[\#AE8720\],
+[class*="bg-[#AE8720]"] {
+  background-color: #e55e0b !important;
+}
+
+.text-\[\#C59B27\],
+[class*="text-[#C59B27]"] {
+  color: #ff741f !important;
+}
+
+.border-\[\#C59B27\],
+[class*="border-[#C59B27]"] {
+  border-color: #ff741f !important;
 }

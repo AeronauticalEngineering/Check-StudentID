@@ -1,13 +1,10 @@
 // src/app/layout.js
-
-import { Inter } from "next/font/google";
 import "./globals.css";
-
-const inter = Inter({ subsets: ["latin"] });
+import { ModalProvider } from "../context/ModalContext";
 
 export const metadata = {
-  title: "Student Check-in System",
-  description: "ระบบลงทะเบียนและเช็คอินนักเรียน",
+  title: "AERO Student Management System",
+  description: "ระบบลงทะเบียนและเช็คอินนักเรียน AERO",
 };
 
 export const viewport = {
@@ -20,8 +17,10 @@ export const viewport = {
 export default function RootLayout({ children }) {
   return (
     <html lang="th">
-      <body className={inter.className}>
-        {children}
+      <body className="antialiased">
+        <ModalProvider>
+          {children}
+        </ModalProvider>
       </body>
     </html>
   );

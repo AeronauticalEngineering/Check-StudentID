@@ -2,30 +2,38 @@
 
 import { useState, useEffect } from 'react';
 import { db } from '../../../lib/firebase';
-import { collection, addDoc, onSnapshot, doc, deleteDoc, serverTimestamp, setDoc, updateDoc, query, orderBy } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, doc, deleteDoc, serverTimestamp, setDoc, updateDoc, query, orderBy, writeBatch } from 'firebase/firestore';
+import { useModal } from '../../../context/ModalContext';
 
-// Modern ToggleSwitch Component
-const ToggleSwitch = ({ label, enabled, onChange }) => (
-    <label className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-200 cursor-pointer hover:bg-gray-100 transition-colors">
-        <span className="text-gray-700 font-medium">{label}</span>
-        <div className="relative">
+// Compact Flat Toggle Switch
+const FlatToggleSwitch = ({ label, description, enabled, onChange }) => (
+    <label className="flex items-center justify-between p-3 bg-white rounded-lg border border-slate-200 cursor-pointer hover:border-slate-300 transition-colors">
+        <div className="space-y-0.5">
+            <span className="text-xs font-medium text-slate-900 block">{label}</span>
+            {description && <span className="text-[11px] text-slate-500 block">{description}</span>}
+        </div>
+        <div className="relative inline-flex items-center">
             <input type="checkbox" className="sr-only" checked={enabled} onChange={onChange} />
-            <div className={`block w-14 h-8 rounded-full transition-colors duration-300 ease-in-out ${enabled ? 'bg-green-500' : 'bg-gray-300'}`}></div>
-            <div className={`dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full shadow-md transition-transform duration-300 ease-in-out ${enabled ? 'transform translate-x-6' : ''}`}></div>
+            <div className={`w-9 h-5 rounded-full transition-colors ${enabled ? 'bg-[#166E7C]' : 'bg-slate-300'}`}></div>
+            <div className={`absolute left-0.5 top-0.5 bg-white w-4 h-4 rounded-full transition-transform ${enabled ? 'transform translate-x-4' : ''}`}></div>
         </div>
     </label>
 );
 
+
 export default function SettingsPage() {
+    const { showAlert, showConfirm, showToast } = useModal();
     const [categories, setCategories] = useState([]);
     const [courses, setCourses] = useState([]);
     const [timeSlots, setTimeSlots] = useState([]);
+    const [examiners, setExaminers] = useState([]);
     const [newCategory, setNewCategory] = useState('');
     const [newCourse, setNewCourse] = useState({ name: '', shortName: '', color: '#3B82F6' });
     const [newTimeSlot, setNewTimeSlot] = useState('');
+    const [newExaminer, setNewExaminer] = useState({ name: '', role: '' });
     const [message, setMessage] = useState('');
     const [editingCourse, setEditingCourse] = useState(null);
-
+    const [editingExaminer, setEditingExaminer] = useState(null);
 
     const [notificationSettings, setNotificationSettings] = useState({
         onCheckIn: true,
@@ -38,10 +46,9 @@ export default function SettingsPage() {
             setCategories(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
         });
 
-        // Query by name only, then sort by priority in memory (to support old data without priority field)
+        // Query by name only, then sort by priority in memory
         const unsubCourses = onSnapshot(query(collection(db, 'courseOptions'), orderBy('name')), (snapshot) => {
             const coursesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            // Sort by priority first (if exists), then by name
             coursesData.sort((a, b) => {
                 const priorityA = a.priority !== undefined ? a.priority : 999;
                 const priorityB = b.priority !== undefined ? b.priority : 999;
@@ -56,6 +63,11 @@ export default function SettingsPage() {
             setTimeSlots(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
         });
 
+        const examinersQuery = query(collection(db, 'examiners'), orderBy('name'));
+        const unsubExaminers = onSnapshot(examinersQuery, (snapshot) => {
+            setExaminers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        });
+
         const settingsRef = doc(db, 'systemSettings', 'notifications');
         const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
             if (docSnap.exists()) {
@@ -65,14 +77,12 @@ export default function SettingsPage() {
             }
         });
 
-
-
         return () => {
             unsubCategories();
             unsubCourses();
             unsubTimeSlots();
+            unsubExaminers();
             unsubSettings();
-
         };
     }, []);
 
@@ -84,7 +94,7 @@ export default function SettingsPage() {
             const settingsRef = doc(db, 'systemSettings', 'notifications');
             await setDoc(settingsRef, newSettings, { merge: true });
             setMessage('✅ บันทึกการตั้งค่าแล้ว');
-            setTimeout(() => setMessage(''), 2000);
+            setTimeout(() => setMessage(''), 2500);
         } catch (error) {
             setMessage(`❌ เกิดข้อผิดพลาด: ${error.message}`);
         }
@@ -92,37 +102,80 @@ export default function SettingsPage() {
 
     const handleAddItem = async (type, value) => {
         if (!value.name || (type === 'course' && !value.shortName)) {
-            alert('กรุณากรอกข้อมูลให้ครบถ้วน');
+            showAlert({
+                title: 'แจ้งเตือน',
+                message: 'กรุณากรอกข้อมูลให้ครบถ้วน',
+                type: 'warning'
+            });
             return;
         }
         const collectionNameMap = {
             category: 'categories',
             course: 'courseOptions',
-            timeSlot: 'timeSlotOptions'
+            timeSlot: 'timeSlotOptions',
+            examiner: 'examiners'
         };
 
-        // Auto-assign priority for new courses
         const dataToAdd = { ...value, createdAt: serverTimestamp() };
         if (type === 'course') {
-            dataToAdd.priority = courses.length; // Assign next priority
+            dataToAdd.priority = courses.length;
         }
 
-        await addDoc(collection(db, collectionNameMap[type]), dataToAdd);
-        if (type === 'category') setNewCategory('');
-        if (type === 'course') setNewCourse({ name: '', shortName: '', color: '#3B82F6' });
-        if (type === 'timeSlot') setNewTimeSlot('');
+        try {
+            await addDoc(collection(db, collectionNameMap[type]), dataToAdd);
+            showToast({ message: 'เพิ่มรายการสำเร็จ', type: 'success' });
+            if (type === 'category') setNewCategory('');
+            if (type === 'course') setNewCourse({ name: '', shortName: '', color: '#3B82F6' });
+            if (type === 'timeSlot') setNewTimeSlot('');
+            if (type === 'examiner') setNewExaminer({ name: '', role: '' });
+        } catch (error) {
+            showAlert({
+                title: 'เกิดข้อผิดพลาด',
+                message: `ไม่สามารถเพิ่มรายการได้: ${error.message}`,
+                type: 'error'
+            });
+        }
     };
 
     const handleUpdateCourse = async () => {
         if (!editingCourse || !editingCourse.name || !editingCourse.shortName) return;
-        const courseRef = doc(db, 'courseOptions', editingCourse.id);
-        await updateDoc(courseRef, {
-            name: editingCourse.name,
-            shortName: editingCourse.shortName,
-            color: editingCourse.color || '#3B82F6',
-            priority: editingCourse.priority !== undefined ? editingCourse.priority : 0
-        });
-        setEditingCourse(null);
+        try {
+            const courseRef = doc(db, 'courseOptions', editingCourse.id);
+            await updateDoc(courseRef, {
+                name: editingCourse.name.trim(),
+                shortName: editingCourse.shortName.trim(),
+                color: editingCourse.color || '#3B82F6',
+                priority: editingCourse.priority !== undefined ? editingCourse.priority : 0
+            });
+            showToast({ message: 'อัปเดตหลักสูตรสำเร็จ', type: 'success' });
+            setEditingCourse(null);
+        } catch (error) {
+            showAlert({
+                title: 'เกิดข้อผิดพลาด',
+                message: `ไม่สามารถอัปเดตหลักสูตรได้: ${error.message}`,
+                type: 'error'
+            });
+        }
+    };
+
+    const handleUpdateExaminer = async () => {
+        if (!editingExaminer || !editingExaminer.name?.trim()) return;
+        try {
+            const examinerRef = doc(db, 'examiners', editingExaminer.id);
+            await updateDoc(examinerRef, {
+                name: editingExaminer.name.trim(),
+                role: (editingExaminer.role || '').trim(),
+                updatedAt: serverTimestamp()
+            });
+            showToast({ message: 'อัปเดตข้อมูลกรรมการสำเร็จ', type: 'success' });
+            setEditingExaminer(null);
+        } catch (error) {
+            showAlert({
+                title: 'เกิดข้อผิดพลาด',
+                message: `ไม่สามารถอัปเดตข้อมูลกรรมการได้: ${error.message}`,
+                type: 'error'
+            });
+        }
     };
 
     const handleMoveCourse = async (courseId, direction) => {
@@ -135,183 +188,516 @@ export default function SettingsPage() {
         const currentCourse = courses[currentIndex];
         const targetCourse = courses[targetIndex];
 
-        // Swap priorities
         await updateDoc(doc(db, 'courseOptions', currentCourse.id), { priority: targetIndex });
         await updateDoc(doc(db, 'courseOptions', targetCourse.id), { priority: currentIndex });
     };
 
     const handleDeleteItem = async (type, id) => {
-        if (window.confirm('คุณแน่ใจหรือไม่ว่าต้องการลบรายการนี้?')) {
-            const collectionNameMap = {
-                category: 'categories',
-                course: 'courseOptions',
-                timeSlot: 'timeSlotOptions'
-            };
-            await deleteDoc(doc(db, collectionNameMap[type], id));
+        const typeLabels = { category: 'หมวดหมู่นี้', course: 'หลักสูตรนี้', timeSlot: 'ช่วงเวลานี้', examiner: 'กรรมการท่านนี้' };
+        const confirmed = await showConfirm({
+            title: 'ยืนยันการลบ',
+            message: `คุณแน่ใจหรือไม่ว่าต้องการลบ${typeLabels[type] || 'รายการนี้'}?`,
+            type: 'danger',
+            confirmText: 'ลบรายการ',
+            cancelText: 'ยกเลิก'
+        });
+
+        if (confirmed) {
+            try {
+                const collectionNameMap = {
+                    category: 'categories',
+                    course: 'courseOptions',
+                    timeSlot: 'timeSlotOptions',
+                    examiner: 'examiners'
+                };
+                await deleteDoc(doc(db, collectionNameMap[type], id));
+                showToast({ message: 'ลบรายการสำเร็จ', type: 'success' });
+            } catch (error) {
+                showAlert({
+                    title: 'เกิดข้อผิดพลาด',
+                    message: `ไม่สามารถลบได้: ${error.message}`,
+                    type: 'error'
+                });
+            }
         }
     };
 
+
     return (
-        <div className="min-h-screen bg-gray-50/50 p-4 md:p-8 font-sans">
-            <div className="max-w-7xl mx-auto">
-                <header className="mb-8">
-                    <h1 className="text-3xl font-bold text-gray-800">ตั้งค่าระบบ</h1>
-                    <p className="text-gray-500 mt-1">จัดการการแจ้งเตือนและข้อมูลพื้นฐานของระบบ</p>
-                </header>
+        <div className="p-4 md:p-6 space-y-4 max-w-7xl mx-auto">
+            {/* Header Toolbar */}
+            <div className="bg-white p-3 rounded-lg border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                    <h1 className="text-sm font-bold text-slate-900">ตั้งค่าระบบ (System Settings)</h1>
+                    <p className="text-xs text-slate-500">จัดการการแจ้งเตือน LINE Flex และข้อมูลพื้นฐาน (หมวดหมู่, หลักสูตร, ช่วงเวลา)</p>
+                </div>
+            </div>
 
-                {message && (
-                    <div className={`mb-6 p-4 rounded-xl flex items-center gap-3 animate-fade-in ${message.includes('✅') ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-red-50 text-red-700 border border-red-100'}`}>
-                        <span className="text-xl">{message.includes('✅') ? '🎉' : '⚠️'}</span>
-                        <p className="font-medium">{message.replace('✅ ', '').replace('❌ ', '')}</p>
+            {/* Alert Message */}
+            {message && (
+                <div className={`p-2.5 rounded text-xs border font-medium ${message.includes('✅') ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+                    {message}
+                </div>
+            )}
+
+            {/* Notification Settings Card */}
+            <div className="bg-white p-4 rounded-lg border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                    <div className="flex items-center gap-2">
+                        <span className="text-base">🔔</span>
+                        <h2 className="text-xs font-semibold text-slate-900 uppercase tracking-wide">การแจ้งเตือนผ่าน LINE</h2>
                     </div>
-                )}
+                    <span className="text-[11px] text-slate-400">LINE Flex Notification Triggers</span>
+                </div>
 
-                <div className="space-y-8">
-                    {/* Notification Settings */}
-                    <section className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-                        <div className="flex items-center gap-3 mb-6">
-                            <div className="p-2 bg-green-100 rounded-lg text-green-600">
-                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
-                            </div>
-                            <h2 className="text-xl font-bold text-gray-800">การแจ้งเตือน LINE</h2>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <ToggleSwitch label="แจ้งเตือนเมื่อเช็คอิน" enabled={notificationSettings.onCheckIn} onChange={(e) => handleSettingChange('onCheckIn', e.target.checked)} />
-                            <ToggleSwitch label="แจ้งเตือนเมื่อจบกิจกรรม" enabled={notificationSettings.onCheckOut} onChange={(e) => handleSettingChange('onCheckOut', e.target.checked)} />
-                            <ToggleSwitch label="แจ้งเตือนเมื่อเรียกคิว" enabled={notificationSettings.onQueueCall} onChange={(e) => handleSettingChange('onQueueCall', e.target.checked)} />
-                        </div>
-                    </section>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <FlatToggleSwitch
+                        label="แจ้งเตือนเมื่อเช็คอิน"
+                        description="ส่งข้อความเมื่อนักเรียนสแกนหรือถูกเช็คอิน"
+                        enabled={notificationSettings.onCheckIn}
+                        onChange={(e) => handleSettingChange('onCheckIn', e.target.checked)}
+                    />
+                    <FlatToggleSwitch
+                        label="แจ้งเตือนเมื่อจบกิจกรรม"
+                        description="ส่งแบบประเมินและข้อความหลังจบกิจกรรม"
+                        enabled={notificationSettings.onCheckOut}
+                        onChange={(e) => handleSettingChange('onCheckOut', e.target.checked)}
+                    />
+                    <FlatToggleSwitch
+                        label="แจ้งเตือนเมื่อเรียกคิว"
+                        description="ส่งข้อความแจ้งเตือนเมื่อถึงคิวของนักเรียน"
+                        enabled={notificationSettings.onQueueCall}
+                        onChange={(e) => handleSettingChange('onQueueCall', e.target.checked)}
+                    />
+                </div>
+            </div>
 
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                        {/* Categories */}
-                        <section className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col h-full">
-                            <div className="flex items-center gap-3 mb-4">
-                                <div className="p-2 bg-blue-100 rounded-lg text-blue-600">
-                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" /></svg>
-                                </div>
-                                <h2 className="text-lg font-bold text-gray-800">หมวดหมู่กิจกรรม</h2>
-                            </div>
-                            <form onSubmit={(e) => { e.preventDefault(); handleAddItem('category', { name: newCategory }); }} className="flex gap-2 mb-4">
-                                <input
-                                    type="text"
-                                    value={newCategory}
-                                    onChange={e => setNewCategory(e.target.value)}
-                                    placeholder="เพิ่มหมวดหมู่ใหม่..."
-                                    className="flex-grow px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
-                                />
-                                <button type="submit" className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20">เพิ่ม</button>
-                            </form>
-                            <div className="flex-grow overflow-y-auto max-h-[300px] pr-2 custom-scrollbar">
-                                <ul className="space-y-2">
-                                    {categories.map(cat => (
-                                        <li key={cat.id} className="p-3 bg-gray-50 rounded-xl flex justify-between items-center group hover:bg-blue-50 transition-colors">
-                                            <span className="font-medium text-gray-700">{cat.name}</span>
-                                            <button onClick={() => handleDeleteItem('category', cat.id)} className="text-gray-400 hover:text-red-500 transition-colors p-1">
-                                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+            {/* Examiners Master List Card */}
+            <div className="bg-white p-4 rounded-lg border border-slate-200 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                    <div className="flex items-center gap-2">
+                        <span className="text-base">👥</span>
+                        <div>
+                            <h2 className="text-xs font-bold text-slate-900 uppercase tracking-wide">
+                                รายชื่อคณะกรรมการคัดเลือก / สัมภาษณ์ (Examiners Master List)
+                            </h2>
+                            <p className="text-[11px] text-slate-500">
+                                กำหนดรายชื่อกรรมการล่วงหน้าสำหรับเลือกประจำโต๊ะคิว (โต๊ะละ 2 ท่าน) ในห้องควบคุมคิว
+                            </p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-teal-50 text-[#166E7C] border border-teal-200">
+                            กรรมการทั้งหมด {examiners.length} ท่าน
+                        </span>
+                    </div>
+                </div>
+
+                {/* Add Examiner Form */}
+                <form
+                    onSubmit={(e) => {
+                        e.preventDefault();
+                        handleAddItem('examiner', {
+                            name: newExaminer.name.trim(),
+                            role: newExaminer.role.trim()
+                        });
+                    }}
+                    className="grid grid-cols-1 sm:grid-cols-12 gap-2 bg-slate-50/70 p-3 rounded-lg border border-slate-200"
+                >
+                    <div className="sm:col-span-6">
+                        <label className="text-[11px] font-semibold text-slate-700 block mb-1">
+                            ชื่อ-นามสกุล กรรมการ <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                            type="text"
+                            placeholder="เช่น ผศ.ดร.สมชาย ใจดี หรือ อ.วิภาดา รักเรียน"
+                            value={newExaminer.name}
+                            onChange={(e) => setNewExaminer(prev => ({ ...prev, name: e.target.value }))}
+                            className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-800 outline-none focus:border-[#166E7C]"
+                            required
+                        />
+                    </div>
+                    <div className="sm:col-span-4">
+                        <label className="text-[11px] font-semibold text-slate-700 block mb-1">
+                            ตำแหน่ง / สาขาวิชา / สังกัด
+                        </label>
+                        <input
+                            type="text"
+                            placeholder="เช่น สาขาวิศวกรรมการบิน"
+                            value={newExaminer.role}
+                            onChange={(e) => setNewExaminer(prev => ({ ...prev, role: e.target.value }))}
+                            className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-800 outline-none focus:border-[#166E7C]"
+                        />
+                    </div>
+                    <div className="sm:col-span-2 flex items-end">
+                        <button
+                            type="submit"
+                            className="w-full py-2 bg-[#166E7C] hover:bg-[#0F5661] text-white text-xs font-semibold rounded-lg transition-all active:scale-95 flex items-center justify-center gap-1 cursor-pointer"
+                        >
+                            <span>+</span>
+                            <span>เพิ่มกรรมการ</span>
+                        </button>
+                    </div>
+                </form>
+
+                {/* Examiners Grid / List */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 max-h-[300px] overflow-y-auto pr-1">
+                    {examiners.length === 0 ? (
+                        <div className="col-span-full py-8 text-center text-xs text-slate-400 bg-slate-50 rounded-lg border border-dashed border-slate-200">
+                            ยังไม่มีรายชื่อกรรมการในระบบ กรุณากรอกเพิ่มรายชื่อด้านบน
+                        </div>
+                    ) : (
+                        examiners.map(ex => (
+                            <div
+                                key={ex.id}
+                                className="p-2.5 bg-white border border-slate-200 rounded-lg hover:border-slate-300 transition-colors flex items-center justify-between gap-2"
+                            >
+                                {editingExaminer?.id === ex.id ? (
+                                    <div className="flex-1 space-y-1.5">
+                                        <input
+                                            type="text"
+                                            value={editingExaminer.name}
+                                            onChange={(e) => setEditingExaminer(prev => ({ ...prev, name: e.target.value }))}
+                                            className="w-full px-2 py-1 bg-white border border-slate-300 rounded text-xs text-slate-900"
+                                            placeholder="ชื่อ-นามสกุล"
+                                        />
+                                        <input
+                                            type="text"
+                                            value={editingExaminer.role || ''}
+                                            onChange={(e) => setEditingExaminer(prev => ({ ...prev, role: e.target.value }))}
+                                            className="w-full px-2 py-1 bg-white border border-slate-300 rounded text-[11px] text-slate-600"
+                                            placeholder="สังกัด / สาขา"
+                                        />
+                                        <div className="flex gap-1 pt-0.5">
+                                            <button
+                                                type="button"
+                                                onClick={handleUpdateExaminer}
+                                                className="px-2 py-0.5 bg-emerald-600 text-white rounded text-[11px] font-semibold"
+                                            >
+                                                บันทึก
                                             </button>
-                                        </li>
-                                    ))}
-                                </ul>
+                                            <button
+                                                type="button"
+                                                onClick={() => setEditingExaminer(null)}
+                                                className="px-2 py-0.5 bg-slate-200 text-slate-700 rounded text-[11px]"
+                                            >
+                                                ยกเลิก
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex items-center gap-1.5">
+                                                <span className="text-slate-400 text-xs">👤</span>
+                                                <span className="text-xs font-semibold text-slate-900 truncate block">
+                                                    {ex.name}
+                                                </span>
+                                            </div>
+                                            {ex.role && (
+                                                <span className="text-[11px] text-slate-500 truncate block pl-4">
+                                                    {ex.role}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center gap-1 shrink-0">
+                                            <button
+                                                onClick={() => setEditingExaminer(ex)}
+                                                className="p-1 text-slate-400 hover:text-[#166E7C] transition-colors text-xs"
+                                                title="แก้ไข"
+                                            >
+                                                ✏️
+                                            </button>
+                                            <button
+                                                onClick={() => handleDeleteItem('examiner', ex.id)}
+                                                className="p-1 text-slate-400 hover:text-red-600 transition-colors text-xs"
+                                                title="ลบ"
+                                            >
+                                                ✕
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
                             </div>
-                        </section>
+                        ))
+                    )}
+                </div>
+            </div>
 
-                        {/* Courses */}
-                        <section className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col h-full">
-                            <div className="flex items-center gap-3 mb-4">
-                                <div className="p-2 bg-purple-100 rounded-lg text-purple-600">
-                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
+            {/* Master Data Management Grid (3 Columns) */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {/* 1. Categories */}
+                <div className="bg-white p-4 rounded-lg border border-slate-200 flex flex-col h-full space-y-3">
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                        <div className="flex items-center gap-2">
+                            <span className="text-sm">🏷️</span>
+                            <h2 className="text-xs font-semibold text-slate-900">หมวดหมู่กิจกรรม</h2>
+                        </div>
+                        <span className="text-[11px] text-slate-500 font-medium">ทั้งหมด {categories.length} รายการ</span>
+                    </div>
+
+                    <form
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            handleAddItem('category', { name: newCategory.trim() });
+                        }}
+                        className="flex gap-2"
+                    >
+                        <input
+                            type="text"
+                            value={newCategory}
+                            onChange={e => setNewCategory(e.target.value)}
+                            placeholder="พิมพ์ชื่อหมวดหมู่..."
+                            className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 outline-none focus:border-[#166E7C] placeholder:text-slate-400"
+                        />
+                        <button
+                            type="submit"
+                            className="px-4 py-2 bg-[#166E7C] hover:bg-[#0F5661] text-white text-xs font-semibold rounded-lg transition-all active:scale-95 whitespace-nowrap cursor-pointer"
+                        >
+                            + เพิ่ม
+                        </button>
+                    </form>
+
+                    <div className="flex-1 overflow-y-auto max-h-[360px] border border-slate-100 rounded-lg divide-y divide-slate-100">
+                        {categories.length === 0 ? (
+                            <div className="p-4 text-center text-xs text-slate-400">ยังไม่มีหมวดหมู่</div>
+                        ) : (
+                            categories.map(cat => (
+                                <div
+                                    key={cat.id}
+                                    className="p-2.5 flex justify-between items-center bg-white hover:bg-slate-50 transition-colors"
+                                >
+                                    <span className="text-xs text-slate-800 font-medium">{cat.name}</span>
+                                    <button
+                                        onClick={() => handleDeleteItem('category', cat.id)}
+                                        className="text-slate-400 hover:text-red-600 transition-colors p-1 text-xs cursor-pointer"
+                                        title="ลบหมวดหมู่"
+                                    >
+                                        ✕
+                                    </button>
                                 </div>
-                                <h2 className="text-lg font-bold text-gray-800">หลักสูตร (คิว)</h2>
-                            </div>
-                            <form onSubmit={(e) => { e.preventDefault(); handleAddItem('course', newCourse); }} className="flex gap-2 mb-4">
-                                <input
-                                    type="text"
-                                    value={newCourse.name}
-                                    onChange={e => setNewCourse({ ...newCourse, name: e.target.value })}
-                                    placeholder="ชื่อหลักสูตร"
-                                    className="w-1/3 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all text-sm"
-                                />
-                                <input
-                                    type="text"
-                                    value={newCourse.shortName}
-                                    onChange={e => setNewCourse({ ...newCourse, shortName: e.target.value })}
-                                    placeholder="ตัวย่อ"
-                                    className="w-1/4 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all text-sm"
-                                />
+                            ))
+                        )}
+                    </div>
+                </div>
+
+                {/* 2. Courses */}
+                <div className="bg-white p-4 rounded-lg border border-slate-200 flex flex-col h-full space-y-3">
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                        <div className="flex items-center gap-2">
+                            <span className="text-sm">🎓</span>
+                            <h2 className="text-xs font-semibold text-slate-900">หลักสูตร (คิว & ผังที่นั่ง)</h2>
+                        </div>
+                        <span className="text-[11px] text-slate-500 font-medium">ทั้งหมด {courses.length} รายการ</span>
+                    </div>
+
+                    <form
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            handleAddItem('course', {
+                                name: newCourse.name.trim(),
+                                shortName: newCourse.shortName.trim(),
+                                color: newCourse.color || '#3B82F6'
+                            });
+                        }}
+                        className="space-y-2"
+                    >
+                        <div className="grid grid-cols-5 gap-2">
+                            <input
+                                type="text"
+                                value={newCourse.name}
+                                onChange={e => setNewCourse({ ...newCourse, name: e.target.value })}
+                                placeholder="ชื่อหลักสูตร"
+                                className="col-span-3 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 outline-none focus:border-[#166E7C] placeholder:text-slate-400"
+                            />
+                            <input
+                                type="text"
+                                value={newCourse.shortName}
+                                onChange={e => setNewCourse({ ...newCourse, shortName: e.target.value })}
+                                placeholder="ตัวย่อ"
+                                className="col-span-2 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 outline-none focus:border-[#166E7C] placeholder:text-slate-400"
+                            />
+                        </div>
+                        <div className="flex gap-2">
+                            <div className="flex items-center gap-1.5 border border-slate-200 rounded-lg px-2.5 py-1.5 bg-slate-50 text-[11px] text-slate-600">
+                                <span>สีหลักสูตร:</span>
                                 <input
                                     type="color"
                                     value={newCourse.color}
                                     onChange={e => setNewCourse({ ...newCourse, color: e.target.value })}
-                                    className="w-12 h-10 p-1 bg-gray-50 border border-gray-200 rounded-xl cursor-pointer"
-                                    title="เลือกสี"
+                                    className="w-5 h-5 p-0 border-0 rounded cursor-pointer bg-transparent"
+                                    title="เลือกสีหลักสูตร"
                                 />
-                                <button type="submit" className="flex-grow px-3 py-2 bg-purple-600 text-white font-semibold rounded-xl hover:bg-purple-700 transition-colors shadow-lg shadow-purple-600/20 text-sm">เพิ่ม</button>
-                            </form>
-                            <div className="flex-grow overflow-y-auto max-h-[300px] pr-2 custom-scrollbar">
-                                <ul className="space-y-2">
-                                    {courses.map((course, index) => (
-                                        <li key={course.id} className="p-3 bg-gray-50 rounded-xl flex justify-between items-center group hover:bg-purple-50 transition-colors">
-                                            {editingCourse?.id === course.id ? (
-                                                <div className="flex gap-2 w-full items-center">
-                                                    <input type="text" value={editingCourse.name} onChange={e => setEditingCourse({ ...editingCourse, name: e.target.value })} className="p-1 border rounded w-1/3 text-sm" />
-                                                    <input type="text" value={editingCourse.shortName} onChange={e => setEditingCourse({ ...editingCourse, shortName: e.target.value })} className="p-1 border rounded w-1/4 text-sm" />
-                                                    <input type="color" value={editingCourse.color || '#3B82F6'} onChange={e => setEditingCourse({ ...editingCourse, color: e.target.value })} className="w-8 h-8 p-0.5 border rounded cursor-pointer" />
-                                                    <button onClick={handleUpdateCourse} className="text-green-600 hover:text-green-700"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg></button>
-                                                    <button onClick={() => setEditingCourse(null)} className="text-gray-400 hover:text-gray-600"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
-                                                </div>
-                                            ) : (
-                                                <>
-                                                    <div className="flex flex-col">
-                                                        <div className="flex items-center gap-2">
-                                                            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: course.color || '#3B82F6' }}></div>
-                                                            <span className="font-medium text-gray-800 text-sm">{course.name}</span>
-                                                        </div>
-                                                        <span className="text-xs text-gray-500 font-mono bg-white px-1.5 py-0.5 rounded border self-start mt-1 ml-5">{course.shortName}</span>
-                                                    </div>
-                                                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                        <button onClick={() => handleMoveCourse(course.id, 'up')} disabled={index === 0} className="text-gray-400 hover:text-blue-600 p-1 disabled:opacity-30 disabled:cursor-not-allowed" title="ย้ายขึ้น"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg></button>
-                                                        <button onClick={() => handleMoveCourse(course.id, 'down')} disabled={index === courses.length - 1} className="text-gray-400 hover:text-blue-600 p-1 disabled:opacity-30 disabled:cursor-not-allowed" title="ย้ายลง"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg></button>
-                                                        <button onClick={() => setEditingCourse({ ...course })} className="text-gray-400 hover:text-blue-600 p-1" title="แก้ไข"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg></button>
-                                                        <button onClick={() => handleDeleteItem('course', course.id)} className="text-gray-400 hover:text-red-600 p-1" title="ลบ"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
-                                                    </div>
-                                                </>
-                                            )}
-                                        </li>
-                                    ))}
-                                </ul>
                             </div>
-                        </section>
+                            <button
+                                type="submit"
+                                className="flex-1 px-4 py-2 bg-[#166E7C] hover:bg-[#0F5661] text-white text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer"
+                            >
+                                + เพิ่มหลักสูตร
+                            </button>
+                        </div>
+                    </form>
 
-                        {/* Time Slots */}
-                        <section className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col h-full">
-                            <div className="flex items-center gap-3 mb-4">
-                                <div className="p-2 bg-orange-100 rounded-lg text-orange-600">
-                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    <div className="flex-1 overflow-y-auto max-h-[360px] border border-slate-100 rounded-lg divide-y divide-slate-100">
+                        {courses.length === 0 ? (
+                            <div className="p-4 text-center text-xs text-slate-400">ยังไม่มีหลักสูตร</div>
+                        ) : (
+                            courses.map((course, index) => (
+                                <div
+                                    key={course.id}
+                                    className="p-2.5 bg-white hover:bg-slate-50 transition-colors"
+                                >
+                                    {editingCourse?.id === course.id ? (
+                                        <div className="space-y-2">
+                                            <div className="grid grid-cols-5 gap-2">
+                                                <input
+                                                    type="text"
+                                                    value={editingCourse.name}
+                                                    onChange={e => setEditingCourse({ ...editingCourse, name: e.target.value })}
+                                                    className="col-span-3 px-2 py-1.5 border border-slate-300 rounded text-xs"
+                                                />
+                                                <input
+                                                    type="text"
+                                                    value={editingCourse.shortName}
+                                                    onChange={e => setEditingCourse({ ...editingCourse, shortName: e.target.value })}
+                                                    className="col-span-2 px-2 py-1.5 border border-slate-300 rounded text-xs"
+                                                />
+                                            </div>
+                                            <div className="flex items-center justify-between gap-2">
+                                                <div className="flex items-center gap-1">
+                                                    <span className="text-[11px] text-slate-500">สี:</span>
+                                                    <input
+                                                        type="color"
+                                                        value={editingCourse.color || '#3B82F6'}
+                                                        onChange={e => setEditingCourse({ ...editingCourse, color: e.target.value })}
+                                                        className="w-5 h-5 p-0 border-0 rounded cursor-pointer"
+                                                    />
+                                                </div>
+                                                <div className="flex gap-1.5">
+                                                    <button
+                                                        onClick={() => setEditingCourse(null)}
+                                                        className="px-2.5 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs hover:bg-slate-50"
+                                                    >
+                                                        ยกเลิก
+                                                    </button>
+                                                    <button
+                                                        onClick={handleUpdateCourse}
+                                                        className="px-3 py-1.5 bg-[#166E7C] hover:bg-[#0F5661] text-white rounded-lg text-xs font-semibold shadow-xs"
+                                                    >
+                                                        บันทึก
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="flex items-center justify-between gap-2">
+                                            <div className="flex items-center gap-2 min-w-0">
+                                                <span
+                                                    className="w-3 h-3 rounded-full flex-shrink-0"
+                                                    style={{ backgroundColor: course.color || '#3B82F6' }}
+                                                />
+                                                <div className="min-w-0">
+                                                    <span className="text-xs text-slate-900 font-medium truncate block">
+                                                        {course.name}
+                                                    </span>
+                                                    <span className="text-[10px] text-slate-500 font-mono bg-slate-100 px-1 rounded border border-slate-200">
+                                                        {course.shortName}
+                                                    </span>
+                                                </div>
+                                            </div>
+
+                                            <div className="flex items-center gap-1 flex-shrink-0">
+                                                <button
+                                                    onClick={() => handleMoveCourse(course.id, 'up')}
+                                                    disabled={index === 0}
+                                                    className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-20 text-xs"
+                                                    title="เลื่อนขึ้น"
+                                                >
+                                                    ▲
+                                                </button>
+                                                <button
+                                                    onClick={() => handleMoveCourse(course.id, 'down')}
+                                                    disabled={index === courses.length - 1}
+                                                    className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-20 text-xs"
+                                                    title="เลื่อนลง"
+                                                >
+                                                    ▼
+                                                </button>
+                                                <button
+                                                    onClick={() => setEditingCourse({ ...course })}
+                                                    className="p-1 text-slate-400 hover:text-blue-600 text-xs"
+                                                    title="แก้ไข"
+                                                >
+                                                    ✎
+                                                </button>
+                                                <button
+                                                    onClick={() => handleDeleteItem('course', course.id)}
+                                                    className="p-1 text-slate-400 hover:text-red-600 text-xs"
+                                                    title="ลบ"
+                                                >
+                                                    ✕
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
-                                <h2 className="text-lg font-bold text-gray-800">ช่วงเวลา (คิว)</h2>
-                            </div>
-                            <form onSubmit={(e) => { e.preventDefault(); handleAddItem('timeSlot', { name: newTimeSlot }); }} className="flex gap-2 mb-4">
-                                <input
-                                    type="time"
-                                    value={newTimeSlot}
-                                    onChange={e => setNewTimeSlot(e.target.value)}
-                                    className="flex-grow px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none transition-all"
-                                />
-                                <button type="submit" className="px-4 py-2 bg-orange-600 text-white font-semibold rounded-xl hover:bg-orange-700 transition-colors shadow-lg shadow-orange-600/20">เพิ่ม</button>
-                            </form>
-                            <div className="flex-grow overflow-y-auto max-h-[300px] pr-2 custom-scrollbar">
-                                <ul className="space-y-2">
-                                    {timeSlots.map(ts => (
-                                        <li key={ts.id} className="p-3 bg-gray-50 rounded-xl flex justify-between items-center group hover:bg-orange-50 transition-colors">
-                                            <span className="font-medium text-gray-700 font-mono">{ts.name}</span>
-                                            <button onClick={() => handleDeleteItem('timeSlot', ts.id)} className="text-gray-400 hover:text-red-500 transition-colors p-1">
-                                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                                            </button>
-                                        </li>
-                                    ))}
-                                </ul>
-                            </div>
-                        </section>
+                            ))
+                        )}
+                    </div>
+                </div>
+
+                {/* 3. Time Slots */}
+                <div className="bg-white p-4 rounded-lg border border-slate-200 flex flex-col h-full space-y-3">
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                        <div className="flex items-center gap-2">
+                            <span className="text-sm">⏰</span>
+                            <h2 className="text-xs font-semibold text-slate-900">ช่วงเวลา (คิว)</h2>
+                        </div>
+                        <span className="text-[11px] text-slate-500 font-medium">ทั้งหมด {timeSlots.length} รายการ</span>
+                    </div>
+
+                    <form
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            handleAddItem('timeSlot', { name: newTimeSlot });
+                        }}
+                        className="flex gap-2"
+                    >
+                        <input
+                            type="time"
+                            value={newTimeSlot}
+                            onChange={e => setNewTimeSlot(e.target.value)}
+                            className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 outline-none focus:border-[#166E7C] font-mono"
+                        />
+                        <button
+                            type="submit"
+                            className="px-4 py-2 bg-[#166E7C] hover:bg-[#0F5661] text-white text-xs font-semibold rounded-lg transition-all active:scale-95 whitespace-nowrap cursor-pointer"
+                        >
+                            + เพิ่ม
+                        </button>
+                    </form>
+
+
+                    <div className="flex-1 overflow-y-auto max-h-[360px] border border-slate-100 rounded-lg divide-y divide-slate-100">
+                        {timeSlots.length === 0 ? (
+                            <div className="p-4 text-center text-xs text-slate-400">ยังไม่มีช่วงเวลา</div>
+                        ) : (
+                            timeSlots.map(ts => (
+                                <div
+                                    key={ts.id}
+                                    className="p-2.5 flex justify-between items-center bg-white hover:bg-slate-50 transition-colors"
+                                >
+                                    <span className="text-xs text-slate-800 font-mono font-medium">{ts.name} น.</span>
+                                    <button
+                                        onClick={() => handleDeleteItem('timeSlot', ts.id)}
+                                        className="text-slate-400 hover:text-red-600 transition-colors p-1 text-xs"
+                                        title="ลบช่วงเวลา"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+                            ))
+                        )}
                     </div>
                 </div>
             </div>

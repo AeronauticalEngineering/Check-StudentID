@@ -6,6 +6,23 @@ import { useSearchParams } from 'next/navigation';
 import { db } from '../../../../../lib/firebase';
 import { doc, getDoc, collection, query, where, getDocs, onSnapshot, orderBy } from 'firebase/firestore';
 
+function formatSeatLabel(zoneName, runningNumber, labelFormat) {
+    const numStr = runningNumber.toString().padStart(3, '0');
+    if (labelFormat === 'numberOnly') {
+        return numStr;
+    }
+    if (labelFormat === 'withZone') {
+        if (/^[A-Za-z]+$/.test(zoneName)) {
+            return `${zoneName}${numStr}`;
+        }
+        return `${zoneName}-${numStr}`;
+    }
+    if (/^[A-Za-z]+$/.test(zoneName)) {
+        return `${zoneName}${numStr}`;
+    }
+    return numStr;
+}
+
 export default function StudentSeatingChartPage({ params }) {
     const { id: activityId } = use(params);
     const searchParams = useSearchParams();
@@ -123,12 +140,57 @@ export default function StudentSeatingChartPage({ params }) {
         return course?.color || null;
     };
 
-    // Calculate dominant course for each row
-    const getRowCourse = useCallback((rowNumber) => {
+    // Derived Theater / Graduation Configuration
+    const theaterConfig = useMemo(() => {
+        const cfg = activity?.theaterConfig || {};
+        const vipRows = cfg.vipRows !== undefined ? Number(cfg.vipRows) : 5;
+        const studentRows = cfg.studentRows !== undefined ? Number(cfg.studentRows) : 18;
+        const seatsPerRow = cfg.seatsPerRow !== undefined ? Number(cfg.seatsPerRow) : 10;
+        const ajInterval = cfg.ajInterval !== undefined ? Number(cfg.ajInterval) : 3;
+        const ajRowsCustom = cfg.ajRowsCustom || '';
+
+        let targetAjRows = [];
+        if (ajRowsCustom && ajRowsCustom.trim()) {
+            targetAjRows = ajRowsCustom
+                .split(',')
+                .map(s => parseInt(s.trim(), 10))
+                .filter(n => !isNaN(n) && n >= 1 && n <= studentRows);
+        } else if (ajInterval > 0) {
+            for (let r = 1; r <= studentRows; r += ajInterval) {
+                targetAjRows.push(r);
+            }
+        }
+
+        return {
+            vipRows,
+            studentRows,
+            seatsPerRow,
+            targetAjRows
+        };
+    }, [activity]);
+
+    // Dynamic AJ Seats Map
+    const ajSeats = useMemo(() => {
+        const map = {};
+        const { targetAjRows, seatsPerRow } = theaterConfig;
+
+        let ajIndex = 1;
+        targetAjRows.forEach(r => {
+            map[`A${r}-1`] = `AJ${ajIndex++}`;
+            map[`B${r}-${seatsPerRow}`] = `AJ${ajIndex++}`;
+        });
+
+        return map;
+    }, [theaterConfig]);
+
+    // Dominant course for Theater rows
+    const getRowCourse = useCallback((studentRowIndex) => {
         const courseCounts = {};
-        for (let col = 1; col <= 10; col++) {
-            const seatA = `A${rowNumber}-${col}`;
-            const seatB = `B${rowNumber}-${col}`;
+        const seatsPerRow = theaterConfig.seatsPerRow;
+
+        for (let col = 1; col <= seatsPerRow; col++) {
+            const seatA = `A${studentRowIndex}-${col}`;
+            const seatB = `B${studentRowIndex}-${col}`;
             const regA = seatMap[seatA];
             const regB = seatMap[seatB];
             if (regA?.course) courseCounts[regA.course] = (courseCounts[regA.course] || 0) + 1;
@@ -143,41 +205,38 @@ export default function StudentSeatingChartPage({ params }) {
             }
         });
         return dominantCourse;
-    }, [seatMap]);
+    }, [seatMap, theaterConfig.seatsPerRow]);
 
     // Zone row configuration
     const zoneRowConfig = useMemo(() => {
         const rows = [];
-        const vipRows = [
-            { row: 1, label: 'VIP1' }, { row: 2, label: 'VIP3' },
-            { row: 3, label: 'VIP5' }, { row: 4, label: 'VIP7' }, { row: 5, label: 'VIP9' }
-        ];
-        vipRows.forEach(vip => {
+        const { vipRows, studentRows } = theaterConfig;
+
+        for (let v = 1; v <= vipRows; v++) {
             rows.push({
-                row: vip.row, color: 'bg-gray-100', borderColor: 'border-gray-300',
-                label: vip.label, labelBg: 'bg-gray-200', textColor: 'text-gray-600', course: null
+                type: 'vip',
+                vipRowIndex: v,
+                labelLeft: `VIP${(v * 2) - 1}`,
+                labelRight: `VIP${v * 2}`,
+                labelCenter: `VIP${(v * 2) - 1}`,
+                course: null
             });
-        });
-        for (let i = 6; i <= 23; i++) {
-            const rowCourse = getRowCourse(i);
+        }
+        for (let s = 1; s <= studentRows; s++) {
+            const rowCourse = getRowCourse(s);
             const courseData = rowCourse ? courseOptions.find(c => c.name === rowCourse) : null;
             rows.push({
-                row: i, label: `A${i - 5}`, color: 'bg-white', borderColor: 'border-gray-300',
-                labelBg: 'bg-gray-100', textColor: 'text-black', course: rowCourse,
+                type: 'student',
+                studentRowIndex: s,
+                labelLeft: `${s}`,
+                labelRight: `${s}`,
+                labelCenter: `A${s}`,
+                course: rowCourse,
                 courseShortName: courseData?.shortName || rowCourse
             });
         }
         return rows;
-    }, [getRowCourse, courseOptions]);
-
-    const ajSeats = {
-        'A1-1': 'AJ1', 'B1-10': 'AJ2',      // A1
-        'A4-1': 'AJ3', 'B4-10': 'AJ4',      // A4 (เว้น 2 แถว)
-        'A7-1': 'AJ5', 'B7-10': 'AJ6',    // A7 (เว้น 2 แถว)
-        'A10-1': 'AJ7', 'B10-10': 'AJ8',    // A10 (เว้น 2 แถว)
-        'A13-1': 'AJ9', 'B13-10': 'AJ10',   // A13 (เว้น 2 แถว)
-        'A16-1': 'AJ11', 'B16-10': 'AJ12',  // A16 (เว้น 2 แถว)
-    };
+    }, [theaterConfig, getRowCourse, courseOptions]);
 
     if (isLoading) {
         return (
@@ -188,191 +247,268 @@ export default function StudentSeatingChartPage({ params }) {
     }
 
     const renderExamChart = () => {
-        const zones = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
+        const config = activity?.examConfig || {};
+        const zoneCount = Number(config.zoneCount || 4);
+        const rows = Number(config.rows || 10);
+        const cols = Number(config.cols || 10);
+        const seatsPerZone = rows * cols;
+        const labelFormat = config.labelFormat || (config.zones?.[0]?.name && /^[A-Za-z]+$/.test(config.zones[0].name) ? 'withZone' : 'numberOnly');
+
+        let zones = [];
+        if (Array.isArray(config.zones) && config.zones.length > 0 && typeof config.zones[0] === 'object') {
+            zones = config.zones.map((z, i) => {
+                const startNum = z.startNumber !== undefined ? Number(z.startNumber) : (i * seatsPerZone) + 1;
+                return {
+                    name: z.name || String(i + 1),
+                    startNumber: startNum,
+                    endNumber: z.endNumber !== undefined ? Number(z.endNumber) : startNum + seatsPerZone - 1
+                };
+            });
+        } else {
+            const isAlpha = Array.isArray(config.zones) && typeof config.zones[0] === 'string';
+            zones = Array.from({ length: zoneCount }, (_, i) => {
+                const startNum = (i * seatsPerZone) + 1;
+                return {
+                    name: isAlpha ? config.zones[i] : String(i + 1),
+                    startNumber: startNum,
+                    endNumber: startNum + seatsPerZone - 1
+                };
+            });
+        }
+
         return (
-            <div className="bg-white rounded-lg shadow-lg p-4 overflow-x-auto" ref={chartContainerRef}>
+            <div className="bg-white rounded-lg shadow-sm border border-slate-300 p-4 md:p-6 overflow-x-auto" ref={chartContainerRef}>
                 <div className="text-center mb-6">
-                    <h2 className="text-xl font-bold text-gray-800">ผังที่นั่งสอบ</h2>
-                    <p className="text-sm text-gray-500">ที่นั่งของคุณคือ <span className="font-bold text-primary text-lg">{mySeatNumber}</span></p>
+                    <h2 className="text-lg font-bold text-slate-900">{config.roomName || 'ผังที่นั่งสอบ'}</h2>
+                    {config.location && <p className="text-xs text-slate-600 mb-1">สถานที่: {config.location}</p>}
+                    <p className="text-xs text-slate-600 font-medium">ที่นั่งของคุณคือ <span className="font-bold text-blue-700 text-sm">{mySeatNumber || '-'}</span></p>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 justify-items-center">
-                    {zones.map((zoneChar, zoneIndex) => (
-                        <div key={zoneChar} className="border-2 border-gray-200 rounded-xl p-4 bg-gray-50">
-                            <div className="text-center font-bold text-lg mb-3 text-blue-800 bg-blue-100 py-1 rounded-lg">
-                                Zone {zoneChar}
-                            </div>
-                            <div className="grid grid-cols-10 gap-1">
-                                {Array.from({ length: 100 }, (_, i) => {
-                                    // Column-Major Logic: 1, 11, 21... in first row
-                                    const row = Math.floor(i / 10);
-                                    const col = i % 10;
-                                    const seatNum = (col * 10) + row + 1;
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 justify-items-center">
+                    {zones.map((zoneObj, zoneIndex) => {
+                        const zoneName = zoneObj.name;
+                        const startNum = zoneObj.startNumber;
+                        const endNum = zoneObj.endNumber;
+                        const startLabel = formatSeatLabel(zoneName, startNum, labelFormat);
+                        const endLabel = formatSeatLabel(zoneName, endNum, labelFormat);
 
-                                    const displaySeatLabel = `${zoneChar}${seatNum.toString().padStart(3, '0')}`;
-                                    const registrant = seatMap[displaySeatLabel];
-                                    const isMySeat = displaySeatLabel === mySeatNumber;
-                                    const courseColor = registrant ? getCourseColor(registrant.course) : null;
+                        return (
+                            <div key={zoneIndex} className="border border-slate-300 rounded-lg p-3 bg-slate-50 w-full max-w-lg space-y-2">
+                                <div className="text-center font-bold text-xs py-1.5 px-3 rounded bg-slate-800 text-white flex justify-between items-center">
+                                    <span>โซน {zoneName}</span>
+                                    <span className="text-[11px] text-slate-300 font-mono">
+                                        {startLabel} - {endLabel} ({seatsPerZone} ที่นั่ง)
+                                    </span>
+                                </div>
+                                <div
+                                    className="grid gap-1 overflow-x-auto p-1 bg-white rounded border border-slate-200"
+                                    style={{
+                                        gridTemplateColumns: `repeat(${cols}, minmax(28px, 1fr))`
+                                    }}
+                                >
+                                    {Array.from({ length: seatsPerZone }, (_, i) => {
+                                        const row = Math.floor(i / cols);
+                                        const col = i % cols;
+                                        const seatOffset = (col * rows) + row;
+                                        const runningNumber = startNum + seatOffset;
+                                        const displaySeatLabel = formatSeatLabel(zoneName, runningNumber, labelFormat);
+                                        const registrant = seatMap[displaySeatLabel];
+                                        const isMySeat = displaySeatLabel === mySeatNumber;
+                                        const courseColor = registrant ? getCourseColor(registrant.course) : null;
 
-                                    return (
-                                        <div
-                                            key={seatNum}
-                                            ref={isMySeat ? mySeatRef : null}
-                                            className={`w-8 h-8 border rounded flex items-center justify-center text-[10px] font-bold relative
-                                            ${isMySeat ? 'ring-4 ring-red-500 z-30 scale-110 animate-pulse' : ''}
-                                            ${registrant ? 'text-white shadow-sm' : 'text-gray-300 bg-white'}`}
-                                            style={{
-                                                backgroundColor: isMySeat ? '#ef4444' : (courseColor || (registrant ? '#6b7280' : undefined)),
-                                                borderColor: courseColor ? 'transparent' : '#e5e7eb'
-                                            }}
-                                        >
-                                            {seatNum}
-                                            {isMySeat && (
-                                                <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-red-600 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-40">
-                                                    คุณ
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                })}
+                                        return (
+                                            <div
+                                                key={displaySeatLabel || i}
+                                                ref={isMySeat ? mySeatRef : null}
+                                                className={`h-7 rounded border flex items-center justify-center text-[10px] font-bold relative ${
+                                                    isMySeat
+                                                        ? 'bg-red-600 text-white border-red-700 ring-2 ring-red-400 z-30 scale-110'
+                                                        : registrant
+                                                            ? 'text-white border-transparent'
+                                                            : 'text-slate-700 bg-white border-slate-300'
+                                                }`}
+                                                style={{
+                                                    backgroundColor: isMySeat ? '#dc2626' : (courseColor || (registrant ? '#0b0084' : undefined))
+                                                }}
+                                            >
+                                                {runningNumber}
+                                                {isMySeat && (
+                                                    <div className="absolute -top-7 left-1/2 transform -translate-x-1/2 bg-red-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap z-40">
+                                                        คุณ
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
                             </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             </div>
         );
     };
 
     const renderTheaterChart = () => {
+        const { seatsPerRow } = theaterConfig;
+
         return (
-            <div className="bg-white rounded-lg shadow-lg p-4 overflow-x-auto" ref={chartContainerRef}>
-                {/* Stage - Fixed width, no responsive */}
-                <div className="w-[900px] mx-auto bg-blue-100 border-2 border-blue-200 rounded-lg py-3 mb-2 text-center">
-                    <div className="font-bold text-blue-800">Stage</div>
-                </div>
+            <div className="bg-white rounded-lg shadow-sm border border-slate-300 p-4 md:p-6 overflow-x-auto" ref={chartContainerRef}>
+                <div className="min-w-[820px] w-fit mx-auto space-y-4">
+                    {/* Stage */}
+                    <div className="w-full bg-slate-900 border border-slate-800 rounded-lg py-2.5 text-center">
+                        <div className="font-bold text-white text-xs tracking-wider uppercase">เวที / Stage</div>
+                    </div>
 
-                {/* Sofa - Fixed width, no responsive */}
-                <div className="w-[900px] mx-auto bg-blue-50 border-2 border-blue-100 rounded-lg py-2 mb-4 text-center">
-                    <div className="font-semibold text-blue-600 text-sm">Sofa</div>
-                </div>
+                    {/* Symmetrical Layout with Spacious Center Aisle */}
+                    <div className="flex justify-center items-start gap-6 md:gap-8 pt-2">
+                        {/* Zone A (Left Wing) */}
+                        <div className="flex-1 max-w-md">
+                            <div className="text-center font-bold text-xs text-slate-900 bg-slate-100 border border-slate-300 py-1 rounded mb-2">
+                                Zone A
+                            </div>
+                            <div className="space-y-1">
+                                {zoneRowConfig.map((config, idx) => (
+                                    <div key={idx} className="flex items-center justify-end gap-1">
+                                        <span className="w-8 text-[11px] font-semibold text-slate-600 text-right pr-1">
+                                            {config.labelLeft}
+                                        </span>
 
-                {/* Seating Area */}
-                <div className="flex gap-4 justify-center items-start w-[900px] mx-auto">
-                    {/* Zone A */}
-                    <div className="w-[350px]">
-                        <div className="h-7 flex items-center justify-center font-bold text-sm mb-0.5">Zone A</div>
-                        <div className="space-y-0.5">
-                            {zoneRowConfig.map((config, idx) => (
-                                <div key={idx} className="flex gap-0.5 items-center">
-                                    {/* Row numbers */}
-                                    <div className="w-6 text-xs text-gray-500 text-right pr-1">
-                                        {config.row > 5 ? config.row - 5 : ''}
-                                    </div>
+                                        <div className="flex gap-1">
+                                            {Array.from({ length: seatsPerRow }, (_, col) => {
+                                                const seatLabel = config.type === 'vip'
+                                                    ? `VIP_A${config.vipRowIndex}-${col + 1}`
+                                                    : `A${config.studentRowIndex}-${col + 1}`;
 
-                                    {/* Seats 1-10 */}
-                                    {Array.from({ length: 10 }, (_, col) => {
-                                        const seatLabel = config.row <= 5 ? `VIP_A${config.row}-${col + 1}` : `A${config.row - 5}-${col + 1}`;
-                                        const ajLabel = ajSeats[seatLabel];
-                                        const registrant = seatMap[seatLabel];
-                                        const isMySeat = seatLabel === mySeatNumber;
-                                        const courseColor = registrant ? getCourseColor(registrant.course) : null;
+                                                const ajLabel = ajSeats[seatLabel];
+                                                const registrant = seatMap[seatLabel];
+                                                const isMySeat = seatLabel === mySeatNumber;
+                                                const courseColor = registrant ? getCourseColor(registrant.course) : null;
 
-                                        // AJ Seat Styling
-                                        if (ajLabel) {
-                                            return (
-                                                <div key={col} className="w-7 h-7 bg-cyan-400 border border-cyan-600 rounded flex items-center justify-center text-[10px] font-bold text-black shadow-sm z-10">
-                                                    {ajLabel}
-                                                </div>
-                                            );
-                                        }
+                                                if (ajLabel) {
+                                                    return (
+                                                        <div
+                                                            key={col}
+                                                            className="w-7 h-7 bg-cyan-600 border border-cyan-700 rounded flex items-center justify-center text-[9px] font-bold text-white shadow-none"
+                                                            title={`อาจารย์คุมแถว: ${ajLabel}`}
+                                                        >
+                                                            {ajLabel}
+                                                        </div>
+                                                    );
+                                                }
 
-                                        return (
-                                            <div
-                                                key={col}
-                                                ref={isMySeat ? mySeatRef : null}
-                                                className={`w-7 h-7 border rounded flex items-center justify-center text-[10px] font-bold transition-all relative
-                                                ${isMySeat ? 'ring-4 ring-red-500 z-30 scale-125 animate-pulse' : ''}
-                                                ${registrant ? 'text-white' : 'text-black/50'}`}
-                                                style={{
-                                                    backgroundColor: isMySeat ? '#ef4444' : (courseColor || (registrant ? '#6b7280' : config.color)),
-                                                    borderColor: courseColor ? 'transparent' : config.borderColor
-                                                }}
-                                            >
-                                                {col + 1}
-                                                {isMySeat && (
-                                                    <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-red-600 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-40 shadow-lg">
-                                                        คุณ
+                                                return (
+                                                    <div
+                                                        key={col}
+                                                        ref={isMySeat ? mySeatRef : null}
+                                                        className={`w-7 h-7 border rounded flex items-center justify-center text-[10px] font-bold transition-all relative ${
+                                                            isMySeat
+                                                                ? 'bg-red-600 text-white border-red-700 ring-2 ring-red-400 z-30 scale-110'
+                                                                : config.type === 'vip'
+                                                                    ? 'bg-amber-50 border-amber-300 text-amber-900'
+                                                                    : registrant
+                                                                        ? 'text-white border-transparent'
+                                                                        : 'bg-white border-slate-300 text-slate-800'
+                                                        }`}
+                                                        style={{
+                                                            backgroundColor: isMySeat ? '#dc2626' : (courseColor || (registrant ? '#0b0084' : undefined))
+                                                        }}
+                                                    >
+                                                        {col + 1}
+                                                        {isMySeat && (
+                                                            <div className="absolute -top-7 left-1/2 transform -translate-x-1/2 bg-red-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap z-40">
+                                                                คุณ
+                                                            </div>
+                                                        )}
                                                     </div>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Center Aisle Badge */}
+                        <div className="w-16 sm:w-20 flex flex-col items-center space-y-1 pt-7">
+                            {zoneRowConfig.map((config, idx) => (
+                                <div
+                                    key={idx}
+                                    className={`w-14 h-7 flex items-center justify-center rounded text-[10px] font-bold border ${
+                                        config.type === 'vip'
+                                            ? 'bg-amber-100 border-amber-300 text-amber-900'
+                                            : 'bg-slate-800 border-slate-700 text-white'
+                                    }`}
+                                >
+                                    <span>{config.labelCenter}</span>
                                 </div>
                             ))}
                         </div>
-                    </div>
 
-                    {/* Center Labels */}
-                    <div className="w-20 flex flex-col space-y-0 pt-0">
-                        <div className="h-7"></div>
-                        <div className="space-y-0.5">
-                            {zoneRowConfig.map((config, idx) => (
-                                <div key={idx} className="h-7 flex flex-col items-center justify-center rounded text-[10px] font-bold border px-1 bg-gray-100 text-gray-600">
-                                    <div>{config.label}</div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
+                        {/* Zone B (Right Wing) */}
+                        <div className="flex-1 max-w-md">
+                            <div className="text-center font-bold text-xs text-slate-900 bg-slate-100 border border-slate-300 py-1 rounded mb-2">
+                                Zone B
+                            </div>
+                            <div className="space-y-1">
+                                {zoneRowConfig.map((config, idx) => (
+                                    <div key={idx} className="flex items-center justify-start gap-1">
+                                        <div className="flex gap-1">
+                                            {Array.from({ length: seatsPerRow }, (_, col) => {
+                                                const seatLabel = config.type === 'vip'
+                                                    ? `VIP_B${config.vipRowIndex}-${col + 1}`
+                                                    : `B${config.studentRowIndex}-${col + 1}`;
 
-                    {/* Zone B */}
-                    <div className="w-[350px]">
-                        <div className="h-7 flex items-center justify-center font-bold text-sm mb-0.5">Zone B</div>
-                        <div className="space-y-0.5">
-                            {zoneRowConfig.map((config, idx) => (
-                                <div key={idx} className="flex gap-0.5 items-center">
-                                    {/* Seats 1-10 */}
-                                    {Array.from({ length: 10 }, (_, col) => {
-                                        const seatLabel = config.row <= 5 ? `VIP_B${config.row}-${col + 1}` : `B${config.row - 5}-${col + 1}`;
-                                        const ajLabel = ajSeats[seatLabel];
-                                        const registrant = seatMap[seatLabel];
-                                        const isMySeat = seatLabel === mySeatNumber;
-                                        const courseColor = registrant ? getCourseColor(registrant.course) : null;
+                                                const ajLabel = ajSeats[seatLabel];
+                                                const registrant = seatMap[seatLabel];
+                                                const isMySeat = seatLabel === mySeatNumber;
+                                                const courseColor = registrant ? getCourseColor(registrant.course) : null;
 
-                                        // AJ Seat Styling
-                                        if (ajLabel) {
-                                            return (
-                                                <div key={col} className="w-7 h-7 bg-cyan-400 border border-cyan-600 rounded flex items-center justify-center text-[10px] font-bold text-black shadow-sm z-10">
-                                                    {ajLabel}
-                                                </div>
-                                            );
-                                        }
+                                                if (ajLabel) {
+                                                    return (
+                                                        <div
+                                                            key={col}
+                                                            className="w-7 h-7 bg-cyan-600 border border-cyan-700 rounded flex items-center justify-center text-[9px] font-bold text-white shadow-none"
+                                                            title={`อาจารย์คุมแถว: ${ajLabel}`}
+                                                        >
+                                                            {ajLabel}
+                                                        </div>
+                                                    );
+                                                }
 
-                                        return (
-                                            <div
-                                                key={col}
-                                                ref={isMySeat ? mySeatRef : null}
-                                                className={`w-7 h-7 border rounded flex items-center justify-center text-[10px] font-bold transition-all relative
-                                                ${isMySeat ? 'ring-4 ring-red-500 z-30 scale-125 animate-pulse' : ''}
-                                                ${registrant ? 'text-white' : 'text-black/50'}`}
-                                                style={{
-                                                    backgroundColor: isMySeat ? '#ef4444' : (courseColor || (registrant ? '#6b7280' : config.color)),
-                                                    borderColor: courseColor ? 'transparent' : config.borderColor
-                                                }}
-                                            >
-                                                {col + 1}
-                                                {isMySeat && (
-                                                    <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-red-600 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-40 shadow-lg">
-                                                        คุณ
+                                                return (
+                                                    <div
+                                                        key={col}
+                                                        ref={isMySeat ? mySeatRef : null}
+                                                        className={`w-7 h-7 border rounded flex items-center justify-center text-[10px] font-bold transition-all relative ${
+                                                            isMySeat
+                                                                ? 'bg-red-600 text-white border-red-700 ring-2 ring-red-400 z-30 scale-110'
+                                                                : config.type === 'vip'
+                                                                    ? 'bg-amber-50 border-amber-300 text-amber-900'
+                                                                    : registrant
+                                                                        ? 'text-white border-transparent'
+                                                                        : 'bg-white border-slate-300 text-slate-800'
+                                                        }`}
+                                                        style={{
+                                                            backgroundColor: isMySeat ? '#dc2626' : (courseColor || (registrant ? '#0b0084' : undefined))
+                                                        }}
+                                                    >
+                                                        {col + 1}
+                                                        {isMySeat && (
+                                                            <div className="absolute -top-7 left-1/2 transform -translate-x-1/2 bg-red-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap z-40">
+                                                                คุณ
+                                                            </div>
+                                                        )}
                                                     </div>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-                                    {/* Row numbers */}
-                                    <div className="w-6 text-xs text-gray-500 text-left pl-1">
-                                        {config.row > 5 ? config.row - 5 : ''}
+                                                );
+                                            })}
+                                        </div>
+
+                                        <span className="w-8 text-[11px] font-semibold text-slate-600 text-left pl-1">
+                                            {config.labelRight}
+                                        </span>
                                     </div>
-                                </div>
-                            ))}
+                                ))}
+                            </div>
                         </div>
                     </div>
                 </div>

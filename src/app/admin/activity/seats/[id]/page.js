@@ -5,36 +5,80 @@ import Link from 'next/link';
 import { db } from '../../../../../lib/firebase';
 import {
   doc, getDoc, updateDoc, collection, query,
-  where, getDocs, writeBatch, serverTimestamp, deleteDoc, addDoc, onSnapshot, limit, orderBy
+  where, getDocs, writeBatch, serverTimestamp, deleteDoc, onSnapshot, limit, orderBy
 } from 'firebase/firestore';
-import Papa from "papaparse";
-import { CSVLink } from "react-csv";
+import Papa from 'papaparse';
+import { CSVLink } from 'react-csv';
+import ExaminerScoringModal from '../../../../../components/ExaminerScoringModal';
+
+function formatSeatLabel(zoneName, runningNumber, labelFormat) {
+  const numStr = runningNumber.toString().padStart(3, '0');
+  if (labelFormat === 'numberOnly') {
+    return numStr;
+  }
+  if (labelFormat === 'withZone') {
+    if (/^[A-Za-z]+$/.test(zoneName)) {
+      return `${zoneName}${numStr}`;
+    }
+    return `${zoneName}-${numStr}`;
+  }
+  if (/^[A-Za-z]+$/.test(zoneName)) {
+    return `${zoneName}${numStr}`;
+  }
+  return numStr;
+}
+import { useModal } from '../../../../../context/ModalContext';
 
 // Helper function to translate status to Thai
 const translateStatus = (status) => {
   switch (status) {
     case 'checked-in': return 'เช็คอินแล้ว';
     case 'registered': return 'ลงทะเบียนแล้ว';
-    case 'cancelled': return 'ยกเลิกแล้ว';
-    case 'waitlisted': return 'รอคิว';
-    case 'interviewing': return 'สอบสัมภาษณ์';
+    case 'calling': return 'กำลังเรียก';
+    case 'called': return 'เรียกคิวแล้ว';
+    case 'interviewing':
+    case 'serving': return 'สอบสัมภาษณ์';
     case 'completed': return 'สำเร็จแล้ว';
-    default: return status || '';
+    case 'waitlisted': return 'รอคิว';
+    case 'cancelled': return 'ยกเลิกแล้ว';
+    case 'absent': return 'ไม่มารายงานตัว';
+    case 'skipped': return 'ข้ามคิว';
+    default: {
+      if (!status) return 'ลงทะเบียนแล้ว';
+      const lower = String(status).toLowerCase();
+      if (lower.includes('call')) return 'กำลังเรียก';
+      if (lower.includes('interview')) return 'สอบสัมภาษณ์';
+      if (lower.includes('check')) return 'เช็คอินแล้ว';
+      if (lower.includes('complete')) return 'สำเร็จแล้ว';
+      if (lower.includes('cancel')) return 'ยกเลิกแล้ว';
+      if (lower.includes('wait')) return 'รอคิว';
+      return status;
+    }
   }
 };
 
 const StatusBadge = ({ status }) => {
-  let colorClass = 'bg-gray-100 text-gray-800';
+  let colorClass = 'bg-slate-100 text-slate-700 border-slate-200';
   switch (status) {
-    case 'checked-in': colorClass = 'bg-green-100 text-green-800 border-green-200'; break;
-    case 'registered': colorClass = 'bg-blue-100 text-blue-800 border-blue-200'; break;
-    case 'cancelled': colorClass = 'bg-red-100 text-red-800 border-red-200'; break;
-    case 'waitlisted': colorClass = 'bg-amber-100 text-amber-800 border-amber-200'; break;
-    case 'interviewing': colorClass = 'bg-indigo-100 text-indigo-800 border-indigo-200'; break;
-    case 'completed': colorClass = 'bg-purple-100 text-purple-800 border-purple-200'; break;
+    case 'checked-in': colorClass = 'bg-emerald-50 text-emerald-700 border-emerald-200'; break;
+    case 'registered': colorClass = 'bg-blue-50 text-blue-700 border-blue-200'; break;
+    case 'calling':
+    case 'called': colorClass = 'bg-amber-50 text-amber-700 border-amber-300 font-semibold animate-pulse'; break;
+    case 'interviewing':
+    case 'serving': colorClass = 'bg-indigo-50 text-indigo-700 border-indigo-200 font-semibold'; break;
+    case 'completed': colorClass = 'bg-purple-50 text-purple-700 border-purple-200'; break;
+    case 'waitlisted': colorClass = 'bg-orange-50 text-orange-700 border-orange-200'; break;
+    case 'cancelled':
+    case 'absent':
+    case 'skipped': colorClass = 'bg-red-50 text-red-700 border-red-200'; break;
+    default: {
+      const lower = String(status || '').toLowerCase();
+      if (lower.includes('call')) colorClass = 'bg-amber-50 text-amber-700 border-amber-300 font-semibold animate-pulse';
+      break;
+    }
   }
   return (
-    <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${colorClass}`}>
+    <span className={`inline-block px-2.5 py-0.5 rounded text-xs border font-medium ${colorClass}`}>
       {translateStatus(status)}
     </span>
   );
@@ -42,13 +86,15 @@ const StatusBadge = ({ status }) => {
 
 export default function SeatAssignmentPage({ params }) {
   const { id: activityId } = use(params);
+  const { showAlert, showConfirm, showToast } = useModal();
   const [activity, setActivity] = useState(null);
   const [registrants, setRegistrants] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState('');
 
+
   const [form, setForm] = useState({
-    fullName: '', studentId: '', nationalId: '', course: '', timeSlot: '', displayQueueNumber: '', status: 'registered'
+    fullName: '', studentId: '', nationalId: '', course: '', quota: '', timeSlot: '', displayQueueNumber: '', status: 'registered'
   });
 
   const [editStates, setEditStates] = useState({});
@@ -60,17 +106,17 @@ export default function SeatAssignmentPage({ params }) {
   // Sorting state
   const [sortConfig, setSortConfig] = useState({ key: 'importOrder', direction: 'asc' });
   const [showSummary, setShowSummary] = useState(false);
-  const [editingCounter, setEditingCounter] = useState(null); // { courseName, value }
+  const [editingCounter, setEditingCounter] = useState(null);
+  const [scoringRegistrant, setScoringRegistrant] = useState(null);
   const [confirmModal, setConfirmModal] = useState({
     isOpen: false,
     title: '',
     message: '',
     onConfirm: null,
-    type: 'danger' // danger, warning, info
+    type: 'danger'
   });
 
   useEffect(() => {
-    // Sort by priority first, then by name
     const unsubCourses = onSnapshot(query(collection(db, 'courseOptions'), orderBy('priority'), orderBy('name')), (snapshot) => {
       setCourseOptions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
@@ -98,7 +144,6 @@ export default function SeatAssignmentPage({ params }) {
       const snapshot = await getDocs(q);
       const registrantsData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
 
-      // Initial sort by importOrder or name
       registrantsData.sort((a, b) => {
         if (a.importOrder !== undefined && b.importOrder !== undefined) {
           return a.importOrder - b.importOrder;
@@ -115,6 +160,7 @@ export default function SeatAssignmentPage({ params }) {
           nationalId: r.nationalId || '',
           seatNumber: r.seatNumber || '',
           course: r.course || '',
+          quota: r.quota || r.evaluationScore?.quota || '',
           timeSlot: r.timeSlot || '',
           status: r.status || 'registered',
           displayQueueNumber: r.displayQueueNumber || ''
@@ -150,6 +196,14 @@ export default function SeatAssignmentPage({ params }) {
       return sortConfig.direction === 'asc' ? valA - valB : valB - valA;
     }
 
+    if (sortConfig.key === 'quota') {
+      const valA = (a.quota || a.evaluationScore?.quota || '').toString().toLowerCase();
+      const valB = (b.quota || b.evaluationScore?.quota || '').toString().toLowerCase();
+      if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+      if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+      return 0;
+    }
+
     const valA = (a[sortConfig.key] || '').toString().toLowerCase();
     const valB = (b[sortConfig.key] || '').toString().toLowerCase();
 
@@ -163,6 +217,9 @@ export default function SeatAssignmentPage({ params }) {
     if (field === 'seatNumber') {
       finalValue = value.toUpperCase();
     }
+    if (field === 'nationalId') {
+      finalValue = value.replace(/\D/g, '').slice(0, 13);
+    }
     setEditStates(prev => ({
       ...prev,
       [registrantId]: { ...prev[registrantId], [field]: finalValue }
@@ -170,6 +227,18 @@ export default function SeatAssignmentPage({ params }) {
   };
 
   const handleUpdateAll = async () => {
+    // Validate nationalId for all registrants before saving
+    for (const reg of registrants) {
+      const updatedData = editStates[reg.id];
+      if (updatedData?.nationalId) {
+        const cleanNat = String(updatedData.nationalId).replace(/\D/g, '');
+        if (cleanNat.length !== 13) {
+          setMessage(`❌ เลขบัตรประชาชนของ "${updatedData.fullName || reg.fullName}" ไม่ครบ 13 หลัก (ปัจจุบันมี ${cleanNat.length} หลัก)`);
+          return;
+        }
+      }
+    }
+
     setIsLoading(true);
     setMessage('กำลังบันทึกข้อมูลทั้งหมด...');
     try {
@@ -240,18 +309,24 @@ export default function SeatAssignmentPage({ params }) {
 
   const handleAddParticipant = async (e) => {
     e.preventDefault();
-    const { fullName, nationalId, course, timeSlot, studentId, displayQueueNumber } = form;
-    if (!fullName || !nationalId || (activity?.type === 'queue' && (!course || !timeSlot))) {
+    const { fullName, nationalId, course, quota, timeSlot, studentId, displayQueueNumber } = form;
+    const cleanNat = String(nationalId || '').replace(/\D/g, '');
+
+    if (!fullName || !cleanNat || (activity?.type === 'queue' && (!course || !timeSlot))) {
       setMessage('กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน');
       return;
     }
 
+    if (cleanNat.length !== 13) {
+      setMessage('❌ เลขบัตรประชาชนต้องเป็นตัวเลข 13 หลักเท่านั้น');
+      return;
+    }
+
     try {
-      // Check for duplicate nationalId in this activity
       const qDuplicate = query(
         collection(db, 'registrations'),
         where('activityId', '==', activityId),
-        where('nationalId', '==', nationalId)
+        where('nationalId', '==', cleanNat)
       );
       const duplicateSnapshot = await getDocs(qDuplicate);
 
@@ -263,7 +338,7 @@ export default function SeatAssignmentPage({ params }) {
       const batch = writeBatch(db);
       let lineUserIdToUse = null;
 
-      const q = query(collection(db, 'studentProfiles'), where('nationalId', '==', nationalId), limit(1));
+      const q = query(collection(db, 'studentProfiles'), where('nationalId', '==', cleanNat), limit(1));
       const snapshot = await getDocs(q);
 
       if (!snapshot.empty) {
@@ -272,6 +347,7 @@ export default function SeatAssignmentPage({ params }) {
         batch.update(doc(db, 'studentProfiles', profileDoc.id), {
           fullName,
           studentId: studentId || profileDoc.data().studentId,
+          nationalId: cleanNat,
           updatedAt: serverTimestamp()
         });
       } else {
@@ -279,7 +355,7 @@ export default function SeatAssignmentPage({ params }) {
         batch.set(newProfileRef, {
           fullName,
           studentId: studentId || '',
-          nationalId,
+          nationalId: cleanNat,
           lineUserId: '',
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
@@ -293,8 +369,9 @@ export default function SeatAssignmentPage({ params }) {
         courseId: activity?.courseId || null,
         fullName,
         studentId: studentId || null,
-        nationalId,
+        nationalId: cleanNat,
         course: course || null,
+        quota: quota || null,
         timeSlot: timeSlot || null,
         status: form.status || 'registered',
         registeredBy: 'admin_manual_add',
@@ -305,11 +382,12 @@ export default function SeatAssignmentPage({ params }) {
 
       await batch.commit();
 
-      setMessage('เพิ่มรายชื่อสำเร็จ!');
-      setForm({ fullName: '', studentId: '', nationalId: '', course: '', timeSlot: '', displayQueueNumber: '', status: 'registered' });
+      setMessage('✅ เพิ่มรายชื่อสำเร็จ!');
+      setForm({ fullName: '', studentId: '', nationalId: '', course: '', quota: '', timeSlot: '', displayQueueNumber: '', status: 'registered' });
       fetchData();
+      setTimeout(() => setMessage(''), 3000);
     } catch (error) {
-      setMessage(`เกิดข้อผิดพลาด: ${error.message}`);
+      setMessage(`❌ เกิดข้อผิดพลาด: ${error.message}`);
     }
   };
 
@@ -322,10 +400,11 @@ export default function SeatAssignmentPage({ params }) {
       onConfirm: async () => {
         try {
           await deleteDoc(doc(db, 'registrations', registrantId));
-          setMessage('ลบข้อมูลสำเร็จ');
+          setMessage('✅ ลบข้อมูลสำเร็จ');
           fetchData();
+          setTimeout(() => setMessage(''), 3000);
         } catch (error) {
-          setMessage(`เกิดข้อผิดพลาดในการลบ: ${error.message}`);
+          setMessage(`❌ เกิดข้อผิดพลาดในการลบ: ${error.message}`);
         }
         setConfirmModal(prev => ({ ...prev, isOpen: false }));
       }
@@ -336,7 +415,7 @@ export default function SeatAssignmentPage({ params }) {
     setConfirmModal({
       isOpen: true,
       title: 'ยืนยันการลบข้อมูลทั้งหมด',
-      message: 'คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลทั้งหมดสำหรับกิจกรรมนี้? การกระทำนี้ไม่สามารถกู้คืนได้.',
+      message: 'คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลทั้งหมดสำหรับกิจกรรมนี้? การกระทำนี้ไม่สามารถกู้คืนได้',
       type: 'danger',
       onConfirm: async () => {
         setConfirmModal(prev => ({ ...prev, isOpen: false }));
@@ -374,10 +453,43 @@ export default function SeatAssignmentPage({ params }) {
   };
 
   const handleAutoAssign = () => {
+    let zoneDetailsText = '';
+    if (activity?.type === 'exam') {
+      const config = activity.examConfig || {};
+      const zoneCount = Number(config.zoneCount || 4);
+      const rows = Number(config.rows || 10);
+      const cols = Number(config.cols || 10);
+      const seatsPerZone = rows * cols;
+      const labelFormat = config.labelFormat || 'numberOnly';
+
+      let zones = [];
+      if (Array.isArray(config.zones) && config.zones.length > 0 && typeof config.zones[0] === 'object') {
+        zones = config.zones.map((z, i) => {
+          const startNum = z.startNumber !== undefined ? Number(z.startNumber) : (i * seatsPerZone) + 1;
+          return {
+            name: z.name || String(i + 1),
+            startNumber: startNum,
+            endNumber: z.endNumber !== undefined ? Number(z.endNumber) : startNum + seatsPerZone - 1
+          };
+        });
+      } else {
+        zones = Array.from({ length: zoneCount }, (_, i) => {
+          const startNum = (i * seatsPerZone) + 1;
+          return {
+            name: String(i + 1),
+            startNumber: startNum,
+            endNumber: startNum + seatsPerZone - 1
+          };
+        });
+      }
+
+      zoneDetailsText = zones.map(z => `  • โซน ${z.name}: ${formatSeatLabel(z.name, z.startNumber, labelFormat)} - ${formatSeatLabel(z.name, z.endNumber, labelFormat)} (${seatsPerZone} ที่นั่ง)`).join('\n');
+    }
+
     setConfirmModal({
       isOpen: true,
       title: 'ยืนยันการจัดที่นั่งอัตโนมัติ',
-      message: 'คุณต้องการจัดที่นั่งอัตโนมัติใช่หรือไม่? ข้อมูลเลขที่นั่งเดิมจะถูกเขียนทับ',
+      message: `คุณต้องการจัดที่นั่งอัตโนมัติให้นักเรียนทั้งหมด ${registrants.length} คน ใช่หรือไม่?${zoneDetailsText ? '\n\nช่วงเลขที่นั่งแต่ละโซน:\n' + zoneDetailsText : ''}\n\n* ข้อมูลเลขที่นั่งเดิมจะถูกเขียนทับ`,
       type: 'warning',
       onConfirm: async () => {
         setConfirmModal(prev => ({ ...prev, isOpen: false }));
@@ -385,8 +497,7 @@ export default function SeatAssignmentPage({ params }) {
         setMessage('กำลังจัดที่นั่ง...');
 
         try {
-          // Use the current sortConfig to determine the order for assignment
-          const sortedRegistrants = [...registrants].sort((a, b) => {
+          const sortedList = [...registrants].sort((a, b) => {
             if (sortConfig.key === 'importOrder') {
               const valA = a.importOrder !== undefined ? a.importOrder : 999999;
               const valB = b.importOrder !== undefined ? b.importOrder : 999999;
@@ -405,20 +516,48 @@ export default function SeatAssignmentPage({ params }) {
           const updates = [];
           let currentSeatIndex = 0;
 
-          if (activity.type === 'exam') {
-            // EXAM Logic: A001-J1000
-            const zones = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
-            const seatsPerZone = 100;
+          if (activity?.type === 'exam') {
+            const config = activity.examConfig || {};
+            const zoneCount = Number(config.zoneCount || 4);
+            const rows = Number(config.rows || 10);
+            const cols = Number(config.cols || 10);
+            const seatsPerZone = rows * cols;
+            const labelFormat = config.labelFormat || (config.zones?.[0]?.name && /^[A-Za-z]+$/.test(config.zones[0].name) ? 'withZone' : 'numberOnly');
 
-            for (const reg of sortedRegistrants) {
-              if (currentSeatIndex >= zones.length * seatsPerZone) break;
+            let zones = [];
+            if (Array.isArray(config.zones) && config.zones.length > 0 && typeof config.zones[0] === 'object') {
+              zones = config.zones.map((z, i) => {
+                const startNum = z.startNumber !== undefined ? Number(z.startNumber) : (i * seatsPerZone) + 1;
+                return {
+                  name: z.name || String(i + 1),
+                  startNumber: startNum,
+                  endNumber: z.endNumber !== undefined ? Number(z.endNumber) : startNum + seatsPerZone - 1
+                };
+              });
+            } else {
+              const isAlpha = Array.isArray(config.zones) && typeof config.zones[0] === 'string';
+              zones = Array.from({ length: zoneCount }, (_, i) => {
+                const startNum = (i * seatsPerZone) + 1;
+                return {
+                  name: isAlpha ? config.zones[i] : String(i + 1),
+                  startNumber: startNum,
+                  endNumber: startNum + seatsPerZone - 1
+                };
+              });
+            }
 
-              const zoneIndex = Math.floor(currentSeatIndex / seatsPerZone);
-              const seatInZone = (currentSeatIndex % seatsPerZone) + 1;
-              const zoneChar = zones[zoneIndex];
+            const availableSeats = [];
+            zones.forEach(z => {
+              for (let s = 0; s < seatsPerZone; s++) {
+                const runningNumber = z.startNumber + s;
+                const seatLabel = formatSeatLabel(z.name, runningNumber, labelFormat);
+                availableSeats.push(seatLabel);
+              }
+            });
 
-              const runningNumber = (zoneIndex * 100) + seatInZone;
-              const seatLabel = `${zoneChar}${runningNumber.toString().padStart(3, '0')}`;
+            for (const reg of sortedList) {
+              if (currentSeatIndex >= availableSeats.length) break;
+              const seatLabel = availableSeats[currentSeatIndex];
 
               const regRef = doc(db, 'registrations', reg.id);
               batch.update(regRef, { seatNumber: seatLabel });
@@ -426,34 +565,44 @@ export default function SeatAssignmentPage({ params }) {
               updates.push({ id: reg.id, seatNumber: seatLabel });
               currentSeatIndex++;
             }
-          } else if (activity.type === 'graduation') {
-            // GRADUATION Logic: Theater Style with AJ Locks
-            const ajSeats = new Set([
-              'A1-1', 'B1-10',    // A1
-              'A4-1', 'B4-10',    // A4 (เว้น 2 แถว)
-              'A7-1', 'B7-10',    // A7 (เว้น 2 แถว)
-              'A10-1', 'B10-10',  // A10 (เว้น 2 แถว)
-              'A13-1', 'B13-10',  // A13 (เว้น 2 แถว)
-              'A16-1', 'B16-10'   // A16 (เว้น 2 แถว)
-            ]);
+          } else if (activity?.type === 'graduation') {
+            const tConfig = activity.theaterConfig || {};
+            const studentRows = tConfig.studentRows !== undefined ? Number(tConfig.studentRows) : 18;
+            const seatsPerRow = tConfig.seatsPerRow !== undefined ? Number(tConfig.seatsPerRow) : 10;
+            const ajInterval = tConfig.ajInterval !== undefined ? Number(tConfig.ajInterval) : 3;
+            const ajRowsCustom = tConfig.ajRowsCustom || '';
 
-            const availableSeats = [];
-            // Rows 6 to 23 (A1 to A18)
-            for (let row = 6; row <= 23; row++) {
-              const logicalRow = row - 5;
-              // Zone A (1-10)
-              for (let col = 1; col <= 10; col++) {
-                const seatLabel = `A${logicalRow}-${col}`;
-                if (!ajSeats.has(seatLabel)) availableSeats.push(seatLabel);
-              }
-              // Zone B (1-10)
-              for (let col = 1; col <= 10; col++) {
-                const seatLabel = `B${logicalRow}-${col}`;
-                if (!ajSeats.has(seatLabel)) availableSeats.push(seatLabel);
+            let targetAjRows = [];
+            if (ajRowsCustom && ajRowsCustom.trim()) {
+              targetAjRows = ajRowsCustom
+                .split(',')
+                .map(s => parseInt(s.trim(), 10))
+                .filter(n => !isNaN(n) && n >= 1 && n <= studentRows);
+            } else if (ajInterval > 0) {
+              for (let r = 1; r <= studentRows; r += ajInterval) {
+                targetAjRows.push(r);
               }
             }
 
-            for (const reg of sortedRegistrants) {
+            const ajSeatsSet = new Set();
+            targetAjRows.forEach(r => {
+              ajSeatsSet.add(`A${r}-1`);
+              ajSeatsSet.add(`B${r}-${seatsPerRow}`);
+            });
+
+            const availableSeats = [];
+            for (let s = 1; s <= studentRows; s++) {
+              for (let col = 1; col <= seatsPerRow; col++) {
+                const seatLabel = `A${s}-${col}`;
+                if (!ajSeatsSet.has(seatLabel)) availableSeats.push(seatLabel);
+              }
+              for (let col = 1; col <= seatsPerRow; col++) {
+                const seatLabel = `B${s}-${col}`;
+                if (!ajSeatsSet.has(seatLabel)) availableSeats.push(seatLabel);
+              }
+            }
+
+            for (const reg of sortedList) {
               if (currentSeatIndex >= availableSeats.length) break;
               const seatLabel = availableSeats[currentSeatIndex];
 
@@ -469,6 +618,7 @@ export default function SeatAssignmentPage({ params }) {
 
           setMessage(`✅ จัดที่นั่งสำเร็จสำหรับ ${updates.length} คน`);
           fetchData();
+          setTimeout(() => setMessage(''), 3000);
 
         } catch (error) {
           console.error("Auto assign error:", error);
@@ -493,6 +643,10 @@ export default function SeatAssignmentPage({ params }) {
           'รหัสผู้สมัคร': 'studentId',
           'เลขบัตรประชาชน': 'nationalId',
           'หลักสูตร': 'course',
+          'ประเภทโควตา': 'quota',
+          'โควตา': 'quota',
+          'quota': 'quota',
+          'Quota': 'quota',
           'เลขที่นั่ง': 'seatNumber',
           'ช่วงเวลา': 'timeSlot',
           'คิว': 'displayQueueNumber',
@@ -511,20 +665,24 @@ export default function SeatAssignmentPage({ params }) {
 
         try {
           const batch = writeBatch(db);
-
-          // Create a Set of existing national IDs for fast lookup
           const existingNationalIds = new Set(registrants.map(r => r.nationalId));
           let skippedCount = 0;
+          let invalidNatIdCount = 0;
 
           for (let i = 0; i < mappedData.length; i++) {
             const reg = mappedData[i];
             if (reg.fullName && reg.nationalId) {
+              const cleanNat = String(reg.nationalId).replace(/\D/g, '');
+              if (cleanNat.length !== 13) {
+                invalidNatIdCount++;
+                continue;
+              }
+              reg.nationalId = cleanNat;
+
               if (existingNationalIds.has(reg.nationalId)) {
-                console.log(`Skipping duplicate nationalId: ${reg.nationalId}`);
                 skippedCount++;
                 continue;
               }
-              // Add to set to prevent duplicates within the CSV itself
               existingNationalIds.add(reg.nationalId);
 
               let lineUserIdToUse = null;
@@ -561,6 +719,7 @@ export default function SeatAssignmentPage({ params }) {
                 studentId: reg.studentId || null,
                 nationalId: reg.nationalId,
                 course: reg.course || null,
+                quota: reg.quota || null,
                 seatNumber: reg.seatNumber || null,
                 timeSlot: reg.timeSlot || null,
                 status: reg.status || 'registered',
@@ -573,8 +732,12 @@ export default function SeatAssignmentPage({ params }) {
             }
           }
           await batch.commit();
-          setMessage(`✅ นำเข้าข้อมูล ${mappedData.length - skippedCount} รายการสำเร็จ! (ข้ามที่ซ้ำ ${skippedCount} รายการ)`);
+          let msg = `✅ นำเข้าข้อมูล ${mappedData.length - skippedCount - invalidNatIdCount} รายการสำเร็จ!`;
+          if (skippedCount > 0) msg += ` (ข้ามที่ซ้ำ ${skippedCount} รายการ)`;
+          if (invalidNatIdCount > 0) msg += ` (ข้ามเลขบัตรไม่ครบ 13 หลัก ${invalidNatIdCount} รายการ)`;
+          setMessage(msg);
           await fetchData();
+          setTimeout(() => setMessage(''), 4000);
         } catch (error) {
           setMessage(`❌ เกิดข้อผิดพลาดในการนำเข้า: ${error.message}`);
         }
@@ -585,27 +748,87 @@ export default function SeatAssignmentPage({ params }) {
     });
   };
 
+  const isQueueType = activity?.type === 'queue' || activity?.type === 'interview';
+  const isSeatType = activity?.type === 'exam' || activity?.type === 'graduation';
+  const isGeneralEvent = !isQueueType && !isSeatType;
+  const quotaOptions = activity?.scoringConfig?.quotaCriteriaList || [];
+
   const csvExportHeaders = [
+    { label: "ลำดับ", key: "index" },
     { label: "ชื่อ-สกุล", key: "fullName" },
     { label: "รหัสผู้สมัคร", key: "studentId" },
     { label: "เลขบัตรประชาชน", key: "nationalId" },
+    { label: "ประเภทโควตา", key: "quota" },
     { label: "สถานะ", key: "status" },
     { label: "หลักสูตร", key: "course" },
-    { label: "เลขที่นั่ง", key: "seatNumber" },
-    { label: "ช่วงเวลา", key: "timeSlot" },
-    { label: "คิว", key: "displayQueueNumber" },
+    ...(isSeatType ? [{ label: "เลขที่นั่ง", key: "seatNumber" }] : []),
+    ...(isQueueType ? [
+      { label: "ช่วงเวลา", key: "timeSlot" },
+      { label: "คิว", key: "displayQueueNumber" }
+    ] : []),
+    ...(activity?.enableScoring && activity?.scoringConfig ? [
+      ...(activity.scoringConfig.generalCriteria || []).map(g => ({
+        label: `คะแนน: ${g.name} (${g.weight}%)`,
+        key: `score_general_${g.id}`
+      })),
+      { label: "คะแนนถ่วงน้ำหนักรวม (%)", key: "finalTotalScore" },
+      { label: "สถานะการประเมิน", key: "scoringStatus" },
+      { label: "กรรมการผู้ประเมิน", key: "examinerName" },
+      { label: "ข้อเสนอแนะกรรมการ", key: "examinerNotes" },
+      { label: "ลิงก์รูปถ่ายหลักฐาน (1)", key: "evidence_0" },
+      { label: "ลิงก์รูปถ่ายหลักฐาน (2)", key: "evidence_1" },
+      { label: "ลิงก์รูปถ่ายหลักฐาน (3)", key: "evidence_2" },
+      { label: "ลิงก์รูปถ่ายหลักฐาน (4)", key: "evidence_3" },
+      { label: "ลิงก์รูปถ่ายหลักฐาน (5)", key: "evidence_4" },
+    ] : [])
   ];
 
-  const csvExportData = registrants.map(reg => ({
-    fullName: reg.fullName || '',
-    studentId: reg.studentId || '',
-    nationalId: reg.nationalId || '',
-    status: reg.status || 'registered',
-    course: reg.course || '',
-    seatNumber: reg.seatNumber || '',
-    timeSlot: reg.timeSlot || '',
-    displayQueueNumber: reg.displayQueueNumber || '',
-  }));
+  const csvExportData = registrants.map((reg, idx) => {
+    const evalScore = reg.evaluationScore || {};
+    const attached = reg.attachedDocuments || {};
+    const row = {
+      index: idx + 1,
+      fullName: reg.fullName || '',
+      studentId: reg.studentId || '',
+      nationalId: reg.nationalId || '',
+      quota: reg.quota || evalScore.quota || '-',
+      status: translateStatus(reg.status),
+      course: reg.course || '',
+      seatNumber: reg.seatNumber || '',
+      timeSlot: reg.timeSlot || '',
+      displayQueueNumber: reg.displayQueueNumber || '',
+      finalTotalScore: evalScore.isScored ? `${evalScore.finalTotalScore}` : '-',
+      scoringStatus: evalScore.isScored ? 'ประเมินแล้ว' : 'รอประเมิน',
+      examinerName: evalScore.examinerName || '-',
+      examinerNotes: evalScore.notes || '-'
+    };
+
+    if (activity?.enableScoring && activity?.scoringConfig) {
+      // General criteria scores
+      (activity.scoringConfig.generalCriteria || []).forEach(g => {
+        const raw = evalScore.generalScores?.[g.id];
+        row[`score_general_${g.id}`] = raw !== undefined ? raw : '-';
+      });
+
+      // Evidence Photo URLs
+      const photoUrls = [];
+      if (Array.isArray(attached.evidence)) {
+        photoUrls.push(...attached.evidence);
+      } else if (Array.isArray(attached)) {
+        photoUrls.push(...attached);
+      } else if (typeof attached === 'object') {
+        Object.values(attached).forEach(val => {
+          if (Array.isArray(val)) photoUrls.push(...val);
+          else if (typeof val === 'string' && val) photoUrls.push(val);
+        });
+      }
+      for (let i = 0; i < 5; i++) {
+        row[`evidence_${i}`] = photoUrls[i] || '';
+      }
+    }
+
+    return row;
+  });
 
   const stats = {
     total: registrants.length,
@@ -628,15 +851,32 @@ export default function SeatAssignmentPage({ params }) {
     }, {}),
     byZone: registrants.reduce((acc, curr) => {
       if (activity?.type !== 'queue' && curr.seatNumber) {
-        const match = curr.seatNumber.match(/^([A-Za-z]+)/);
-        const zone = match ? match[1] : 'Other';
-        acc[zone] = (acc[zone] || 0) + 1;
+        const cfg = activity?.examConfig;
+        if (cfg && Array.isArray(cfg.zones) && cfg.zones.length > 0 && typeof cfg.zones[0] === 'object') {
+          const num = parseInt(curr.seatNumber.replace(/^[A-Za-z0-9]+-/, ''), 10);
+          let foundZone = null;
+          for (const z of cfg.zones) {
+            if (curr.seatNumber.startsWith(`${z.name}-`) || curr.seatNumber.startsWith(z.name)) {
+              foundZone = `โซน ${z.name}`;
+              break;
+            }
+            if (!isNaN(num) && num >= z.startNumber && num <= (z.endNumber || (z.startNumber + (cfg.rows * cfg.cols) - 1))) {
+              foundZone = `โซน ${z.name}`;
+              break;
+            }
+          }
+          const zoneKey = foundZone || 'Other';
+          acc[zoneKey] = (acc[zoneKey] || 0) + 1;
+        } else {
+          const match = curr.seatNumber.match(/^([A-Za-z]+)/);
+          const zone = match ? `โซน ${match[1]}` : 'Other';
+          acc[zone] = (acc[zone] || 0) + 1;
+        }
       }
       return acc;
     }, {})
   };
 
-  // ฟังก์ชันอัพเดท Counter คิว
   const handleUpdateCounter = async () => {
     if (!editingCounter || !activity) return;
     try {
@@ -656,629 +896,760 @@ export default function SeatAssignmentPage({ params }) {
     }
   };
 
-  // ฟังก์ชันรีเซ็ต Counter - คำนวณใหม่จากข้อมูลจริงเพื่อหาเลขที่หายไป
   const handleResetAllCounters = async () => {
-    // หาหลักสูตรทั้งหมดที่มีในกิจกรรมนี้
     const coursesInActivity = [...new Set(registrants.map(r => r.course).filter(Boolean))];
     if (coursesInActivity.length === 0) {
       setMessage('❌ ไม่มีหลักสูตรที่จะรีเซ็ต');
       return;
     }
 
-    // สร้างสรุปว่าแต่ละหลักสูตรจะได้เลขอะไรถัดไป
     const summaryLines = [];
     const resetCounters = {};
 
     coursesInActivity.forEach(courseName => {
-      // ดึงเลขคิวทั้งหมดของหลักสูตรนี้
       const queueNumbers = registrants
         .filter(r => r.course === courseName && r.displayQueueNumber)
         .map(r => parseInt(r.displayQueueNumber.replace(/\D/g, ''), 10) || 0)
         .filter(n => n > 0)
         .sort((a, b) => a - b);
 
-      // หาเลขแรกที่หายไป (gap)
       let nextNumber = 1;
       for (const num of queueNumbers) {
         if (num > nextNumber) {
-          // พบ gap - เลข nextNumber หายไป
           break;
         }
         nextNumber = num + 1;
       }
 
-      // Counter ต้องเป็น nextNumber - 1 เพราะระบบจะ +1 ตอนแจกคิว
       resetCounters[courseName] = nextNumber - 1;
-
       const courseInfo = courseOptions.find(c => c.name === courseName);
       const prefix = courseInfo?.shortName || '';
       summaryLines.push(`${courseName}: ${prefix}-${String(nextNumber).padStart(3, '0')}`);
     });
 
-    if (!window.confirm(`รีเซ็ต Counter เพื่อหาเลขที่หายไป:\n\nคิวถัดไป:\n${summaryLines.join('\n')}\n\nดำเนินการต่อ?`)) return;
+    const confirmed = await showConfirm({
+      title: 'รีเซ็ต Counter คิว',
+      message: `รีเซ็ต Counter เพื่อหาเลขที่หายไป:\n\nคิวถัดไป:\n${summaryLines.join('\n')}\n\nต้องการดำเนินการต่อหรือไม่?`,
+      type: 'warning',
+      confirmText: 'รีเซ็ต Counter',
+      cancelText: 'ยกเลิก'
+    });
+
+    if (!confirmed) return;
 
     try {
       const activityRef = doc(db, 'activities', activityId);
       await updateDoc(activityRef, { queueCounters: resetCounters });
       setActivity(prev => ({ ...prev, queueCounters: resetCounters }));
-      setMessage('✅ รีเซ็ต Counter แล้ว - คิวถัดไปจะเป็นเลขที่หายไป');
-      setTimeout(() => setMessage(''), 3000);
+      showToast({ message: 'รีเซ็ต Counter เรียบร้อยแล้ว', type: 'success' });
     } catch (error) {
-      setMessage(`❌ เกิดข้อผิดพลาด: ${error.message}`);
+      showAlert({
+        title: 'เกิดข้อผิดพลาด',
+        message: `ไม่สามารถรีเซ็ตได้: ${error.message}`,
+        type: 'error'
+      });
     }
   };
 
-  if (isLoading) return (
-    <div className="flex flex-col justify-center items-center h-screen bg-gray-50">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-      <p className="mt-4 text-gray-500 font-medium">กำลังโหลดข้อมูล...</p>
-    </div>
-  );
+
+  if (isLoading) {
+    return (
+      <div className="p-12 text-center text-slate-400 text-xs">
+        <div className="w-6 h-6 border-2 border-slate-600 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
+        กำลังโหลดข้อมูลนักเรียนและที่นั่ง...
+      </div>
+    );
+  }
 
   const SortIcon = ({ columnKey }) => {
-    if (sortConfig.key !== columnKey) return <svg className="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" /></svg>;
-    return sortConfig.direction === 'asc'
-      ? <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
-      : <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>;
+    if (sortConfig.key !== columnKey) return <span className="text-slate-300 ml-1">⇅</span>;
+    return sortConfig.direction === 'asc' ? <span className="text-[#0b0084] ml-1">↑</span> : <span className="text-[#0b0084] ml-1">↓</span>;
   };
 
   return (
-    <div className="bg-gray-50/50 min-h-screen p-6 md:p-10 font-sans">
-      <main className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+    <div className="p-4 md:p-6 space-y-3">
+      {/* Top Header */}
+      <div className="bg-white p-3 rounded-lg border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Link
+            href="/admin/activity"
+            className="p-1 rounded text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+            title="กลับหน้ารายการกิจกรรม"
+          >
+            ←
+          </Link>
           <div>
-            <div className="flex items-center gap-2 mb-1">
-              <Link href="/admin/activity" className="text-gray-400 hover:text-primary transition-colors">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-              </Link>
-              <h1 className="text-2xl font-bold text-gray-900 tracking-tight">จัดการข้อมูลนักเรียน</h1>
-            </div>
-            <p className="text-gray-500 ml-7">{activity?.name}</p>
+            <h1 className="text-sm font-semibold text-slate-900">
+              {activity?.type === 'queue' ? 'จัดการข้อมูลนักเรียน & คิว' : activity?.type === 'event' ? 'จัดการข้อมูลผู้ลงทะเบียน' : 'จัดการข้อมูลนักเรียน & ที่นั่ง'}
+            </h1>
+            <p className="text-xs text-slate-500">{activity?.name} (ประเภท: {activity?.type})</p>
           </div>
+        </div>
 
-          {(activity?.type === 'exam' || activity?.type === 'graduation' || activity?.type === 'event') && (
+        <div className="flex items-center gap-2">
+          {(activity?.type === 'exam' || activity?.type === 'graduation') && (
             <Link
               href={`/admin/activity/seats/${activityId}/chart`}
-              className="px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white text-sm font-medium rounded-xl hover:from-purple-700 hover:to-blue-700 transition-all shadow-lg shadow-purple-600/20 flex items-center gap-2"
+              className="px-4 py-2 bg-[#166E7C] hover:bg-[#0F5661] text-white text-xs font-semibold rounded-lg shadow-sm transition-all active:scale-95 flex items-center gap-1.5"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-              ดูผังที่นั่ง
+              <span>🗺️ ผังที่นั่ง</span>
             </Link>
           )}
         </div>
+      </div>
 
-        {message && (
-          <div className={`mb-6 p-4 rounded-xl border ${message.includes('❌') || message.includes('ข้อผิดพลาด') ? 'bg-red-50 border-red-100 text-red-700' : 'bg-blue-50 border-blue-100 text-blue-700'} flex items-center shadow-sm`}>
-            <span className="mr-2 text-xl">{message.includes('❌') || message.includes('ข้อผิดพลาด') ? '⚠️' : 'ℹ️'}</span>
-            {message}
-          </div>
-        )}
+      {message && (
+        <div className={`p-2.5 rounded text-xs border ${message.includes('❌') || message.includes('ข้อผิดพลาด') ? 'bg-red-50 border-red-200 text-red-700' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
+          {message}
+        </div>
+      )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          {/* Import/Export Card */}
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-            <div className="flex items-center gap-3 mb-5">
-              <div className="w-10 h-10 rounded-full bg-green-50 flex items-center justify-center text-green-600">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
-              </div>
-              <h2 className="text-lg font-bold text-gray-800">นำเข้าและส่งออกข้อมูล</h2>
-            </div>
-
-            <div className="space-y-5">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  นำเข้าไฟล์ CSV
-                </label>
-                <p className="text-xs text-gray-500 mb-3">
-                  Header ที่รองรับ: fullName, studentId, nationalId, course, seatNumber, timeSlot, displayQueueNumber, status
-                </p>
-                <div className="relative">
-                  <input
-                    type="file"
-                    accept=".csv"
-                    onChange={handleFileUpload}
-                    className="block w-full text-sm text-gray-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 transition-colors cursor-pointer border border-gray-200 rounded-xl bg-gray-50"
-                  />
-                </div>
-              </div>
-              <div className="pt-2 border-t border-gray-100">
-                <CSVLink
-                  data={csvExportData}
-                  headers={csvExportHeaders}
-                  filename={`registrants_${activityId}.csv`}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white font-medium rounded-xl hover:bg-green-700 transition-all shadow-lg shadow-green-600/20 active:scale-95"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                  Export ข้อมูลทั้งหมดเป็น CSV
-                </CSVLink>
-              </div>
-
-              {(activity?.type === 'exam' || activity?.type === 'graduation') && (
-                <div className="pt-4 border-t border-gray-100">
-                  <div className="flex flex-col gap-2 mb-3">
-                    <button
-                      onClick={() => setSortConfig({ key: 'fullName', direction: 'asc' })}
-                      className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-xl hover:bg-gray-50 transition-all shadow-sm"
-                    >
-                      <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" /></svg>
-                      เรียงรายชื่อ ก-ฮ (Sort A-Z)
-                    </button>
-                  </div>
-                  <button
-                    onClick={handleAutoAssign}
-                    disabled={isLoading}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-purple-600 text-white font-medium rounded-xl hover:bg-purple-700 transition-all shadow-lg shadow-purple-600/20 active:scale-95 disabled:bg-purple-300"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>
-                    จัดที่นั่งอัตโนมัติ (Auto Assign)
-                  </button>
-                </div>
-              )}
+      {/* Control Tools Cards Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        {/* Import/Export Card */}
+        <div className="bg-white p-3.5 rounded-lg border border-slate-200 flex flex-col justify-between space-y-3">
+          <div className="space-y-2">
+            <h2 className="text-xs font-semibold text-slate-900 uppercase">นำเข้า / ส่งออกข้อมูล</h2>
+            <div>
+              <label className="block text-[11px] text-slate-600 mb-1">นำเข้าไฟล์ CSV</label>
+              <input
+                type="file"
+                accept=".csv"
+                onChange={handleFileUpload}
+                className="w-full text-xs text-slate-600 file:mr-2 file:py-1 file:px-2.5 file:rounded file:border file:border-slate-200 file:text-xs file:bg-slate-50 file:text-slate-700 hover:file:bg-slate-100 cursor-pointer border border-slate-200 rounded p-1 bg-white"
+              />
+              <span className="text-[10px] text-slate-400 block mt-1">
+                Header: fullName, studentId, nationalId, course, quota{isSeatType ? ', seatNumber' : ''}{isQueueType ? ', timeSlot, displayQueueNumber' : ''}, status
+              </span>
             </div>
           </div>
 
-          {/* Queue Counter Management Card - Only for queue type */}
-          {activity?.type === 'queue' && (
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-              <div className="flex items-center justify-between mb-5">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-purple-50 flex items-center justify-center text-purple-600">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" /></svg>
-                  </div>
-                  <h2 className="text-lg font-bold text-gray-800">จัดการ Counter คิว</h2>
-                </div>
+          <div className="space-y-1.5 pt-2 border-t border-slate-100">
+            <CSVLink
+              data={csvExportData}
+              headers={csvExportHeaders}
+              filename={`registrants_${activityId}.csv`}
+              className="w-full py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-medium rounded-lg text-center block transition-colors"
+            >
+              Export CSV ทั้งหมด ({registrants.length})
+            </CSVLink>
+
+            {(activity?.type === 'exam' || activity?.type === 'graduation') && (
+              <div className="flex gap-2">
                 <button
-                  onClick={handleResetAllCounters}
-                  className="text-xs text-red-500 hover:text-red-700 hover:underline"
+                  onClick={() => setSortConfig({ key: 'fullName', direction: 'asc' })}
+                  className="flex-1 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-lg transition-colors cursor-pointer"
                 >
-                  รีเซ็ตทั้งหมด
+                  เรียง ก-ฮ
+                </button>
+                <button
+                  onClick={handleAutoAssign}
+                  disabled={isLoading}
+                  className="flex-1 py-2 bg-[#166E7C] hover:bg-[#0F5661] text-white text-xs font-semibold rounded-lg shadow-sm transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+                >
+                  จัดที่นั่ง Auto
                 </button>
               </div>
-              <p className="text-xs text-gray-500 mb-4">ตั้งค่าเลขคิวถัดไปที่จะแจก เมื่อต้องการใช้เลขเดิมซ้ำ สามารถแก้ไข Counter ได้</p>
+            )}
+          </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[250px] overflow-y-auto">
-                {/* แสดงเฉพาะหลักสูตรที่มีนักเรียนลงทะเบียนในกิจกรรมนี้ */}
-                {courseOptions.filter(course => registrants.some(r => r.course === course.name)).map(course => {
-                  const currentCounter = activity?.queueCounters?.[course.name] || 0;
-                  const nextQueue = currentCounter + 1;
-                  const isEditing = editingCounter?.courseName === course.name;
-                  const registrantCount = registrants.filter(r => r.course === course.name).length;
+        </div>
 
-                  return (
-                    <div key={course.id} className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden flex flex-col">
-                      {/* Course Header Bar */}
-                      <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-                        <div className="flex items-center gap-2 overflow-hidden">
-                          <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: course.color || '#3B82F6' }}></div>
-                          <span className="text-[11px] font-bold text-gray-700 uppercase tracking-tight truncate">{course.name}</span>
-                        </div>
-                        <span className="text-[9px] font-bold text-gray-400 bg-white px-1.5 py-0.5 rounded border border-gray-100">
-                          {registrantCount} People
-                        </span>
-                      </div>
-
-                      <div className="p-3 flex-grow flex flex-col justify-center">
-                        {isEditing ? (
-                          <div className="flex items-center gap-2">
-                            <div className="flex-grow">
-                              <p className="text-[9px] font-bold text-gray-400 uppercase mb-1">Update Counter</p>
-                              <input
-                                type="number"
-                                value={editingCounter.value}
-                                onChange={(e) => setEditingCounter({ ...editingCounter, value: e.target.value })}
-                                className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 outline-none font-bold"
-                                min="0"
-                                autoFocus
-                              />
-                            </div>
-                            <div className="flex flex-col gap-1 pt-3">
-                              <button onClick={handleUpdateCounter} className="p-1 bg-green-500 text-white rounded hover:bg-green-600 transition-colors">
-                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                              </button>
-                              <button onClick={() => setEditingCounter(null)} className="p-1 bg-gray-200 text-gray-500 rounded hover:bg-gray-300 transition-colors">
-                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="grid grid-cols-2 gap-2 divide-x divide-gray-100">
-                            <div className="pr-2">
-                              <p className="text-[9px] font-bold text-gray-400 uppercase leading-none mb-1.5">Current</p>
-                              <div className="flex items-baseline gap-1">
-                                <span className="text-lg font-black text-gray-800 tabular-nums">{currentCounter}</span>
-                                <button
-                                  onClick={() => setEditingCounter({ courseName: course.name, value: currentCounter })}
-                                  className="text-gray-300 hover:text-blue-600 transition-colors"
-                                >
-                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                                </button>
-                              </div>
-                            </div>
-                            <div className="pl-3">
-                              <p className="text-[9px] font-bold text-gray-400 uppercase leading-none mb-1.5">Next Queue</p>
-                              <div className="text-sm font-bold text-blue-600 font-mono tracking-tighter">
-                                {course.shortName}-{String(nextQueue).padStart(3, '0')}
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+        {/* Add Participant Card */}
+        <div className="bg-white p-3.5 rounded-lg border border-slate-200 space-y-2">
+          <h2 className="text-xs font-semibold text-slate-900 uppercase">เพิ่มนักเรียนรายบุคคล</h2>
+          <form onSubmit={handleAddParticipant} className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <input
+                  type="text"
+                  value={form.fullName}
+                  onChange={e => setForm({ ...form, fullName: e.target.value })}
+                  placeholder="ชื่อ-สกุล *"
+                  className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-800 outline-none focus:border-slate-400"
+                  required
+                />
+              </div>
+              <div>
+                <input
+                  type="text"
+                  value={form.studentId}
+                  onChange={e => setForm({ ...form, studentId: e.target.value })}
+                  placeholder="รหัสผู้สมัคร"
+                  className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-800 outline-none focus:border-slate-400"
+                />
               </div>
             </div>
-          )}
 
-          {/* Add Participant Card */}
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-            <div className="flex items-center gap-3 mb-5">
-              <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center text-blue-600">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" /></svg>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <input
+                  type="tel"
+                  value={form.nationalId}
+                  onChange={e => setForm({ ...form, nationalId: e.target.value.replace(/\D/g, '').slice(0, 13) })}
+                  placeholder="เลขบัตร ปชช. (13 หลัก) *"
+                  maxLength={13}
+                  pattern="\d{13}"
+                  title="กรุณากรอกเลขบัตรประชาชน 13 หลัก"
+                  className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-800 outline-none focus:border-slate-400 font-mono"
+                  required
+                />
               </div>
-              <h2 className="text-lg font-bold text-gray-800">เพิ่มนักเรียนรายบุคคล</h2>
-            </div>
-
-            <form onSubmit={handleAddParticipant} className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
-              <div className="col-span-2 sm:col-span-1">
-                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">ชื่อ-นามสกุล *</p>
-                <input type="text" value={form.fullName} onChange={e => setForm({ ...form, fullName: e.target.value })} placeholder="ชื่อ-นามสกุล" className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-blue-500 outline-none transition-all" required />
-              </div>
-              <div className="col-span-2 sm:col-span-1">
-                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">รหัสผู้สมัคร</p>
-                <input type="text" value={form.studentId} onChange={e => setForm({ ...form, studentId: e.target.value })} placeholder="รหัสผู้สมัคร" className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-blue-500 outline-none transition-all" />
-              </div>
-              <div className="col-span-2">
-                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">เลขบัตรประชาชน *</p>
-                <input type="text" value={form.nationalId} onChange={e => setForm({ ...form, nationalId: e.target.value })} placeholder="เลขบัตรประชาชน" className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-blue-500 outline-none transition-all" required />
-              </div>
-              <div className="col-span-2 sm:col-span-1">
-                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">หลักสูตร</p>
-                <select value={form.course} onChange={e => setForm({ ...form, course: e.target.value })} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-blue-500 outline-none transition-all appearance-none cursor-pointer">
+              <div>
+                <select
+                  value={form.course}
+                  onChange={e => setForm({ ...form, course: e.target.value })}
+                  className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-700 outline-none"
+                >
                   <option value="">เลือกหลักสูตร</option>
                   {courseOptions.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                 </select>
               </div>
+            </div>
 
-              {activity?.type === 'queue' && (
-                <>
-                  <div className="col-span-2 sm:col-span-1">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">ช่วงเวลา *</p>
-                    <select value={form.timeSlot} onChange={e => setForm({ ...form, timeSlot: e.target.value })} className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-blue-500 outline-none transition-all appearance-none cursor-pointer" required>
-                      <option value="">เลือกช่วงเวลา</option>
-                      {timeSlotOptions.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-                    </select>
-                  </div>
-                  <div className="col-span-2 sm:col-span-1">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">หมายเลขคิว (กำหนดเอง)</p>
-                    <input type="text" value={form.displayQueueNumber} onChange={e => setForm({ ...form, displayQueueNumber: e.target.value })} placeholder="เว้นว่างได้" className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-blue-500 outline-none transition-all" />
-                  </div>
-                </>
-              )}
-
-              <div className="col-span-2 mt-2">
-                <button type="submit" className="w-full px-4 py-2.5 bg-blue-600 text-white text-xs font-bold rounded hover:bg-blue-700 transition-all shadow-sm active:scale-[0.98]">
-                  เพิ่มรายชื่อผู้ลงทะเบียน
-                </button>
+            {quotaOptions.length > 0 && (
+              <div>
+                <select
+                  value={form.quota}
+                  onChange={e => setForm({ ...form, quota: e.target.value })}
+                  className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-700 outline-none"
+                >
+                  <option value="">เลือกประเภทโควตา (เว้นว่างได้)</option>
+                  {quotaOptions.map((q, idx) => (
+                    <option key={idx} value={q.quotaName}>{q.quotaName}</option>
+                  ))}
+                </select>
               </div>
-            </form>
-          </div>
+            )}
+
+            {activity?.type === 'queue' && (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <select
+                    value={form.timeSlot}
+                    onChange={e => setForm({ ...form, timeSlot: e.target.value })}
+                    className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-700 outline-none"
+                    required
+                  >
+                    <option value="">เลือกช่วงเวลา *</option>
+                    {timeSlotOptions.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={form.displayQueueNumber}
+                    onChange={e => setForm({ ...form, displayQueueNumber: e.target.value })}
+                    placeholder="เลขคิว (เว้นว่างได้)"
+                    className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-800 outline-none"
+                  />
+                </div>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="w-full py-2.5 bg-[#166E7C] hover:bg-[#0F5661] text-white text-xs font-semibold rounded-lg shadow-sm transition-all active:scale-95 cursor-pointer"
+            >
+              + เพิ่มรายชื่อ
+            </button>
+
+          </form>
         </div>
 
-        {/* Data Table Card */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="p-5 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-center gap-4 bg-gray-50/30">
-            <h3 className="font-bold text-gray-800 text-lg">รายการผู้ลงทะเบียน ({registrants.length})</h3>
-            <div className="flex flex-wrap gap-3">
+        {/* Queue Counter Card (If Queue Type) */}
+        {activity?.type === 'queue' ? (
+          <div className="bg-white p-3.5 rounded-lg border border-slate-200 flex flex-col justify-between space-y-2">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xs font-semibold text-slate-900 uppercase">จัดการ Counter คิว</h2>
               <button
-                onClick={() => setShowSummary(true)}
-                className="px-4 py-2 bg-white border border-purple-200 text-purple-700 text-sm font-medium rounded-xl hover:bg-purple-50 transition-colors shadow-sm flex items-center gap-2"
+                onClick={handleResetAllCounters}
+                className="text-[11px] text-red-600 hover:underline"
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                รายงานสรุป
-              </button>
-              {isEditMode ? (
-                <>
-                  <button onClick={handleUpdateAll} disabled={isLoading} className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-xl hover:bg-green-700 disabled:bg-green-300 transition-colors shadow-sm">
-                    {isLoading ? 'กำลังบันทึก...' : 'บันทึกทั้งหมด'}
-                  </button>
-                  <button onClick={handleCancelAll} className="px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-xl hover:bg-gray-50 transition-colors shadow-sm">
-                    ยกเลิก
-                  </button>
-                </>
-              ) : (
-                <button onClick={() => setIsEditMode(true)} className="px-4 py-2 bg-white border border-blue-200 text-blue-700 text-sm font-medium rounded-xl hover:bg-blue-50 transition-colors shadow-sm flex items-center gap-2">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                  แก้ไขข้อมูล
-                </button>
-              )}
-              <button onClick={handleDeleteAll} disabled={isLoading} className="px-4 py-2 bg-white border border-red-200 text-red-600 text-sm font-medium rounded-xl hover:bg-red-50 disabled:bg-red-50 transition-colors shadow-sm flex items-center gap-2">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                ลบทั้งหมด
+                รีเซ็ตทั้งหมด
               </button>
             </div>
-          </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-gray-50/50 text-gray-500 font-medium border-b border-gray-100">
-                <tr>
-                  <th className="px-6 py-4 w-16">#</th>
-                  <th className="px-6 py-4 min-w-[200px] cursor-pointer hover:text-blue-600" onClick={() => handleSort('fullName')}>
-                    <div className="flex items-center gap-1">ชื่อ-สกุล <SortIcon columnKey="fullName" /></div>
-                  </th>
-                  <th className="px-6 py-4 min-w-[120px] cursor-pointer hover:text-blue-600" onClick={() => handleSort('studentId')}>
-                    <div className="flex items-center gap-1">รหัสผู้สมัคร <SortIcon columnKey="studentId" /></div>
-                  </th>
-                  <th className="px-6 py-4 min-w-[150px] cursor-pointer hover:text-blue-600" onClick={() => handleSort('nationalId')}>
-                    <div className="flex items-center gap-1">เลขบัตร ปชช. <SortIcon columnKey="nationalId" /></div>
-                  </th>
-                  <th className="px-6 py-4 min-w-[140px] cursor-pointer hover:text-blue-600" onClick={() => handleSort('status')}>
-                    <div className="flex items-center gap-1">สถานะ <SortIcon columnKey="status" /></div>
-                  </th>
-                  <th className="px-6 py-4 min-w-[150px] cursor-pointer hover:text-blue-600" onClick={() => handleSort('course')}>
-                    <div className="flex items-center gap-1">หลักสูตร <SortIcon columnKey="course" /></div>
-                  </th>
-                  {activity?.type === 'queue' ? (
-                    <>
-                      <th className="px-6 py-4 min-w-[120px] cursor-pointer hover:text-blue-600" onClick={() => handleSort('timeSlot')}>
-                        <div className="flex items-center gap-1">ช่วงเวลา <SortIcon columnKey="timeSlot" /></div>
-                      </th>
-                      <th className="px-6 py-4 min-w-[80px] cursor-pointer hover:text-blue-600" onClick={() => handleSort('displayQueueNumber')}>
-                        <div className="flex items-center gap-1">คิว <SortIcon columnKey="displayQueueNumber" /></div>
-                      </th>
-                    </>
-                  ) : (
-                    <th className="px-6 py-4 min-w-[100px] cursor-pointer hover:text-blue-600" onClick={() => handleSort('seatNumber')}>
-                      <div className="flex items-center gap-1">เลขที่นั่ง <SortIcon columnKey="seatNumber" /></div>
-                    </th>
-                  )}
-                  <th className="px-6 py-4 w-20 text-center">จัดการ</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {sortedRegistrants.map((reg, index) => {
-                  const isEditing = isEditMode;
-                  return (
-                    <tr key={reg.id} className={`transition-colors ${isEditing ? 'bg-blue-50/30' : 'hover:bg-gray-50/50'}`}>
-                      <td className="px-6 py-4 text-gray-500">{index + 1}</td>
-                      <td className="px-6 py-4">
-                        {isEditing ? (
-                          <input type="text" value={editStates[reg.id]?.fullName || ''} onChange={(e) => handleInputChange(reg.id, 'fullName', e.target.value)} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm" />
-                        ) : (
-                          <span className="font-medium text-gray-900">{reg.fullName}</span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 text-gray-600">
-                        {isEditing ? (
-                          <input type="text" value={editStates[reg.id]?.studentId || ''} onChange={(e) => handleInputChange(reg.id, 'studentId', e.target.value)} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm" />
-                        ) : (
-                          <span>{reg.studentId}</span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 text-gray-600 font-mono text-xs">
-                        {isEditing ? (
-                          <input type="text" value={editStates[reg.id]?.nationalId || ''} onChange={(e) => handleInputChange(reg.id, 'nationalId', e.target.value)} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm" />
-                        ) : (
-                          <span>{reg.nationalId}</span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4">
-                        {isEditing ? (
-                          <select value={editStates[reg.id]?.status || 'registered'} onChange={(e) => handleInputChange(reg.id, 'status', e.target.value)} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm">
-                            <option value="registered">ลงทะเบียนแล้ว</option>
-                            <option value="checked-in">เช็คอินแล้ว</option>
-                            <option value="waitlisted">รอคิว</option>
-                            <option value="interviewing">สอบสัมภาษณ์</option>
-                            <option value="completed">สำเร็จแล้ว</option>
-                            <option value="cancelled">ยกเลิกแล้ว</option>
-                          </select>
-                        ) : (
-                          <StatusBadge status={reg.status} />
-                        )}
-                      </td>
-                      <td className="px-6 py-4 text-gray-600">
-                        {isEditing ? (
-                          <select value={editStates[reg.id]?.course || ''} onChange={(e) => handleInputChange(reg.id, 'course', e.target.value)} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm">
-                            <option value="">เลือกหลักสูตร</option>
-                            {courseOptions.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                          </select>
-                        ) : (
-                          <span>{reg.course}</span>
-                        )}
-                      </td>
+            <div className="space-y-1.5 max-h-[140px] overflow-y-auto pr-1">
+              {courseOptions.filter(course => registrants.some(r => r.course === course.name)).map(course => {
+                const currentCounter = activity?.queueCounters?.[course.name] || 0;
+                const nextQueue = currentCounter + 1;
+                const isEditing = editingCounter?.courseName === course.name;
 
-                      {activity?.type === 'queue' ? (
-                        <>
-                          <td className="px-6 py-4 text-gray-600">
-                            {isEditing ? (
-                              <select value={editStates[reg.id]?.timeSlot || ''} onChange={(e) => handleInputChange(reg.id, 'timeSlot', e.target.value)} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm">
-                                <option value="">เลือกช่วงเวลา</option>
-                                {timeSlotOptions.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-                              </select>
-                            ) : (
-                              <span>{reg.timeSlot}</span>
-                            )}
-                          </td>
-                          <td className="px-6 py-4 text-gray-600 font-mono">
-                            {isEditing ? (
-                              <input type="text" value={editStates[reg.id]?.displayQueueNumber || ''} onChange={(e) => handleInputChange(reg.id, 'displayQueueNumber', e.target.value)} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm" />
-                            ) : (
-                              <span>{reg.displayQueueNumber}</span>
-                            )}
-                          </td>
-                        </>
-                      ) : (
-                        <td className="px-6 py-4 text-gray-600 font-mono font-medium">
-                          {isEditing ? (
-                            <input type="text" value={editStates[reg.id]?.seatNumber || ''} onChange={(e) => handleInputChange(reg.id, 'seatNumber', e.target.value)} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm" />
-                          ) : (
-                            <span className="text-blue-600">{reg.seatNumber || '-'}</span>
-                          )}
-                        </td>
-                      )}
-
-                      <td className="px-6 py-4 text-center">
-                        <button
-                          onClick={() => handleDeleteRegistrant(reg.id)}
-                          className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                          title="ลบข้อมูล"
-                        >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {sortedRegistrants.length === 0 && (
-                  <tr>
-                    <td colSpan="8" className="px-6 py-12 text-center text-gray-400 bg-gray-50/30">
-                      <div className="flex flex-col items-center gap-3">
-                        <svg className="w-12 h-12 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
-                        <p>ยังไม่มีผู้ลงทะเบียน</p>
+                return (
+                  <div key={course.id} className="p-1.5 bg-slate-50 border border-slate-200 rounded text-xs flex items-center justify-between gap-2">
+                    <span className="truncate flex-1 font-medium text-slate-800">{course.name}</span>
+                    {isEditing ? (
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          value={editingCounter.value}
+                          onChange={(e) => setEditingCounter({ ...editingCounter, value: e.target.value })}
+                          className="w-12 px-1 py-0.5 border border-slate-300 rounded text-xs bg-white"
+                          min="0"
+                        />
+                        <button onClick={handleUpdateCounter} className="px-1.5 py-0.5 bg-emerald-600 text-white rounded text-[10px]">✓</button>
+                        <button onClick={() => setEditingCounter(null)} className="px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded text-[10px]">✕</button>
                       </div>
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-500">Counter: <strong className="text-slate-800">{currentCounter}</strong></span>
+                        <span className="text-blue-600 font-medium">Next: {course.shortName}-{String(nextQueue).padStart(3, '0')}</span>
+                        <button
+                          onClick={() => setEditingCounter({ courseName: course.name, value: currentCounter })}
+                          className="text-slate-400 hover:text-slate-700"
+                        >
+                          ✎
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : isGeneralEvent ? (
+          /* Summary Snapshot Card for General Event (No seats) */
+          <div className="bg-white p-3.5 rounded-lg border border-slate-200 flex flex-col justify-between space-y-2">
+            <h2 className="text-xs font-semibold text-slate-900 uppercase">สรุปภาพรวมผู้สมัคร</h2>
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              <div className="p-2 bg-slate-50 border border-slate-200 rounded">
+                <span className="text-slate-500 block text-[11px]">ทั้งหมด</span>
+                <span className="text-sm font-semibold text-slate-900">{stats.total} คน</span>
+              </div>
+              <div className="p-2 bg-emerald-50 border border-emerald-200 rounded">
+                <span className="text-emerald-700 block text-[11px]">เช็คอินแล้ว</span>
+                <span className="text-sm font-semibold text-emerald-800">{stats.byStatus['checked-in'] || 0} คน</span>
+              </div>
+              <div className="p-2 bg-blue-50 border border-blue-200 rounded">
+                <span className="text-blue-700 block text-[11px]">ลงทะเบียนแล้ว</span>
+                <span className="text-sm font-semibold text-blue-800">{stats.byStatus['registered'] || 0} คน</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* Summary Snapshot Card for Exam / Grad */
+          <div className="bg-white p-3.5 rounded-lg border border-slate-200 flex flex-col justify-between space-y-2">
+            <h2 className="text-xs font-semibold text-slate-900 uppercase">สรุปภาพรวมผู้สมัคร</h2>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="p-2 bg-slate-50 border border-slate-200 rounded">
+                <span className="text-slate-500 block text-[11px]">ทั้งหมด</span>
+                <span className="text-sm font-semibold text-slate-900">{stats.total} คน</span>
+              </div>
+              <div className="p-2 bg-emerald-50 border border-emerald-200 rounded">
+                <span className="text-emerald-700 block text-[11px]">เช็คอินแล้ว</span>
+                <span className="text-sm font-semibold text-emerald-800">{stats.byStatus['checked-in'] || 0} คน</span>
+              </div>
+              <div className="p-2 bg-blue-50 border border-blue-200 rounded">
+                <span className="text-blue-700 block text-[11px]">ลงทะเบียนแล้ว</span>
+                <span className="text-sm font-semibold text-blue-800">{stats.byStatus['registered'] || 0} คน</span>
+              </div>
+              <div className="p-2 bg-purple-50 border border-purple-200 rounded">
+                <span className="text-purple-700 block text-[11px]">จัดที่นั่งแล้ว</span>
+                <span className="text-sm font-semibold text-purple-800">{registrants.filter(r => r.seatNumber).length} คน</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Main Registrants Table Container */}
+      <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+        {/* Table Toolbar */}
+        <div className="p-3 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-center gap-2 bg-slate-50">
+          <span className="text-xs font-semibold text-slate-800">
+            รายชื่อผู้ลงทะเบียน ({registrants.length} คน)
+          </span>
+
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              onClick={() => setShowSummary(true)}
+              className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs rounded transition-colors"
+            >
+              📊 สรุปยอด
+            </button>
+
+            {isEditMode ? (
+              <>
+                <button
+                  onClick={handleUpdateAll}
+                  disabled={isLoading}
+                  className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded transition-colors disabled:opacity-50"
+                >
+                  {isLoading ? 'กำลังบันทึก...' : 'บันทึกทั้งหมด'}
+                </button>
+                <button
+                  onClick={handleCancelAll}
+                  className="px-3 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs rounded transition-colors"
+                >
+                  ยกเลิก
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => setIsEditMode(true)}
+                className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs rounded transition-colors"
+              >
+                ✎ แก้ไขตาราง
+              </button>
+            )}
+
+            <button
+              onClick={handleDeleteAll}
+              disabled={isLoading}
+              className="px-2.5 py-1 bg-white hover:bg-red-50 border border-red-200 text-red-600 text-xs rounded transition-colors"
+            >
+              ลบทั้งหมด
+            </button>
           </div>
         </div>
-      </main>
+
+        {/* Table View */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-medium">
+              <tr>
+                <th className="px-3 py-2.5 w-10 text-center border-r border-slate-200">#</th>
+                <th className="px-3 py-2.5 min-w-[160px] border-r border-slate-200 cursor-pointer hover:text-slate-900" onClick={() => handleSort('fullName')}>
+                  <div className="flex items-center justify-between">ชื่อ-สกุล <SortIcon columnKey="fullName" /></div>
+                </th>
+                <th className="px-3 py-2.5 w-28 border-r border-slate-200 cursor-pointer hover:text-slate-900" onClick={() => handleSort('studentId')}>
+                  <div className="flex items-center justify-between">รหัสผู้สมัคร <SortIcon columnKey="studentId" /></div>
+                </th>
+                <th className="px-3 py-2.5 w-32 border-r border-slate-200 cursor-pointer hover:text-slate-900" onClick={() => handleSort('nationalId')}>
+                  <div className="flex items-center justify-between">เลขบัตร ปชช. <SortIcon columnKey="nationalId" /></div>
+                </th>
+                <th className="px-3 py-2.5 w-28 text-center border-r border-slate-200 cursor-pointer hover:text-slate-900" onClick={() => handleSort('status')}>
+                  <div className="flex items-center justify-between">สถานะ <SortIcon columnKey="status" /></div>
+                </th>
+                <th className="px-3 py-2.5 min-w-[140px] border-r border-slate-200 cursor-pointer hover:text-slate-900" onClick={() => handleSort('course')}>
+                  <div className="flex items-center justify-between">หลักสูตร <SortIcon columnKey="course" /></div>
+                </th>
+                <th className="px-3 py-2.5 min-w-[130px] border-r border-slate-200 cursor-pointer hover:text-slate-900" onClick={() => handleSort('quota')}>
+                  <div className="flex items-center justify-between">ประเภทโควตา <SortIcon columnKey="quota" /></div>
+                </th>
+
+                {isQueueType && (
+                  <>
+                    <th className="px-3 py-2.5 w-28 border-r border-slate-200 cursor-pointer hover:text-slate-900" onClick={() => handleSort('timeSlot')}>
+                      <div className="flex items-center justify-between">ช่วงเวลา <SortIcon columnKey="timeSlot" /></div>
+                    </th>
+                    <th className="px-3 py-2.5 w-24 text-center border-r border-slate-200 cursor-pointer hover:text-slate-900" onClick={() => handleSort('displayQueueNumber')}>
+                      <div className="flex items-center justify-between">คิว <SortIcon columnKey="displayQueueNumber" /></div>
+                    </th>
+                  </>
+                )}
+
+                {isSeatType && (
+                  <th className="px-3 py-2.5 w-24 text-center border-r border-slate-200 cursor-pointer hover:text-slate-900" onClick={() => handleSort('seatNumber')}>
+                    <div className="flex items-center justify-between">ที่นั่ง <SortIcon columnKey="seatNumber" /></div>
+                  </th>
+                )}
+
+                {activity?.enableScoring && (
+                  <th className="px-3 py-2.5 w-32 text-center border-r border-slate-200 whitespace-nowrap">
+                    คะแนนรวม
+                  </th>
+                )}
+
+                <th className="px-3 py-2.5 w-16 text-center">จัดการ</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-slate-700">
+              {sortedRegistrants.map((reg, index) => {
+                const isEditing = isEditMode;
+                return (
+                  <tr key={reg.id} className={`transition-colors ${isEditing ? 'bg-amber-50/50' : 'hover:bg-slate-50/70'}`}>
+                    <td className="px-3 py-2 text-center text-slate-400 border-r border-slate-100 bg-slate-50/40">{index + 1}</td>
+                    <td className="px-3 py-2 font-medium text-slate-900 border-r border-slate-100">
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          value={editStates[reg.id]?.fullName || ''}
+                          onChange={(e) => handleInputChange(reg.id, 'fullName', e.target.value)}
+                          className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs"
+                        />
+                      ) : (
+                        reg.fullName
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-slate-600 border-r border-slate-100">
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          value={editStates[reg.id]?.studentId || ''}
+                          onChange={(e) => handleInputChange(reg.id, 'studentId', e.target.value)}
+                          className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs"
+                        />
+                      ) : (
+                        reg.studentId || '-'
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-slate-600 border-r border-slate-100">
+                      {isEditing ? (
+                        <input
+                          type="tel"
+                          value={editStates[reg.id]?.nationalId || ''}
+                          onChange={(e) => handleInputChange(reg.id, 'nationalId', e.target.value)}
+                          maxLength={13}
+                          className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs font-mono"
+                        />
+                      ) : (
+                        reg.nationalId
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-center border-r border-slate-100">
+                      {isEditing ? (
+                        <select
+                          value={editStates[reg.id]?.status || 'registered'}
+                          onChange={(e) => handleInputChange(reg.id, 'status', e.target.value)}
+                          className="w-full px-1.5 py-0.5 bg-white border border-slate-300 rounded text-xs"
+                        >
+                          <option value="registered">ลงทะเบียนแล้ว</option>
+                          <option value="checked-in">เช็คอินแล้ว</option>
+                          <option value="calling">กำลังเรียก</option>
+                          <option value="called">เรียกคิวแล้ว</option>
+                          <option value="waitlisted">รอคิว</option>
+                          <option value="interviewing">สอบสัมภาษณ์</option>
+                          <option value="completed">สำเร็จแล้ว</option>
+                          <option value="cancelled">ยกเลิกแล้ว</option>
+                        </select>
+                      ) : (
+                        <StatusBadge status={reg.status} />
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-slate-600 border-r border-slate-100">
+                      {isEditing ? (
+                        <select
+                          value={editStates[reg.id]?.course || ''}
+                          onChange={(e) => handleInputChange(reg.id, 'course', e.target.value)}
+                          className="w-full px-1.5 py-0.5 bg-white border border-slate-300 rounded text-xs"
+                        >
+                          <option value="">เลือกหลักสูตร</option>
+                          {courseOptions.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                        </select>
+                      ) : (
+                        reg.course || '-'
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-slate-600 border-r border-slate-100">
+                      {isEditing ? (
+                        quotaOptions.length > 0 ? (
+                          <select
+                            value={editStates[reg.id]?.quota || ''}
+                            onChange={(e) => handleInputChange(reg.id, 'quota', e.target.value)}
+                            className="w-full px-1.5 py-0.5 bg-white border border-slate-300 rounded text-xs"
+                          >
+                            <option value="">- เลือกโควตา -</option>
+                            {quotaOptions.map((q, qIdx) => (
+                              <option key={qIdx} value={q.quotaName}>{q.quotaName}</option>
+                            ))}
+                            {editStates[reg.id]?.quota && !quotaOptions.some(q => q.quotaName === editStates[reg.id]?.quota) && (
+                              <option value={editStates[reg.id].quota}>{editStates[reg.id].quota}</option>
+                            )}
+                          </select>
+                        ) : (
+                          <input
+                            type="text"
+                            value={editStates[reg.id]?.quota || ''}
+                            onChange={(e) => handleInputChange(reg.id, 'quota', e.target.value)}
+                            placeholder="ระบุโควตา"
+                            className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs"
+                          />
+                        )
+                      ) : (
+                        (reg.quota || reg.evaluationScore?.quota) ? (
+                          <span className="inline-block px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-700 font-medium border border-slate-200">
+                            {reg.quota || reg.evaluationScore?.quota}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">-</span>
+                        )
+                      )}
+                    </td>
+
+                    {isQueueType && (
+                      <>
+                        <td className="px-3 py-2 text-slate-600 border-r border-slate-100">
+                          {isEditing ? (
+                            <select
+                              value={editStates[reg.id]?.timeSlot || ''}
+                              onChange={(e) => handleInputChange(reg.id, 'timeSlot', e.target.value)}
+                              className="w-full px-1.5 py-0.5 bg-white border border-slate-300 rounded text-xs"
+                            >
+                              <option value="">เลือกช่วงเวลา</option>
+                              {timeSlotOptions.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                            </select>
+                          ) : (
+                            reg.timeSlot || '-'
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-center text-[#0b0084] font-medium border-r border-slate-100">
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              value={editStates[reg.id]?.displayQueueNumber || ''}
+                              onChange={(e) => handleInputChange(reg.id, 'displayQueueNumber', e.target.value)}
+                              className="w-full px-1.5 py-0.5 bg-white border border-slate-300 rounded text-xs text-center"
+                            />
+                          ) : (
+                            reg.displayQueueNumber || '-'
+                          )}
+                        </td>
+                      </>
+                    )}
+
+                    {isSeatType && (
+                      <td className="px-3 py-2 text-center text-[#0b0084] font-medium border-r border-slate-100">
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            value={editStates[reg.id]?.seatNumber || ''}
+                            onChange={(e) => handleInputChange(reg.id, 'seatNumber', e.target.value)}
+                            className="w-full px-1.5 py-0.5 bg-white border border-slate-300 rounded text-xs text-center uppercase"
+                          />
+                        ) : (
+                          reg.seatNumber || '-'
+                        )}
+                      </td>
+                    )}
+
+                    {activity?.enableScoring && (
+                      <td className="px-3 py-2 text-center border-r border-slate-100 whitespace-nowrap">
+                        <div className="flex items-center justify-center gap-1.5">
+                          {reg.evaluationScore?.isScored ? (
+                            <button
+                              type="button"
+                              onClick={() => setScoringRegistrant(reg)}
+                              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-mono font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition-all cursor-pointer"
+                              title="คลิกเพื่อแก้ไขคะแนนและรูปถ่ายหลักฐาน"
+                            >
+                              <span>{reg.evaluationScore.finalTotalScore}</span>
+                              <span className="text-[11px]">📝</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setScoringRegistrant(reg)}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-slate-500 hover:text-indigo-700 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 transition-all cursor-pointer"
+                              title="คลิกเพื่อบันทึกคะแนนและรูปถ่ายหลักฐาน"
+                            >
+                              <span>รอประเมิน</span>
+                              <span className="text-[11px]">📝</span>
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
+
+                    <td className="px-3 py-2 text-center whitespace-nowrap">
+                      <button
+                        onClick={() => handleDeleteRegistrant(reg.id)}
+                        className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors cursor-pointer"
+                        title="ลบรายชื่อ"
+                      >
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+
+              {sortedRegistrants.length === 0 && (
+                <tr>
+                  <td colSpan={activity?.type === 'queue' ? (activity?.enableScoring ? 10 : 9) : (activity?.enableScoring ? 9 : 8)} className="p-8 text-center text-slate-400 text-xs">
+                    ยังไม่มีผู้ลงทะเบียนในกิจกรรมนี้
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       {/* Summary Modal */}
       {showSummary && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center sticky top-0 bg-white z-10">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg border border-slate-300 max-w-3xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="p-3.5 border-b border-slate-200 flex justify-between items-center bg-slate-50">
               <div>
-                <h3 className="text-xl font-bold text-gray-800">สรุปข้อมูลการลงทะเบียน</h3>
-                <p className="text-sm text-gray-500">{activity?.name}</p>
+                <h3 className="text-sm font-semibold text-slate-900">สรุปข้อมูลการลงทะเบียน</h3>
+                <p className="text-xs text-slate-500">{activity?.name}</p>
               </div>
-              <button onClick={() => setShowSummary(false)} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
-                <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              <button
+                onClick={() => setShowSummary(false)}
+                className="w-6 h-6 flex items-center justify-center rounded text-slate-500 hover:bg-slate-200 cursor-pointer"
+              >
+                ✕
               </button>
             </div>
 
-            <div className="p-6 space-y-8">
-              {/* Key Metrics */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100">
-                  <p className="text-sm text-blue-600 font-medium mb-1">ทั้งหมด</p>
-                  <p className="text-3xl font-bold text-blue-800">{stats.total}</p>
-                  <p className="text-xs text-blue-500 mt-1">คน</p>
+            <div className="p-4 space-y-4 overflow-y-auto">
+              {/* Metrics Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
+                <div className="bg-slate-50 p-2.5 rounded border border-slate-200">
+                  <span className="text-slate-500 block text-[11px]">ทั้งหมด</span>
+                  <span className="text-base font-bold text-slate-900">{stats.total}</span>
                 </div>
-                <div className="bg-green-50 p-4 rounded-2xl border border-green-100">
-                  <p className="text-sm text-green-600 font-medium mb-1">เช็คอินแล้ว</p>
-                  <p className="text-3xl font-bold text-green-800">{stats.byStatus['checked-in'] || 0}</p>
-                  <p className="text-xs text-green-500 mt-1">คน</p>
+                <div className="bg-emerald-50 p-2.5 rounded border border-emerald-200">
+                  <span className="text-emerald-700 block text-[11px]">เช็คอินแล้ว</span>
+                  <span className="text-base font-bold text-emerald-800">{stats.byStatus['checked-in'] || 0}</span>
                 </div>
-                <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100">
-                  <p className="text-sm text-amber-600 font-medium mb-1">รอคิว</p>
-                  <p className="text-3xl font-bold text-amber-800">{stats.byStatus['waitlisted'] || 0}</p>
-                  <p className="text-xs text-amber-500 mt-1">คน</p>
+                <div className="bg-amber-50 p-2.5 rounded border border-amber-200">
+                  <span className="text-amber-700 block text-[11px]">รอคิว</span>
+                  <span className="text-base font-bold text-amber-800">{stats.byStatus['waitlisted'] || 0}</span>
                 </div>
-                <div className="bg-indigo-50 p-4 rounded-2xl border border-indigo-100">
-                  <p className="text-sm text-indigo-600 font-medium mb-1">สอบสัมภาษณ์</p>
-                  <p className="text-3xl font-bold text-indigo-800">{stats.byStatus['interviewing'] || 0}</p>
-                  <p className="text-xs text-indigo-500 mt-1">คน</p>
+                <div className="bg-indigo-50 p-2.5 rounded border border-indigo-200">
+                  <span className="text-indigo-700 block text-[11px]">สอบสัมภาษณ์</span>
+                  <span className="text-base font-bold text-indigo-800">{stats.byStatus['interviewing'] || 0}</span>
                 </div>
-                <div className="bg-purple-50 p-4 rounded-2xl border border-purple-100">
-                  <p className="text-sm text-purple-600 font-medium mb-1">สำเร็จ</p>
-                  <p className="text-3xl font-bold text-purple-800">{stats.byStatus['completed'] || 0}</p>
-                  <p className="text-xs text-purple-500 mt-1">คน</p>
+                <div className="bg-purple-50 p-2.5 rounded border border-purple-200">
+                  <span className="text-purple-700 block text-[11px]">สำเร็จ</span>
+                  <span className="text-base font-bold text-purple-800">{stats.byStatus['completed'] || 0}</span>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                {/* Status Breakdown */}
-                <div className="bg-gray-50 rounded-2xl p-5">
-                  <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-                    <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                    สถานะการลงทะเบียน
-                  </h4>
-                  <div className="space-y-3">
+              {/* Status Breakdown & Course Breakdown */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                <div className="p-3 bg-slate-50 rounded border border-slate-200 space-y-2">
+                  <h4 className="font-semibold text-slate-800">แยกตามสถานะ</h4>
+                  <div className="space-y-1.5">
                     {Object.entries(stats.byStatus).map(([status, count]) => (
-                      <div key={status} className="flex justify-between items-center p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
+                      <div key={status} className="flex justify-between items-center p-1.5 bg-white rounded border border-slate-200">
                         <StatusBadge status={status} />
-                        <span className="font-mono font-bold text-gray-700">{count}</span>
+                        <span className="font-semibold text-slate-700">{count} คน</span>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                {/* Course Breakdown */}
-                <div className="bg-gray-50 rounded-2xl p-5">
-                  <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-                    <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
-                    แยกตามหลักสูตร
-                  </h4>
-                  <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                <div className="p-3 bg-slate-50 rounded border border-slate-200 space-y-2">
+                  <h4 className="font-semibold text-slate-800">แยกตามหลักสูตร</h4>
+                  <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
                     {Object.entries(stats.byCourse).sort((a, b) => b[1] - a[1]).map(([course, count]) => (
-                      <div key={course} className="flex justify-between items-center p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
-                        <span className="text-sm text-gray-700 font-medium truncate max-w-[70%]">{course}</span>
-                        <span className="font-mono font-bold text-gray-700 bg-gray-100 px-2 py-1 rounded-lg">{count}</span>
+                      <div key={course} className="flex justify-between items-center p-1.5 bg-white rounded border border-slate-200">
+                        <span className="truncate max-w-[70%] text-slate-700">{course}</span>
+                        <span className="font-semibold text-slate-800">{count} คน</span>
                       </div>
                     ))}
-                    {Object.keys(stats.byCourse).length === 0 && (
-                      <p className="text-center text-gray-400 py-4">ไม่พบข้อมูลหลักสูตร</p>
-                    )}
                   </div>
                 </div>
-
-                {/* Time Slot Breakdown (Queue only) */}
-                {activity?.type === 'queue' && (
-                  <div className="bg-gray-50 rounded-2xl p-5">
-                    <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-                      <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                      แยกตามช่วงเวลา
-                    </h4>
-                    <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                      {Object.entries(stats.byTimeSlot).sort((a, b) => b[1] - a[1]).map(([slot, count]) => (
-                        <div key={slot} className="flex justify-between items-center p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
-                          <span className="text-sm text-gray-700 font-medium truncate max-w-[70%]">{slot}</span>
-                          <span className="font-mono font-bold text-gray-700 bg-gray-100 px-2 py-1 rounded-lg">{count}</span>
-                        </div>
-                      ))}
-                      {Object.keys(stats.byTimeSlot).length === 0 && (
-                        <p className="text-center text-gray-400 py-4">ไม่พบข้อมูลช่วงเวลา</p>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Zone Breakdown (Non-Queue) */}
-                {activity?.type !== 'queue' && Object.keys(stats.byZone).length > 0 && (
-                  <div className="bg-gray-50 rounded-2xl p-5">
-                    <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-                      <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
-                      แยกตามโซนที่นั่ง
-                    </h4>
-                    <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                      {Object.entries(stats.byZone).sort().map(([zone, count]) => (
-                        <div key={zone} className="flex justify-between items-center p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
-                          <span className="text-sm text-gray-700 font-medium">โซน {zone}</span>
-                          <span className="font-mono font-bold text-gray-700 bg-gray-100 px-2 py-1 rounded-lg">{count}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
 
-            <div className="p-6 border-t border-gray-100 bg-gray-50 rounded-b-2xl flex justify-end gap-3">
-              <button onClick={() => setShowSummary(false)} className="px-5 py-2.5 bg-white border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors">ปิดหน้าต่าง</button>
+            <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-end gap-2 text-xs">
+              <button
+                onClick={() => setShowSummary(false)}
+                className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 rounded hover:bg-slate-100 cursor-pointer"
+              >
+                ปิดหน้าต่าง
+              </button>
               <CSVLink
                 data={csvExportData}
                 headers={csvExportHeaders}
                 filename={`summary_registrants_${activityId}.csv`}
-                className="px-5 py-2.5 bg-green-600 text-white font-medium rounded-xl hover:bg-green-700 shadow-lg shadow-green-600/20 flex items-center gap-2 transition-all active:scale-95"
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                 Export ข้อมูลทั้งหมด
               </CSVLink>
             </div>
@@ -1286,52 +1657,45 @@ export default function SeatAssignmentPage({ params }) {
         </div>
       )}
 
-      {/* Confirm Modal */}
+      {/* Confirm Action Modal */}
       {confirmModal.isOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full overflow-hidden transform transition-all scale-100 opacity-100">
-            <div className="p-6">
-              <div className="flex items-center gap-4 mb-4">
-                <div className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 ${confirmModal.type === 'danger' ? 'bg-red-100 text-red-600' :
-                  confirmModal.type === 'warning' ? 'bg-amber-100 text-amber-600' :
-                    'bg-blue-100 text-blue-600'
-                  }`}>
-                  {confirmModal.type === 'danger' && (
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                  )}
-                  {confirmModal.type === 'warning' && (
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                  )}
-                  {confirmModal.type === 'info' && (
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  )}
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-gray-900">{confirmModal.title}</h3>
-                  <p className="text-sm text-gray-500 mt-1">{confirmModal.message}</p>
-                </div>
-              </div>
-              <div className="flex justify-end gap-3 mt-6">
-                <button
-                  onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
-                  className="px-4 py-2 bg-white border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors"
-                >
-                  ยกเลิก
-                </button>
-                <button
-                  onClick={confirmModal.onConfirm}
-                  className={`px-4 py-2 text-white font-medium rounded-xl shadow-lg transition-all active:scale-95 ${confirmModal.type === 'danger' ? 'bg-red-600 hover:bg-red-700 shadow-red-600/20' :
-                    confirmModal.type === 'warning' ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/20' :
-                      'bg-blue-600 hover:bg-blue-700 shadow-blue-600/20'
-                    }`}
-                >
-                  ยืนยัน
-                </button>
-              </div>
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-lg border border-slate-300 max-w-md w-full p-4 space-y-3">
+            <h3 className="text-sm font-semibold text-slate-900">{confirmModal.title}</h3>
+            <div className="text-xs text-slate-600 whitespace-pre-line leading-relaxed font-sans">{confirmModal.message}</div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+                className="px-4 py-2 bg-white border border-slate-200 text-slate-700 text-xs rounded-lg hover:bg-slate-50 cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={confirmModal.onConfirm}
+                className={`px-4 py-2 text-white text-xs font-semibold rounded-lg shadow-sm transition-all active:scale-95 cursor-pointer ${
+                  confirmModal.type === 'danger'
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : 'bg-[#166E7C] hover:bg-[#0F5661]'
+                }`}
+              >
+                ยืนยัน
+              </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* Examiner Scoring Modal */}
+      <ExaminerScoringModal
+        isOpen={Boolean(scoringRegistrant)}
+        onClose={() => setScoringRegistrant(null)}
+        registrant={scoringRegistrant}
+        activity={activity}
+        onScoreSaved={(updated) => {
+          setRegistrants(prev => prev.map(r => r.id === updated.id ? updated : r));
+        }}
+      />
     </div>
   );
 }

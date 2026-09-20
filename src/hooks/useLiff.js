@@ -1,17 +1,14 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { db } from '../lib/firebase';
-import { doc } from 'firebase/firestore';
+import { getStudentProfile } from '../lib/studentService';
 
 const MOCK_PROFILE = {
-  // โปรไฟล์จำลองจาก LINE
   liffProfile: {
     userId: 'U_PC_USER_001',
     displayName: 'คุณทดสอบ (PC Mode)',
-    pictureUrl: 'https://via.placeholder.com/150'
+    pictureUrl: null
   },
-  // โปรไฟล์จำลองจาก DB (เราจะปล่อยเป็น undefined เพื่อให้ระบบไปค้นหาจริง)
   studentDbProfile: undefined
 };
 
@@ -22,17 +19,29 @@ export default function useLiff() {
   const [error, setError] = useState('');
   const [liffObject, setLiffObject] = useState(null);
 
-  // --- เพิ่มฟังก์ชัน refreshProfile ---
+  const fetchProfileFromDb = async (profileFromLiff) => {
+    if (!profileFromLiff?.userId) return null;
+    try {
+      const studentData = await getStudentProfile(profileFromLiff.userId);
+      return studentData || null;
+    } catch (err) {
+      console.error('Error fetching student profile:', err);
+      setError('เกิดข้อผิดพลาดในการดึงข้อมูลโปรไฟล์');
+      return null;
+    }
+  };
+
   const refreshProfile = async () => {
     setIsLoading(true);
-    setError("");
+    setError('');
     try {
       let profileFromLiff = null;
       const liff = (await import('@line/liff')).default;
       const liffId = process.env.NEXT_PUBLIC_LIFF_ID;
-      if (!liffId) throw new Error("LIFF ID is not defined");
+      if (!liffId) throw new Error('LIFF ID is not defined');
       await liff.init({ liffId });
       setLiffObject(liff);
+
       if (liff.isInClient()) {
         if (liff.isLoggedIn()) {
           profileFromLiff = await liff.getProfile();
@@ -45,14 +54,10 @@ export default function useLiff() {
         profileFromLiff = MOCK_PROFILE.liffProfile;
         setLiffProfile(profileFromLiff);
       }
+
       if (profileFromLiff) {
-        const studentDocRef = doc(db, 'studentProfiles', profileFromLiff.userId);
-        const docSnap = await (await import('firebase/firestore')).getDoc(studentDocRef);
-        if (docSnap.exists()) {
-          setStudentDbProfile(docSnap.data());
-        } else {
-          setStudentDbProfile(null);
-        }
+        const studentData = await fetchProfileFromDb(profileFromLiff);
+        setStudentDbProfile(studentData);
       }
       setIsLoading(false);
     } catch (err) {
@@ -62,56 +67,36 @@ export default function useLiff() {
   };
 
   useEffect(() => {
-
     const initialize = async () => {
       let profileFromLiff = null;
 
       try {
         const liff = (await import('@line/liff')).default;
         const liffId = process.env.NEXT_PUBLIC_LIFF_ID;
-        if (!liffId) throw new Error("LIFF ID is not defined");
+        if (!liffId) throw new Error('LIFF ID is not defined');
 
         await liff.init({ liffId });
         setLiffObject(liff);
 
-        // --- 👇 ส่วน Logic ที่ปรับปรุงใหม่ ---
         if (liff.isInClient()) {
-          // กรณีเปิดในแอป LINE
           if (liff.isLoggedIn()) {
             profileFromLiff = await liff.getProfile();
             setLiffProfile(profileFromLiff);
           } else {
             liff.login();
-            return; // รอ redirect
+            return;
           }
         } else {
-          // กรณีเปิดบน PC
-          console.warn("Running on PC. Using MOCK LIFF PROFILE.");
+          console.warn('Running on PC / Web browser. Using MOCK LIFF PROFILE.');
           profileFromLiff = MOCK_PROFILE.liffProfile;
           setLiffProfile(profileFromLiff);
         }
 
-        // --- ส่วนการดึงข้อมูลโปรไฟล์จาก DB ที่ตอนนี้จะทำงานเสมอ ---
         if (profileFromLiff) {
-          const studentDocRef = doc(db, 'studentProfiles', profileFromLiff.userId);
-
-          try {
-            const docSnap = await (await import('firebase/firestore')).getDoc(studentDocRef);
-            if (docSnap.exists()) {
-              setStudentDbProfile(docSnap.data());
-            } else {
-              setStudentDbProfile(null);
-            }
-          } catch (err) {
-            console.error("Error fetching student profile:", err);
-            setError("เกิดข้อผิดพลาดในการดึงข้อมูลโปรไฟล์");
-          }
-          setIsLoading(false);
-        } else {
-          // กรณีที่ไม่สามารถหาโปรไฟล์ LIFF ได้เลย
-          setIsLoading(false);
+          const studentData = await fetchProfileFromDb(profileFromLiff);
+          setStudentDbProfile(studentData);
         }
-
+        setIsLoading(false);
       } catch (err) {
         setError(`LIFF Error: ${err.message}`);
         setIsLoading(false);
@@ -119,7 +104,7 @@ export default function useLiff() {
     };
 
     initialize();
-  }, []); // ทำงานแค่ครั้งเดียว
+  }, []);
 
   return { liffObject, liffProfile, studentDbProfile, isLoading, error, setStudentDbProfile, refreshProfile };
-};
+}

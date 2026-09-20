@@ -1,0 +1,241 @@
+import { db } from './firebase';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  where,
+  limit,
+  serverTimestamp,
+  writeBatch
+} from 'firebase/firestore';
+
+const COLLECTION_NAME = 'studentProfiles';
+
+/**
+ * ค้นหาโปรไฟล์นักเรียนจาก LINE User ID หรือ National ID
+ * รองรับทั้ง Document ID ที่เป็น lineUserId หรือฟิลด์ nationalId
+ * @param {string} lineUserId 
+ * @param {string} nationalId 
+ * @returns {Promise<object|null>}
+ */
+export async function getStudentProfile(lineUserId, nationalId = null) {
+  try {
+    // 1. ค้นหาจาก Document ID (กรณีใช้ lineUserId เป็น Doc ID)
+    if (lineUserId) {
+      const docRef = doc(db, COLLECTION_NAME, lineUserId);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        return { id: docSnap.id, ...docSnap.data() };
+      }
+
+      // ค้นหาจากฟิลด์ lineUserId
+      const qLine = query(collection(db, COLLECTION_NAME), where('lineUserId', '==', lineUserId), limit(1));
+      const lineSnap = await getDocs(qLine);
+      if (!lineSnap.empty) {
+        const found = lineSnap.docs[0];
+        return { id: found.id, ...found.data() };
+      }
+    }
+
+    // 2. ค้นหาจากฟิลด์ nationalId
+    if (nationalId) {
+      const trimmed = nationalId.trim();
+      const qNat = query(collection(db, COLLECTION_NAME), where('nationalId', '==', trimmed), limit(1));
+      const natSnap = await getDocs(qNat);
+      if (!natSnap.empty) {
+        const found = natSnap.docs[0];
+        return { id: found.id, ...found.data() };
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Error in getStudentProfile:', error);
+    throw error;
+  }
+}
+
+/**
+ * ค้นหานักเรียนจากเลขบัตรประชาชน 13 หลัก
+ * @param {string} nationalId 
+ * @returns {Promise<object|null>}
+ */
+export async function findStudentByNationalId(nationalId) {
+  if (!nationalId) return null;
+  const trimmed = nationalId.trim();
+  const q = query(collection(db, COLLECTION_NAME), where('nationalId', '==', trimmed), limit(1));
+  const snapshot = await getDocs(q);
+  if (!snapshot.empty) {
+    const d = snapshot.docs[0];
+    return { id: d.id, ...d.data() };
+  }
+  return null;
+}
+
+/**
+ * บันทึกหรืออัปเดตข้อมูลโปรไฟล์นักเรียน
+ * @param {object} studentData
+ * @param {string} studentData.nationalId - เลขบัตรประชาชน 13 หลัก (จำเป็น)
+ * @param {string} studentData.fullName - ชื่อ-สกุล (จำเป็น)
+ * @param {string} [studentData.studentId] - รหัสนักศึกษา / รหัสผู้สมัคร
+ * @param {string} [studentData.lineUserId] - LINE User ID
+ * @param {string} [studentData.lineDisplayName] - ชื่อแสดงใน LINE
+ * @param {string} [studentData.linePictureUrl] - รูปโปรไฟล์ LINE
+ * @param {string} [studentData.source] - แหล่งที่มา (เช่น 'liff_setup', 'admin_import')
+ * @returns {Promise<object>}
+ */
+export async function upsertStudentProfile({
+  nationalId,
+  fullName,
+  studentId = null,
+  lineUserId = null,
+  lineDisplayName = null,
+  linePictureUrl = null,
+  source = 'user_setup'
+}) {
+  const trimmedNationalId = nationalId?.trim();
+  if (!trimmedNationalId || !fullName) {
+    throw new Error('nationalId และ fullName เป็นข้อมูลที่จำเป็น');
+  }
+
+  // กำหนด Document ID หลัก: ถ้ามี lineUserId ให้ใช้ lineUserId ถ้าไม่มีให้ใช้ nationalId
+  const docId = lineUserId || trimmedNationalId;
+  const docRef = doc(db, COLLECTION_NAME, docId);
+
+  const payload = {
+    nationalId: trimmedNationalId,
+    fullName: fullName.trim(),
+    studentId: studentId ? studentId.trim() : null,
+    updatedAt: serverTimestamp()
+  };
+
+  if (lineUserId) payload.lineUserId = lineUserId;
+  if (lineDisplayName) payload.lineDisplayName = lineDisplayName;
+  if (linePictureUrl) payload.linePictureUrl = linePictureUrl;
+
+  const docSnap = await getDoc(docRef);
+  if (!docSnap.exists()) {
+    payload.createdAt = serverTimestamp();
+    payload.source = source;
+  }
+
+  await setDoc(docRef, payload, { merge: true });
+  return { id: docId, ...payload };
+}
+
+/**
+ * ผูกบัญชี LINE กับโปรไฟล์นักเรียน (แก้ปัญหา Orphan Doc และเชื่อมข้อมูล)
+ * @param {string} nationalId - เลขบัตรประชาชน 13 หลัก
+ * @param {object} liffProfile - ข้อมูลจาก LINE LIFF { userId, displayName, pictureUrl }
+ * @returns {Promise<object>}
+ */
+export async function linkStudentLineAccount(nationalId, liffProfile) {
+  const trimmedNationalId = nationalId.trim();
+  const { userId, displayName, pictureUrl } = liffProfile;
+
+  const batch = writeBatch(db);
+
+  // 1. ค้นหาโปรไฟล์เดิมที่มีอยู่
+  const existingProfile = await findStudentByNationalId(trimmedNationalId);
+
+  if (existingProfile) {
+    // ถ้าโปรไฟล์นี้ผูกกับ LINE คนอื่นอยู่แล้ว
+    if (existingProfile.lineUserId && existingProfile.lineUserId !== userId) {
+      throw new Error('เลขบัตรประชาชนนี้ถูกผูกไว้กับบัญชี LINE อื่นแล้ว');
+    }
+
+    const newProfileData = {
+      ...existingProfile,
+      lineUserId: userId,
+      lineDisplayName: displayName || existingProfile.lineDisplayName || null,
+      linePictureUrl: pictureUrl || existingProfile.linePictureUrl || null,
+      updatedAt: serverTimestamp()
+    };
+
+    // สร้างหรืออัปเดต Document ใน Key ใหม่ (userId)
+    const newDocRef = doc(db, COLLECTION_NAME, userId);
+    batch.set(newDocRef, newProfileData, { merge: true });
+
+    // ลบเอกสารเก่าออก หาก ID เดิมไม่ใช่ userId
+    if (existingProfile.id !== userId) {
+      const oldDocRef = doc(db, COLLECTION_NAME, existingProfile.id);
+      batch.delete(oldDocRef);
+    }
+
+    await batch.commit();
+    return newProfileData;
+  }
+
+  // 2. ถ้าไม่พบใน studentProfiles ให้ค้นหาจาก registrations
+  const qReg = query(collection(db, 'registrations'), where('nationalId', '==', trimmedNationalId), limit(1));
+  const regSnapshot = await getDocs(qReg);
+
+  if (regSnapshot.empty) {
+    throw new Error('ไม่พบข้อมูลเลขบัตรประชาชนนี้ในระบบ กรุณาติดต่อเจ้าหน้าที่');
+  }
+
+  const regData = regSnapshot.docs[0].data();
+  const profileData = {
+    nationalId: trimmedNationalId,
+    fullName: regData.fullName,
+    studentId: regData.studentId || null,
+    lineUserId: userId,
+    lineDisplayName: displayName || null,
+    linePictureUrl: pictureUrl || null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    source: 'registration_link'
+  };
+
+  const newDocRef = doc(db, COLLECTION_NAME, userId);
+  await setDoc(newDocRef, profileData);
+
+  return profileData;
+}
+
+/**
+ * รีเซ็ตการผูกบัญชี LINE สำหรับนักเรียน (ใช้โดย Admin)
+ * @param {string} lineUserId 
+ * @param {string} registrantId 
+ */
+export async function resetStudentLineBinding(lineUserId, registrantId) {
+  const batch = writeBatch(db);
+
+  if (lineUserId) {
+    const profileRef = doc(db, COLLECTION_NAME, lineUserId);
+    batch.delete(profileRef);
+  }
+
+  if (registrantId) {
+    const regRef = doc(db, 'registrations', registrantId);
+    batch.update(regRef, { lineUserId: null });
+  }
+
+  await batch.commit();
+}
+
+/**
+ * ลบข้อมูลนักเรียนและประวัติการผูก LINE
+ * @param {string} nationalId 
+ * @param {string} lineUserId 
+ */
+export async function deleteStudentProfile(nationalId, lineUserId) {
+  const batch = writeBatch(db);
+
+  if (lineUserId) {
+    batch.delete(doc(db, COLLECTION_NAME, lineUserId));
+  }
+
+  if (nationalId) {
+    const q = query(collection(db, COLLECTION_NAME), where('nationalId', '==', nationalId));
+    const snap = await getDocs(q);
+    snap.forEach(d => batch.delete(d.ref));
+  }
+
+  await batch.commit();
+}

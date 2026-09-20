@@ -6,6 +6,164 @@ import { collection, addDoc, serverTimestamp, doc, getDoc } from 'firebase/fires
 import { useParams, useRouter } from 'next/navigation';
 import useLiff from '../../../../hooks/useLiff';
 
+const EMOJI_RATINGS = [
+    {
+        score: 1,
+        label: 'น้อยที่สุด',
+        color: '#EF4444',
+        starColor: '#EF4444',
+        activeClasses: 'bg-red-50 border-red-500 ring-2 ring-red-400/50 shadow-md shadow-red-100 -translate-y-1',
+        renderFace: () => (
+            <svg viewBox="0 0 100 100" className="w-full h-full drop-shadow-sm">
+                <circle cx="50" cy="50" r="48" fill="#EF4444" />
+                {/* Left Eye: X */}
+                <line x1="28" y1="32" x2="40" y2="44" stroke="#111827" strokeWidth="5.5" strokeLinecap="round" />
+                <line x1="40" y1="32" x2="28" y2="44" stroke="#111827" strokeWidth="5.5" strokeLinecap="round" />
+                {/* Right Eye: X */}
+                <line x1="60" y1="32" x2="72" y2="44" stroke="#111827" strokeWidth="5.5" strokeLinecap="round" />
+                <line x1="72" y1="32" x2="60" y2="44" stroke="#111827" strokeWidth="5.5" strokeLinecap="round" />
+                {/* Mouth: Open crying/gasping frown */}
+                <path d="M 34 66 C 34 52, 66 52, 66 66 C 66 80, 34 80, 34 66 Z" fill="#111827" />
+            </svg>
+        )
+    },
+    {
+        score: 2,
+        label: 'น้อย',
+        color: '#F97316',
+        starColor: '#F97316',
+        activeClasses: 'bg-orange-50 border-orange-500 ring-2 ring-orange-400/50 shadow-md shadow-orange-100 -translate-y-1',
+        renderFace: () => (
+            <svg viewBox="0 0 100 100" className="w-full h-full drop-shadow-sm">
+                <circle cx="50" cy="50" r="48" fill="#F97316" />
+                {/* Eyes: dots */}
+                <circle cx="34" cy="38" r="6" fill="#111827" />
+                <circle cx="66" cy="38" r="6" fill="#111827" />
+                {/* Mouth: sad frown */}
+                <path d="M 34 68 Q 50 50 66 68" stroke="#111827" strokeWidth="6" strokeLinecap="round" fill="none" />
+            </svg>
+        )
+    },
+    {
+        score: 3,
+        label: 'ปานกลาง',
+        color: '#EAB308',
+        starColor: '#EAB308',
+        activeClasses: 'bg-amber-50 border-amber-500 ring-2 ring-amber-400/50 shadow-md shadow-amber-100 -translate-y-1',
+        renderFace: () => (
+            <svg viewBox="0 0 100 100" className="w-full h-full drop-shadow-sm">
+                <circle cx="50" cy="50" r="48" fill="#FACC15" />
+                {/* Eyes: dots */}
+                <circle cx="34" cy="38" r="6" fill="#111827" />
+                <circle cx="66" cy="38" r="6" fill="#111827" />
+                {/* Mouth: straight line */}
+                <line x1="32" y1="62" x2="68" y2="62" stroke="#111827" strokeWidth="6" strokeLinecap="round" />
+            </svg>
+        )
+    },
+    {
+        score: 4,
+        label: 'มาก',
+        color: '#84CC16',
+        starColor: '#84CC16',
+        activeClasses: 'bg-lime-50 border-lime-500 ring-2 ring-lime-400/50 shadow-md shadow-lime-100 -translate-y-1',
+        renderFace: () => (
+            <svg viewBox="0 0 100 100" className="w-full h-full drop-shadow-sm">
+                <circle cx="50" cy="50" r="48" fill="#84CC16" />
+                {/* Eyes: dots */}
+                <circle cx="34" cy="38" r="6" fill="#111827" />
+                <circle cx="66" cy="38" r="6" fill="#111827" />
+                {/* Mouth: gentle smile */}
+                <path d="M 34 58 Q 50 74 66 58" stroke="#111827" strokeWidth="6" strokeLinecap="round" fill="none" />
+            </svg>
+        )
+    },
+    {
+        score: 5,
+        label: 'มากที่สุด',
+        color: '#22C55E',
+        starColor: '#22C55E',
+        activeClasses: 'bg-emerald-50 border-emerald-500 ring-2 ring-emerald-400/50 shadow-md shadow-emerald-100 -translate-y-1',
+        renderFace: () => (
+            <svg viewBox="0 0 100 100" className="w-full h-full drop-shadow-sm">
+                <circle cx="50" cy="50" r="48" fill="#22C55E" />
+                {/* Eyes: laughing arches ^ ^ */}
+                <path d="M 27 38 Q 34 26 41 38" stroke="#111827" strokeWidth="5.5" strokeLinecap="round" fill="none" />
+                <path d="M 59 38 Q 66 26 73 38" stroke="#111827" strokeWidth="5.5" strokeLinecap="round" fill="none" />
+                {/* Mouth: big happy open grin */}
+                <path d="M 30 54 Q 50 54 70 54 C 70 78, 30 78, 30 54 Z" fill="#111827" />
+            </svg>
+        )
+    }
+];
+
+function EmojiRatingSelector({ value, onChange, name }) {
+    // เรียงแนวตั้งจาก 5 (มากที่สุด) ลงไป 1 (น้อยที่สุด) ตามแบบฟอร์มมาตรฐาน
+    const verticalItems = [...EMOJI_RATINGS].reverse();
+
+    return (
+        <div className="space-y-2.5 my-3">
+            {verticalItems.map((item) => {
+                const isSelected = value == item.score;
+                return (
+                    <button
+                        key={item.score}
+                        type="button"
+                        onClick={() => onChange(item.score)}
+                        className={`w-full group relative flex items-center justify-between p-3 sm:p-3.5 rounded-2xl border-2 transition-all duration-200 cursor-pointer ${
+                            isSelected
+                                ? `${item.activeClasses} shadow-sm`
+                                : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/80 shadow-xs'
+                        }`}
+                    >
+                        <input
+                            type="radio"
+                            name={name}
+                            value={item.score}
+                            checked={isSelected}
+                            onChange={() => onChange(item.score)}
+                            className="sr-only"
+                        />
+
+                        {/* Left: Radio indicator + Emoji Face + Label */}
+                        <div className="flex items-center gap-3">
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors shrink-0 ${isSelected ? 'border-slate-800 bg-slate-800' : 'border-slate-300 bg-white'}`}>
+                                {isSelected && <div className="w-2 h-2 rounded-full bg-white" />}
+                            </div>
+
+                            {/* Emoji Face */}
+                            <div className={`w-10 h-10 sm:w-11 sm:h-11 shrink-0 transition-transform duration-200 ${isSelected ? 'scale-110' : 'group-hover:scale-105'}`}>
+                                {item.renderFace()}
+                            </div>
+
+                            {/* Label & Score */}
+                            <div className="text-left">
+                                <span className={`text-sm sm:text-base leading-tight transition-colors ${isSelected ? 'font-bold text-slate-900' : 'font-medium text-slate-700'}`}>
+                                    {item.score} - {item.label}
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* Right: Black Pill with 5 Stars */}
+                        <div className="bg-black/90 px-2 py-1 rounded-full flex items-center gap-0.5 sm:gap-1 shadow-xs shrink-0">
+                            {[1, 2, 3, 4, 5].map((starIdx) => (
+                                <svg
+                                    key={starIdx}
+                                    viewBox="0 0 20 20"
+                                    className="w-3 h-3 sm:w-3.5 sm:h-3.5"
+                                    fill={starIdx <= item.score ? item.starColor : '#FFFFFF'}
+                                >
+                                    <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                </svg>
+                            ))}
+                        </div>
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
+
 export default function EvaluationPage() {
     const params = useParams();
     const router = useRouter();
@@ -158,23 +316,11 @@ export default function EvaluationPage() {
                             </p>
 
                             {q.type === 'rating' && (
-                                <div className="space-y-2">
-                                    {[5, 4, 3, 2, 1].map(score => (
-                                        <label key={score} className="flex items-center p-3 border rounded-xl hover:bg-gray-50 has-[:checked]:bg-blue-50 has-[:checked]:border-blue-200 cursor-pointer transition-all">
-                                            <input
-                                                type="radio"
-                                                name={`q_${q.id}`}
-                                                value={score}
-                                                checked={answers[q.id] == score}
-                                                onChange={(e) => handleAnswerChange(q.id, e.target.value)}
-                                                className="h-5 w-5 text-blue-600 focus:ring-blue-500 border-gray-300"
-                                            />
-                                            <span className="ml-3 text-gray-700 font-medium">
-                                                {score} - {score === 5 ? 'มากที่สุด' : score === 4 ? 'มาก' : score === 3 ? 'ปานกลาง' : score === 2 ? 'น้อย' : 'น้อยที่สุด'}
-                                            </span>
-                                        </label>
-                                    ))}
-                                </div>
+                                <EmojiRatingSelector
+                                    name={`q_${q.id}`}
+                                    value={answers[q.id]}
+                                    onChange={(val) => handleAnswerChange(q.id, val)}
+                                />
                             )}
 
                             {q.type === 'text' && (
@@ -230,22 +376,15 @@ export default function EvaluationPage() {
                     /* Legacy Fallback */
                     <>
                         <div>
-                            <p className="font-semibold">1. ท่านมีความพึงพอใจต่อกิจกรรมนี้มากน้อยเพียงใด</p>
-                            <div className="mt-2 space-y-2">
-                                {satisfactionOptions.map((option) => (
-                                    <label key={option} className="flex items-center p-3 border rounded-md has-[:checked]:bg-blue-50 has-[:checked]:border-primary cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="satisfaction"
-                                            value={option}
-                                            checked={satisfaction === option}
-                                            onChange={(e) => setSatisfaction(e.target.value)}
-                                            className="h-4 w-4 text-primary focus:ring-primary border-gray-300"
-                                        />
-                                        <span className="ml-3 text-gray-700">{option}</span>
-                                    </label>
-                                ))}
-                            </div>
+                            <p className="font-semibold text-gray-800 mb-1">1. ท่านมีความพึงพอใจต่อกิจกรรมนี้มากน้อยเพียงใด <span className="text-red-500">*</span></p>
+                            <EmojiRatingSelector
+                                name="satisfaction"
+                                value={satisfaction === 'มากที่สุด' ? 5 : satisfaction === 'มาก' ? 4 : satisfaction === 'ปานกลาง' ? 3 : satisfaction === 'น้อย' ? 2 : satisfaction === 'ควรปรับปรุง' || satisfaction === 'น้อยที่สุด' ? 1 : satisfaction}
+                                onChange={(val) => {
+                                    const labelMap = { 5: 'มากที่สุด', 4: 'มาก', 3: 'ปานกลาง', 2: 'น้อย', 1: 'ควรปรับปรุง' };
+                                    setSatisfaction(labelMap[val] || val);
+                                }}
+                            />
                         </div>
                         <div>
                             <p className="font-semibold">2. ท่านทราบข้อมูลการรับสมัครจากช่องทางใด</p>

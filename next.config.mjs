@@ -1,14 +1,14 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-    images: {
-      remotePatterns: [
-        {
-          protocol: 'https',
-          hostname: 'lh5.googleusercontent.com',
-          port: '',
-          pathname: '/**',
-        },
-        {
+  images: {
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'lh5.googleusercontent.com',
+        port: '',
+        pathname: '/**',
+      },
+      {
         protocol: 'https',
         hostname: 'via.placeholder.com',
         port: '',
@@ -20,9 +20,20 @@ const nextConfig = {
         port: '',
         pathname: '/**',
       },
-        // คุณสามารถเพิ่ม hostname อื่นๆ ที่นี่ได้
-      ],
-    },
-  };
-  
-  export default nextConfig;
+      {
+        protocol: 'https',
+        hostname: 'firebasestorage.googleapis.com',
+        port: '',
+        pathname: '/**',
+      },
+      {
+        protocol: 'https',
+        hostname: '*.firebasestorage.app',
+        port: '',
+        pathname: '/**',
+      },
+    ],
+  },
+};
+
+export default nextConfig;
