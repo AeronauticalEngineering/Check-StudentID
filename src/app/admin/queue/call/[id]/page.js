@@ -576,23 +576,29 @@ export default function QueueCallPage({ params }) {
             speakQueueNumber(registrant.displayQueueNumber, chDisplayName);
 
             const lineUserId = registrant.lineUserId || await findLineUserId(registrant.nationalId);
-            if (settings.onQueueCall && lineUserId) {
-                const flexMessage = createQueueCallFlex({
-                    activityName: activity.name,
-                    channelName: chDisplayName,
-                    queueNumber: registrant.displayQueueNumber,
-                    courseName: registrant.course,
-                    activityId: registrant.activityId,
-                    requireEvaluation: activity.enableEvaluation !== false
-                });
+            const isRealLineUser = typeof lineUserId === 'string' && /^[UCR][0-9a-fA-F]{32}$/.test(lineUserId.trim());
 
-                const response = await fetch('/api/send-notification', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: lineUserId, flexMessage }) });
-                if (!response.ok) {
-                    const errorResult = await response.json();
-                    throw new Error(errorResult.message || 'API Error');
+            if (settings.onQueueCall && isRealLineUser) {
+                try {
+                    const flexMessage = createQueueCallFlex({
+                        activityName: activity.name,
+                        channelName: chDisplayName,
+                        queueNumber: registrant.displayQueueNumber,
+                        courseName: registrant.course,
+                        activityId: registrant.activityId,
+                        requireEvaluation: activity.enableEvaluation !== false
+                    });
+
+                    fetch('/api/send-notification', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ userId: lineUserId.trim(), flexMessage })
+                    }).catch(err => console.warn('LINE notification warning (non-fatal):', err));
+                } catch (notiPrepErr) {
+                    console.warn('Failed to build LINE notification:', notiPrepErr);
                 }
-            } else if (settings.onQueueCall && !lineUserId) {
-                showToast({ message: 'เรียกคิวสำเร็จ (ไม่พบ LINE ID ของนักเรียน)', type: 'info' });
+            } else if (settings.onQueueCall && !isRealLineUser) {
+                console.info('Skipped LINE notification: user has no valid LINE ID or is in PC test mode');
             }
         } catch (error) {
             console.error("Error calling queue:", error);

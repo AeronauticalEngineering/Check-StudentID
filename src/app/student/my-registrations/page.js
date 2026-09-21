@@ -7,7 +7,6 @@ import useLiff from '../../../hooks/useLiff';
 import { QRCodeSVG } from 'qrcode.react';
 import ProfileSetupForm from '../../../components/student/ProfileSetupForm';
 import Link from 'next/link';
-import StudentDocumentUploadModal from '../../../components/student/StudentDocumentUploadModal';
 
 const QRModal = ({ qrData, onClose }) => {
   if (!qrData) return null;
@@ -101,28 +100,7 @@ const TicketIcon = () => (
   </svg>
 );
 
-const SafeThumbnailImage = ({ src, alt, className = '' }) => {
-  const [hasError, setHasError] = useState(false);
-  if (hasError || !src) {
-    return (
-      <div className={`w-full h-full flex flex-col items-center justify-center bg-slate-100 text-slate-400 ${className}`}>
-        <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-        </svg>
-      </div>
-    );
-  }
-  return (
-    <img
-      src={src}
-      alt={alt}
-      onError={() => setHasError(true)}
-      className={className}
-    />
-  );
-};
-
-const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated, onOpenDocs }) => {
+const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) => {
   const activity = activities[reg.activityId];
   const course = activity ? courses[activity.categoryId] : null;
   if (!activity) return null;
@@ -131,9 +109,6 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated, on
   const isQueueType = activity.type === 'queue' || activity.type === 'interview';
   const isSeatType = activity.type === 'exam' || activity.type === 'graduation';
   const isGeneralEvent = !isQueueType && !isSeatType;
-
-  const attachedDocs = reg.attachedDocuments || {};
-  const totalAttachedDocs = Object.values(attachedDocs).reduce((acc, arr) => acc + (arr?.length || 0), 0);
 
   const isExaminerDone = reg.queueStatus === 'completed' || reg.interviewedAt || (reg.status === 'completed' && !reg.checkedOut && !reg.checkedOutAt);
   const isCheckedOut = reg.checkedOut || reg.checkedOutAt;
@@ -290,43 +265,17 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated, on
               </span>
             )}
           </div>
-
-          {/* แสดงส่วนรูปถ่ายหลักฐานเฉพาะเมื่อกรรมการได้ถ่ายภาพแนบมาแล้วเท่านั้น */}
-          {totalAttachedDocs > 0 && (
-            <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-3 bg-slate-50 -mx-4 sm:-mx-5 -mb-4 sm:-mb-5 p-3.5 rounded-b-2xl border-b border-slate-200">
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="flex flex-col text-left min-w-0">
-                  <span className="text-sm font-semibold text-slate-900 truncate">
-                    รูปถ่ายหลักฐานหน้างาน
-                  </span>
-                  <span className="text-sm text-slate-500 font-normal">
-                    บันทึกแล้ว {totalAttachedDocs} รูป (แนบโดยกรรมการ)
-                  </span>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => onOpenDocs(reg, activity)}
-                className="px-3.5 py-2 bg-[#000946] hover:bg-[#00125e] text-white text-sm font-normal rounded-xl shadow-xs transition-all flex items-center gap-1.5 shrink-0 cursor-pointer active:scale-98"
-              >
-                <span>ดูรูปถ่ายหลักฐาน</span>
-              </button>
-            </div>
-          )}
         </div>
       </div>
     </div>
   );
 };
 
-const CompletedRegistrationCard = ({ reg, activities, courses, onOpenDocs, hasEvaluated, onShowQr }) => {
+const CompletedRegistrationCard = ({ reg, activities, courses, hasEvaluated, onShowQr }) => {
   const activity = activities[reg.activityId];
   const course = activity ? courses[activity.categoryId] : null;
   if (!activity) return null;
   const activityDate = activity.activityDate?.toDate ? activity.activityDate.toDate() : null;
-
-  const attachedDocs = reg.attachedDocuments || {};
-  const totalAttachedDocs = Object.values(attachedDocs).reduce((acc, arr) => acc + (arr?.length || 0), 0);
 
   const isQueueType = activity.type === 'queue' || activity.type === 'interview';
   const isSeatType = activity.type === 'exam' || activity.type === 'graduation';
@@ -409,31 +358,6 @@ const CompletedRegistrationCard = ({ reg, activities, courses, onOpenDocs, hasEv
           )}
         </div>
 
-        {/* Photo Evidence Section (ถ้ามีรูปถ่ายหลักฐาน) */}
-        {totalAttachedDocs > 0 && (
-          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2.5">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-semibold text-slate-900">
-                รูปถ่ายหลักฐานหน้างาน ({totalAttachedDocs} รูป)
-              </span>
-            </div>
-
-            {/* Thumbnail Strip */}
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {Object.values(attachedDocs).flat().slice(0, 5).map((url, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => onOpenDocs(reg, activity)}
-                  className="w-16 h-16 rounded-xl overflow-hidden border border-slate-200 shrink-0 hover:opacity-85 transition-opacity cursor-pointer bg-white"
-                >
-                  <SafeThumbnailImage src={url} alt={`หลักฐาน ${i + 1}`} className="w-full h-full object-cover" />
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Actions: Evaluation & QR code ออก */}
         <div className="pt-1 flex flex-col sm:flex-row gap-2.5">
           {needsEvaluation ? (
@@ -483,7 +407,6 @@ export default function MyRegistrationsPage() {
   const [evaluatedActivities, setEvaluatedActivities] = useState(new Set());
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [visibleQrData, setVisibleQrData] = useState(null);
-  const [selectedRegForDocs, setSelectedRegForDocs] = useState(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -711,7 +634,6 @@ export default function MyRegistrationsPage() {
                   courses={courses}
                   onShowQr={setVisibleQrData}
                   hasEvaluated={evaluatedActivities.has(reg.activityId)}
-                  onOpenDocs={(r, a) => setSelectedRegForDocs({ reg: r, activity: a })}
                 />
               ))}
             </div>
@@ -748,7 +670,6 @@ export default function MyRegistrationsPage() {
                     activities={activities}
                     courses={courses}
                     hasEvaluated={evaluatedActivities.has(reg.activityId)}
-                    onOpenDocs={(r, a) => setSelectedRegForDocs({ reg: r, activity: a })}
                     onShowQr={setVisibleQrData}
                   />
                 ))}
@@ -756,20 +677,6 @@ export default function MyRegistrationsPage() {
             </div>
           )}
         </div>
-      )}
-
-      {/* Student Document Upload / Edit Modal */}
-      {selectedRegForDocs && (
-        <StudentDocumentUploadModal
-          isOpen={Boolean(selectedRegForDocs)}
-          onClose={() => setSelectedRegForDocs(null)}
-          registration={selectedRegForDocs.reg}
-          activity={selectedRegForDocs.activity}
-          studentNationalId={studentDbProfile?.nationalId}
-          onDocumentsUpdated={(updatedReg) => {
-            setRegistrations(prev => prev.map(r => r.id === updatedReg.id ? updatedReg : r));
-          }}
-        />
       )}
     </div>
   );

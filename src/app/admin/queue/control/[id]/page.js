@@ -273,7 +273,8 @@ export default function QueueControlPage({ params }) {
             await batch.commit();
 
             const lineUserId = registrant.lineUserId || await findLineUserId(registrant.nationalId);
-            if (lineUserId) {
+            const isRealLineUser = typeof lineUserId === 'string' && /^[UCR][0-9a-fA-F]{32}$/.test(lineUserId.trim());
+            if (isRealLineUser) {
                 const flexMessage = createQueueCallFlex({
                     activityName: activity?.name || '',
                     channelName: channel.channelName || `ช่องบริการ ${channel.channelNumber}`,
@@ -287,10 +288,10 @@ export default function QueueControlPage({ params }) {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        userId: lineUserId,
+                        userId: lineUserId.trim(),
                         flexMessage
                     })
-                }).catch(e => console.error("Line notification failed:", e));
+                }).catch(e => console.warn("Line notification skipped or failed:", e));
             }
 
         } catch (error) {

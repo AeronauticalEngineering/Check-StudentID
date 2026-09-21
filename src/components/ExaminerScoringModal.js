@@ -59,7 +59,6 @@ export default function ExaminerScoringModal({
   const registrant = registrantProp || candidate;
 
   const [selectedQuota, setSelectedQuota] = useState('');
-  const [isQuotaDropdownOpen, setIsQuotaDropdownOpen] = useState(false);
   const [generalScores, setGeneralScores] = useState({}); // { [criterionId]: score }
   const [quotaScores, setQuotaScores] = useState({}); // { [criterionId]: score }
   const [examinerName, setExaminerName] = useState('');
@@ -89,7 +88,8 @@ export default function ExaminerScoringModal({
     if (existing) {
       setGeneralScores(existing.generalScores || {});
       setQuotaScores(existing.quotaScores || {});
-      setSelectedQuota(existing.quota || registrant.quota || (quotaCriteriaList[0]?.quotaName || ''));
+      const resolvedQuota = registrant.quota || existing?.quota || (quotaCriteriaList.length === 1 ? quotaCriteriaList[0]?.quotaName : '') || '';
+      setSelectedQuota(resolvedQuota);
       
       if (existing.examinerName) {
         setExaminerName(existing.examinerName);
@@ -102,7 +102,8 @@ export default function ExaminerScoringModal({
     } else {
       setGeneralScores({});
       setQuotaScores({});
-      setSelectedQuota(registrant.quota || (quotaCriteriaList[0]?.quotaName || ''));
+      const resolvedQuota = registrant.quota || (quotaCriteriaList.length === 1 ? quotaCriteriaList[0]?.quotaName : '') || '';
+      setSelectedQuota(resolvedQuota);
       setExaminerName(currentActiveExaminer || '');
       setNotes('');
     }
@@ -401,48 +402,11 @@ export default function ExaminerScoringModal({
                   {registrant.course || '-'} {registrant.timeSlot ? `(${registrant.timeSlot})` : ''}
                 </span>
               </div>
-              <div className="relative">
+              <div>
                 <span className="text-sm font-normal text-slate-500 block">ประเภทโควตา</span>
-                {quotaCriteriaList.length > 0 ? (
-                  <div className="relative mt-0.5">
-                    <button
-                      type="button"
-                      onClick={() => setIsQuotaDropdownOpen(!isQuotaDropdownOpen)}
-                      className="w-full px-3 py-1.5 bg-white border border-slate-300 hover:border-slate-400 rounded-xl text-sm font-normal text-slate-800 flex items-center justify-between gap-1 outline-none cursor-pointer"
-                    >
-                      <span className="truncate">{selectedQuota || 'เลือกโควตา'}</span>
-                      <svg className={`w-3.5 h-3.5 text-slate-500 transition-transform ${isQuotaDropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </button>
-
-                    {isQuotaDropdownOpen && (
-                      <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-40 py-1 divide-y divide-slate-50 min-w-[140px]">
-                        {quotaCriteriaList.map((q, idx) => {
-                          const isSelected = selectedQuota === q.quotaName;
-                          return (
-                            <button
-                              key={idx}
-                              type="button"
-                              onClick={() => {
-                                setSelectedQuota(q.quotaName);
-                                setIsQuotaDropdownOpen(false);
-                              }}
-                              className={`w-full px-3 py-2 text-left text-sm flex items-center justify-between cursor-pointer ${
-                                isSelected ? 'bg-blue-50 text-[#000946] font-bold' : 'text-slate-700 hover:bg-slate-50 font-normal'
-                              }`}
-                            >
-                              <span>{q.quotaName}</span>
-                              {isSelected && <span className="text-[#000946] font-bold">✓</span>}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <span className="font-normal text-slate-700 text-sm">{registrant.quota || 'ทั่วไป'}</span>
-                )}
+                <span className="font-normal text-slate-800 truncate block text-sm mt-0.5">
+                  {registrant.quota || selectedQuota || 'ทั่วไป'}
+                </span>
               </div>
             </div>
 
