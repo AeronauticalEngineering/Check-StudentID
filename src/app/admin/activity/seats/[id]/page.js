@@ -108,6 +108,7 @@ export default function SeatAssignmentPage({ params }) {
   const [showSummary, setShowSummary] = useState(false);
   const [editingCounter, setEditingCounter] = useState(null);
   const [scoringRegistrant, setScoringRegistrant] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
   const [confirmModal, setConfirmModal] = useState({
     isOpen: false,
     title: '',
@@ -411,6 +412,51 @@ export default function SeatAssignmentPage({ params }) {
     });
   };
 
+  const handleToggleSelect = (id) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]);
+  };
+
+  const handleToggleSelectAll = () => {
+    if (selectedIds.length === sortedRegistrants.length && sortedRegistrants.length > 0) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(sortedRegistrants.map(r => r.id));
+    }
+  };
+
+  const handleDeleteSelected = () => {
+    if (selectedIds.length === 0) return;
+    const count = selectedIds.length;
+    setConfirmModal({
+      isOpen: true,
+      title: `ยืนยันการลบ ${count} รายการ`,
+      message: `คุณแน่ใจหรือไม่ว่าต้องการลบรายชื่อที่เลือกทั้งหมดจำนวน ${count} รายการ? การกระทำนี้ไม่สามารถกู้คืนได้`,
+      type: 'danger',
+      onConfirm: async () => {
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        setIsLoading(true);
+        setMessage(`กำลังลบ ${count} รายการ...`);
+        try {
+          const chunkSize = 400;
+          for (let i = 0; i < selectedIds.length; i += chunkSize) {
+            const batch = writeBatch(db);
+            const chunk = selectedIds.slice(i, i + chunkSize);
+            chunk.forEach(id => batch.delete(doc(db, 'registrations', id)));
+            await batch.commit();
+          }
+          setMessage(`✅ ลบข้อมูลที่เลือกจำนวน ${count} รายการสำเร็จ`);
+          setSelectedIds([]);
+          fetchData();
+          setTimeout(() => setMessage(''), 3000);
+        } catch (error) {
+          setMessage(`❌ เกิดข้อผิดพลาดในการลบ: ${error.message}`);
+        } finally {
+          setIsLoading(false);
+        }
+      }
+    });
+  };
+
   const handleDeleteAll = () => {
     setConfirmModal({
       isOpen: true,
@@ -441,6 +487,7 @@ export default function SeatAssignmentPage({ params }) {
           }
 
           setMessage('✅ ลบข้อมูลทั้งหมดสำเร็จ');
+          setSelectedIds([]);
           fetchData();
           setTimeout(() => setMessage(''), 3000);
         } catch (error) {
@@ -1262,6 +1309,28 @@ export default function SeatAssignmentPage({ params }) {
           </span>
 
           <div className="flex items-center gap-1.5 flex-wrap">
+            {/* Selected items action banner */}
+            {selectedIds.length > 0 && (
+              <div className="flex items-center gap-1.5 bg-rose-50 border border-rose-200 px-2.5 py-1 rounded">
+                <span className="text-xs font-semibold text-rose-800">
+                  เลือกอยู่ {selectedIds.length} รายการ
+                </span>
+                <button
+                  onClick={handleDeleteSelected}
+                  disabled={isLoading}
+                  className="px-2.5 py-0.5 bg-red-600 hover:bg-red-700 text-white text-xs font-medium rounded transition-colors shadow-xs"
+                >
+                  ลบที่เลือก ({selectedIds.length})
+                </button>
+                <button
+                  onClick={() => setSelectedIds([])}
+                  className="px-2 py-0.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-600 text-xs rounded transition-colors"
+                >
+                  ยกเลิก
+                </button>
+              </div>
+            )}
+
             <button
               onClick={() => setShowSummary(true)}
               className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs rounded transition-colors"
@@ -1309,6 +1378,15 @@ export default function SeatAssignmentPage({ params }) {
           <table className="w-full text-left text-xs border-collapse">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-medium">
               <tr>
+                <th className="px-3 py-2.5 w-10 text-center border-r border-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={sortedRegistrants.length > 0 && selectedIds.length === sortedRegistrants.length}
+                    onChange={handleToggleSelectAll}
+                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                    title="เลือกทั้งหมด"
+                  />
+                </th>
                 <th className="px-3 py-2.5 w-10 text-center border-r border-slate-200">#</th>
                 <th className="px-3 py-2.5 min-w-[160px] border-r border-slate-200 cursor-pointer hover:text-slate-900" onClick={() => handleSort('fullName')}>
                   <div className="flex items-center justify-between">ชื่อ-สกุล <SortIcon columnKey="fullName" /></div>
@@ -1358,8 +1436,26 @@ export default function SeatAssignmentPage({ params }) {
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {sortedRegistrants.map((reg, index) => {
                 const isEditing = isEditMode;
+                const isSelected = selectedIds.includes(reg.id);
                 return (
-                  <tr key={reg.id} className={`transition-colors ${isEditing ? 'bg-amber-50/50' : 'hover:bg-slate-50/70'}`}>
+                  <tr
+                    key={reg.id}
+                    className={`transition-colors ${
+                      isEditing
+                        ? 'bg-amber-50/50'
+                        : isSelected
+                        ? 'bg-indigo-50/40 hover:bg-indigo-50/60'
+                        : 'hover:bg-slate-50/70'
+                    }`}
+                  >
+                    <td className="px-3 py-2 text-center border-r border-slate-100 bg-slate-50/20">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => handleToggleSelect(reg.id)}
+                        className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                      />
+                    </td>
                     <td className="px-3 py-2 text-center text-slate-400 border-r border-slate-100 bg-slate-50/40">{index + 1}</td>
                     <td className="px-3 py-2 font-medium text-slate-900 border-r border-slate-100">
                       {isEditing ? (
@@ -1557,7 +1653,7 @@ export default function SeatAssignmentPage({ params }) {
 
               {sortedRegistrants.length === 0 && (
                 <tr>
-                  <td colSpan={activity?.type === 'queue' ? (activity?.enableScoring ? 10 : 9) : (activity?.enableScoring ? 9 : 8)} className="p-8 text-center text-slate-400 text-xs">
+                  <td colSpan={activity?.type === 'queue' ? (activity?.enableScoring ? 11 : 10) : (activity?.enableScoring ? 10 : 9)} className="p-8 text-center text-slate-400 text-xs">
                     ยังไม่มีผู้ลงทะเบียนในกิจกรรมนี้
                   </td>
                 </tr>

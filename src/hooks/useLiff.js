@@ -1,5 +1,7 @@
 'use client';
 
+import { useContext } from 'react';
+import { StudentContext } from '../context/StudentContext';
 import { useState, useEffect } from 'react';
 import { getStudentProfile } from '../lib/studentService';
 
@@ -13,6 +15,18 @@ const MOCK_PROFILE = {
 };
 
 export default function useLiff() {
+  const context = useContext(StudentContext);
+
+  // If inside StudentProvider, use the shared real-time synchronized context
+  if (context) {
+    return context;
+  }
+
+  // Fallback standalone hook when used outside StudentProvider
+  return useStandaloneLiff();
+}
+
+function useStandaloneLiff() {
   const [liffProfile, setLiffProfile] = useState(null);
   const [studentDbProfile, setStudentDbProfile] = useState(undefined);
   const [isLoading, setIsLoading] = useState(true);

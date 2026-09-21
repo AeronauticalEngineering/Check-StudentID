@@ -10,10 +10,11 @@ import Link from 'next/link';
 import { checkExistingRegistration, registerStudentForActivity } from '../../../lib/registrationService';
 import { useModal } from '../../../context/ModalContext';
 import { createRegistrationSuccessFlex } from '../../../lib/flexMessageTemplates';
+import ProfileSetupForm from '../../../components/student/ProfileSetupForm';
 
 function RegistrationComponent() {
   const { showAlert } = useModal();
-  const { liffProfile, studentDbProfile, isLoading, error } = useLiff();
+  const { liffProfile, studentDbProfile, isLoading, error, setStudentDbProfile } = useLiff();
   const searchParams = useSearchParams();
   const activityIdFromUrl = searchParams.get('activityId');
   const courseFromUrl = searchParams.get('course');
@@ -194,26 +195,8 @@ function RegistrationComponent() {
 
   if (!studentDbProfile) {
     return (
-      <div className="max-w-xl mx-auto p-4 md:p-8 font-sans">
-        <div className="bg-white p-6 md:p-8 rounded-2xl shadow-lg border border-slate-200 text-center space-y-4">
-          <div className="w-14 h-14 bg-amber-50 text-amber-600 rounded-full flex items-center justify-center mx-auto">
-            <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          </div>
-          <h2 className="text-xl font-bold text-slate-900">กรุณาตั้งค่าโปรไฟล์ก่อน</h2>
-          <p className="text-slate-600 text-sm font-normal">
-            ระบบต้องการข้อมูลเลขบัตรประชาชนของคุณก่อนทำการลงทะเบียนกิจกรรม
-          </p>
-          <div className="pt-2">
-            <Link
-              href="/student/my-registrations"
-              className="px-6 py-2.5 bg-[#000946] hover:bg-[#00125e] text-white font-normal rounded-xl shadow-xs transition-colors inline-block text-sm"
-            >
-              ไปที่หน้าตั้งค่าโปรไฟล์
-            </Link>
-          </div>
-        </div>
+      <div className="max-w-md mx-auto p-4 font-sans space-y-4">
+        <ProfileSetupForm liffProfile={liffProfile} onProfileCreated={setStudentDbProfile} />
       </div>
     );
   }

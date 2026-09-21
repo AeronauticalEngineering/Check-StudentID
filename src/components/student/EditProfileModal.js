@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { db } from '../../lib/firebase';
 import { doc, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { checkDuplicateNationalId } from '../../lib/studentService';
 
 export default function EditProfileModal({ currentProfile, liffProfile, onProfileUpdated, onCancel }) {
   const [fullName, setFullName] = useState(currentProfile?.fullName || '');
@@ -16,14 +17,38 @@ export default function EditProfileModal({ currentProfile, liffProfile, onProfil
     setIsSubmitting(true);
     setError('');
     
-    const profileData = { 
-      fullName: fullName.trim(), 
-      studentId: studentId.trim() || null, // ไม่บังคับ
-      nationalId: nationalId.trim(), 
-      updatedAt: serverTimestamp() 
-    };
+    const trimmedFullName = fullName.trim();
+    const trimmedNationalId = nationalId.trim();
+    const trimmedStudentId = studentId.trim() || null;
+
+    if (!trimmedFullName) {
+      setError('กรุณากรอกชื่อ-นามสกุล');
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (trimmedNationalId.length !== 13 || !/^\d{13}$/.test(trimmedNationalId)) {
+      setError('เลขประจำตัวประชาชนต้องเป็นตัวเลข 13 หลัก');
+      setIsSubmitting(false);
+      return;
+    }
 
     try {
+      // ตรวจสอบความซ้ำซ้อนของเลขบัตรประชาชนกับผู้ใช้อื่น
+      const isDuplicate = await checkDuplicateNationalId(trimmedNationalId, liffProfile?.userId);
+      if (isDuplicate) {
+        setError(`เลขประจำตัวประชาชน ${trimmedNationalId} ซ้ำซ้อนกับผู้ใช้อื่นในระบบ`);
+        setIsSubmitting(false);
+        return;
+      }
+
+      const profileData = { 
+        fullName: trimmedFullName, 
+        studentId: trimmedStudentId, 
+        nationalId: trimmedNationalId, 
+        updatedAt: serverTimestamp() 
+      };
+
       const studentDocRef = doc(db, 'studentProfiles', liffProfile.userId);
       
       if (currentProfile) {
@@ -39,7 +64,7 @@ export default function EditProfileModal({ currentProfile, liffProfile, onProfil
       
       onProfileUpdated(profileData);
     } catch (err) {
-      setError("เกิดข้อผิดพลาดในการบันทึกโปรไฟล์");
+      setError(err.message || "เกิดข้อผิดพลาดในการบันทึกโปรไฟล์");
       console.error("Profile update error:", err);
     } finally {
       setIsSubmitting(false);
