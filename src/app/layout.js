@@ -1,4 +1,4 @@
-// src/app/layout.js
+// src/app/layout.js - theme & styles
 import "./globals.css";
 import { ModalProvider } from "../context/ModalContext";
 

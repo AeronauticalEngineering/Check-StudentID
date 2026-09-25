@@ -213,3 +213,77 @@ input, select, textarea {
 [class*="border-[#C59B27]"] {
   border-color: #ff741f !important;
 }
+
+/* =========================================================
+   CUSTOM SCROLLBARS (Modern Dark & Theme-Matched)
+   ========================================================= */
+
+/* Dark Theme Custom Scrollbar (Used in Admin Sidebar, Stations, Modals) */
+.custom-scrollbar::-webkit-scrollbar,
+.admin-sidebar-scroll::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track,
+.admin-sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb,
+.admin-sidebar-scroll::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 9999px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover,
+.admin-sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: #ff741f; /* Aero Orange accent matching theme */
+}
+
+.custom-scrollbar::-webkit-scrollbar-corner,
+.admin-sidebar-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-button,
+.admin-sidebar-scroll::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* Global Modern Sleek Scrollbar Defaults */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.25);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.45);
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* Utility to completely hide scrollbars */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

@@ -246,9 +246,32 @@ export default function AdminSidebar({
         </button>
       </div>
 
+      {/* Direct Scrollbar Styles */}
+      <style>{`
+        .admin-sidebar-scroll::-webkit-scrollbar {
+          width: 5px;
+          height: 5px;
+        }
+        .admin-sidebar-scroll::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .admin-sidebar-scroll::-webkit-scrollbar-thumb {
+          background: #334155;
+          border-radius: 9999px;
+        }
+        .admin-sidebar-scroll::-webkit-scrollbar-thumb:hover {
+          background: #ff741f;
+        }
+        .admin-sidebar-scroll::-webkit-scrollbar-button {
+          display: none;
+          width: 0;
+          height: 0;
+        }
+      `}</style>
+
       {/* Navigation Group Items */}
       <div
-        className={`flex-1 overflow-y-auto py-4 space-y-5 custom-scrollbar ${
+        className={`flex-1 overflow-y-auto py-4 space-y-5 admin-sidebar-scroll ${
           isCollapsed ? 'px-2' : 'px-3'
         }`}
       >
@@ -320,8 +343,8 @@ export default function AdminSidebar({
         ))}
       </div>
 
-      {/* Footer: Student Portal Link, Admin Account & System Status */}
-      <div className="p-3 border-t border-slate-800/80 bg-[#070D1A] space-y-2">
+      {/* Footer: Student Portal Link */}
+      <div className="p-3 border-t border-slate-800/80 bg-[#070D1A]">
         {/* Student Portal Link */}
         <Link
           href="/student/activities"
@@ -352,21 +375,6 @@ export default function AdminSidebar({
             <span className="text-[11px] text-slate-400 font-bold">↗</span>
           )}
         </Link>
-
-        {!isCollapsed && (
-          <div className="px-2 py-0.5 flex items-center justify-between text-[11px] text-slate-400">
-            <span className="flex items-center gap-2 font-medium">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-              </span>
-              ระบบออนไลน์
-            </span>
-            <span className="text-[10px] text-slate-500 font-mono bg-slate-800/60 px-1.5 py-0.5 rounded border border-slate-700/40">
-              v2.0
-            </span>
-          </div>
-        )}
       </div>
 
 

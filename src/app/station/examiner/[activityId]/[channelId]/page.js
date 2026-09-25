@@ -50,6 +50,17 @@ const parseQueueNumber = (cand) => {
   return 999999;
 };
 
+// Check if candidate has been scored by examiner
+export const isCandidateScored = (cand) => {
+  if (!cand) return false;
+  return Boolean(
+    cand.evaluationScore?.isScored ||
+    cand.evaluationScore?.scoredAt ||
+    cand.evaluationScore?.calculatedGeneralTotal !== undefined ||
+    cand.isScored
+  );
+};
+
 // Standard candidate queue status classifier
 const getCandidateQueueStatus = (cand) => {
   if (!cand) return 'waiting';
@@ -343,6 +354,15 @@ export default function StationExaminerPage({ params }) {
   const handleCallQueue = async (candidate) => {
     if (!candidate) return;
 
+    // Guard: Cannot call next candidate if current candidate is not yet scored
+    if (currentCandidate && currentCandidate.id !== candidate.id && !isCandidateScored(currentCandidate)) {
+      const currentName = currentCandidate.fullName || currentCandidate.name || 'ผู้สมัครคนปัจจุบัน';
+      const currentQ = getCandidateQueueDisplay(currentCandidate, courseOptions);
+      setMessage(`⚠️ ยังไม่สามารถเรียกคิวถัดไปได้: กรุณาบันทึกคะแนนของ ${currentName} (${currentQ}) ให้เรียบร้อยก่อน`);
+      setIsScoringOpen(true);
+      return;
+    }
+
     try {
       setCurrentCandidate(candidate);
 
@@ -481,9 +501,18 @@ export default function StationExaminerPage({ params }) {
     }
   };
 
-  // Complete Interview without scoring or after scoring
+  // Complete Interview after scoring
   const handleCompleteInterview = async () => {
     if (!currentCandidate) return;
+
+    // Guard: Must give score before completing interview
+    if (!isCandidateScored(currentCandidate)) {
+      const currentName = currentCandidate.fullName || currentCandidate.name || 'ผู้สมัครคนปัจจุบัน';
+      const currentQ = getCandidateQueueDisplay(currentCandidate, courseOptions);
+      setMessage(`⚠️ ยังไม่ได้บันทึกคะแนน: กรุณากรอกคะแนนและผลประเมินของ ${currentName} (${currentQ}) ก่อนเสร็จสิ้นการสัมภาษณ์`);
+      setIsScoringOpen(true);
+      return;
+    }
 
     try {
       await updateDoc(doc(db, 'registrations', currentCandidate.id), {
@@ -617,15 +646,31 @@ export default function StationExaminerPage({ params }) {
         {/* Next Candidate Call Button */}
         <div className="flex items-center gap-2">
           {nextWaitingCandidate && (
-            <button
-              onClick={() => handleCallQueue(nextWaitingCandidate)}
-              className="px-4 py-2.5 bg-[#000946] hover:bg-[#000946]/90 text-white text-sm font-normal rounded-xl shadow-xs active:scale-95 transition-all flex items-center gap-2 cursor-pointer"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" />
-              </svg>
-              <span>เรียกคิวถัดไป ({getCandidateQueueDisplay(nextWaitingCandidate, courseOptions)})</span>
-            </button>
+            currentCandidate && !isCandidateScored(currentCandidate) ? (
+              <button
+                onClick={() => {
+                  setMessage(`⚠️ กรุณาบันทึกคะแนนของ ${currentCandidate.fullName || currentCandidate.name || 'ผู้สมัครคนปัจจุบัน'} (${getCandidateQueueDisplay(currentCandidate, courseOptions)}) ก่อนเรียกคิวถัดไป`);
+                  setIsScoringOpen(true);
+                }}
+                className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-normal rounded-xl shadow-xs active:scale-95 transition-all flex items-center gap-2 cursor-pointer animate-pulse"
+                title={`ยังไม่ได้ให้คะแนนคิว ${getCandidateQueueDisplay(currentCandidate, courseOptions)} กรุณาให้คะแนนก่อนเรียกคิวถัดไป`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <span>กรุณาให้คะแนนคนปัจจุบันก่อน ({getCandidateQueueDisplay(currentCandidate, courseOptions)})</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => handleCallQueue(nextWaitingCandidate)}
+                className="px-4 py-2.5 bg-[#000946] hover:bg-[#000946]/90 text-white text-sm font-normal rounded-xl shadow-xs active:scale-95 transition-all flex items-center gap-2 cursor-pointer"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" />
+                </svg>
+                <span>เรียกคิวถัดไป ({getCandidateQueueDisplay(nextWaitingCandidate, courseOptions)})</span>
+              </button>
+            )
           )}
         </div>
       </header>
@@ -747,6 +792,18 @@ export default function StationExaminerPage({ params }) {
                       }`}>
                         {getCandidateQueueStatus(currentCandidate) === 'completed' ? 'เสร็จสิ้นแล้ว' : 'กำลังสัมภาษณ์'}
                       </span>
+                      {isCandidateScored(currentCandidate) ? (
+                        <span className="text-sm font-normal px-2.5 py-0.5 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200 flex items-center gap-1 font-medium">
+                          <span>✓ ให้คะแนนแล้ว</span>
+                          {currentCandidate.evaluationScore?.finalTotalScore !== undefined && (
+                            <span className="font-bold">({currentCandidate.evaluationScore.finalTotalScore} คะแนน)</span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-sm font-normal px-2.5 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-300 animate-pulse flex items-center gap-1 font-medium">
+                          <span>⚠️ ยังไม่ได้ให้คะแนน</span>
+                        </span>
+                      )}
                       <span className="text-sm font-normal text-slate-500">{currentCandidate.nationalId}</span>
                     </div>
                     <h2 className="text-lg font-bold text-slate-900 mt-1">
@@ -841,15 +898,19 @@ export default function StationExaminerPage({ params }) {
               <div className="pt-3 border-t border-slate-100 flex flex-wrap gap-2.5">
                 <button
                   onClick={() => setIsScoringOpen(true)}
-                  className="flex-1 py-3 px-4 bg-[#000946] hover:bg-[#000946]/90 text-white text-sm font-normal rounded-xl shadow-xs active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  className={`flex-1 py-3 px-4 text-white text-sm font-normal rounded-xl shadow-xs active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                    isCandidateScored(currentCandidate)
+                      ? 'bg-[#000946] hover:bg-[#000946]/90'
+                      : 'bg-amber-600 hover:bg-amber-700 font-medium'
+                  }`}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                   </svg>
                   <span>
-                    {getCandidateQueueStatus(currentCandidate) === 'completed'
+                    {isCandidateScored(currentCandidate)
                       ? 'แก้ไขคะแนนและผลประเมินสัมภาษณ์'
-                      : 'กรอกคะแนนและผลประเมินสัมภาษณ์'}
+                      : '⭐ กรอกคะแนนและผลประเมินสัมภาษณ์ (จำเป็นก่อนเรียกคิวถัดไป)'}
                   </span>
                 </button>
 
@@ -863,7 +924,12 @@ export default function StationExaminerPage({ params }) {
                 ) : (
                   <button
                     onClick={handleCompleteInterview}
-                    className="py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900 border border-slate-200 text-sm font-normal rounded-xl transition-colors cursor-pointer"
+                    className={`py-3 px-4 border text-sm font-normal rounded-xl transition-colors cursor-pointer ${
+                      isCandidateScored(currentCandidate)
+                        ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900 border-slate-200'
+                        : 'bg-slate-100 text-slate-400 border-slate-200 hover:bg-slate-200'
+                    }`}
+                    title={!isCandidateScored(currentCandidate) ? 'กรุณาบันทึกคะแนนก่อนเสร็จสิ้นการสัมภาษณ์' : undefined}
                   >
                     สัมภาษณ์เสร็จสิ้น (คนถัดไป)
                   </button>
@@ -1007,6 +1073,11 @@ export default function StationExaminerPage({ params }) {
                           ? 'bg-[#000946] text-white'
                           : 'bg-white hover:bg-[#000946] hover:text-white text-slate-700 border border-slate-300'
                       }`}
+                      title={
+                        !isCompleted && !isCurrent && currentCandidate && !isCandidateScored(currentCandidate)
+                          ? `กรุณาให้คะแนน ${currentCandidate.fullName || 'ผู้สมัครคนปัจจุบัน'} ก่อนเรียกคิวใหม่`
+                          : undefined
+                      }
                     >
                       {isCompleted ? 'แก้ไขข้อมูล' : isCurrent ? 'กำลังตรวจ' : 'เรียกคิว'}
                     </button>
