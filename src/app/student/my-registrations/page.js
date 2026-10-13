@@ -120,13 +120,22 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
     if (isExaminerDone) {
       return <><CheckmarkIcon className="text-blue-600 shrink-0" /> <span className="text-blue-600 font-normal text-sm">สัมภาษณ์เสร็จสิ้น (รอสแกนออก)</span></>;
     }
-    switch (reg.status) {
-      case 'checked-in': return <><CheckmarkIcon className="text-emerald-600 shrink-0" /> <span className="text-emerald-600 font-normal text-sm">เช็คอินแล้ว</span></>;
-      case 'interviewing': return <><CheckmarkIcon className="text-indigo-600 shrink-0" /> <span className="text-indigo-600 font-normal text-sm">{isQueueType ? 'เข้าสอบสัมภาษณ์' : 'เข้าร่วมกิจกรรม'}</span></>;
-      case 'completed': return <><CheckmarkIcon className="text-blue-600 shrink-0" /> <span className="text-blue-600 font-normal text-sm">จบกิจกรรมแล้ว</span></>;
-      default: return <><CheckmarkIcon className="text-amber-600 shrink-0" /> <span className="text-amber-600 font-normal text-sm">ลงทะเบียนแล้ว</span></>;
+    const rawStatus = (reg.status || '').trim();
+    if (rawStatus === 'checked-in' || rawStatus === 'เช็คอินแล้ว') {
+      return <><CheckmarkIcon className="text-emerald-600 shrink-0" /> <span className="text-emerald-600 font-normal text-sm">เช็คอินแล้ว</span></>;
     }
+    if (rawStatus === 'interviewing' || rawStatus === 'สอบสัมภาษณ์') {
+      return <><CheckmarkIcon className="text-indigo-600 shrink-0" /> <span className="text-indigo-600 font-normal text-sm">{isQueueType ? 'เข้าสอบสัมภาษณ์' : 'เข้าร่วมกิจกรรม'}</span></>;
+    }
+    if (rawStatus === 'completed' || rawStatus === 'สำเร็จแล้ว' || rawStatus === 'จบกิจกรรมแล้ว') {
+      return <><CheckmarkIcon className="text-blue-600 shrink-0" /> <span className="text-blue-600 font-normal text-sm">จบกิจกรรมแล้ว</span></>;
+    }
+    return <><CheckmarkIcon className="text-amber-600 shrink-0" /> <span className="text-amber-600 font-normal text-sm">ลงทะเบียนแล้ว</span></>;
   };
+
+  const isRegisteredStatus = !reg.status || reg.status === 'registered' || reg.status === 'ลงทะเบียนแล้ว';
+  const isCheckedInStatus = reg.status === 'checked-in' || reg.status === 'เช็คอินแล้ว';
+  const isInterviewingStatus = reg.status === 'interviewing' || reg.status === 'สอบสัมภาษณ์';
 
   return (
     <div className="bg-white rounded-2xl shadow-sm flex flex-col overflow-hidden border border-slate-200 font-sans">
@@ -193,8 +202,8 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
           <div className="flex justify-between items-start gap-2">
             <div className="flex items-center gap-1.5 text-sm min-w-0">{getStatusDisplay()}</div>
             <div className="flex flex-col items-end gap-1.5 shrink-0">
-              {/* ปุ่ม QR เช็คอิน - แสดงเฉพาะสถานะ registered */}
-              {reg.status === 'registered' && (
+              {/* ปุ่ม QR เช็คอิน - แสดงเฉพาะสถานะ registered หรือ ลงทะเบียนแล้ว */}
+              {isRegisteredStatus && (
                 <button
                   type="button"
                   onClick={() => onShowQr({
@@ -209,14 +218,14 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
               )}
 
               {/* ข้อความ รอเรียกคิว - แสดงเมื่อ checked-in + กิจกรรมคิว และยังไม่ถูกเรียก */}
-              {reg.status === 'checked-in' && isQueueType && !isExaminerDone && (
+              {isCheckedInStatus && isQueueType && !isExaminerDone && (
                 <span className="px-3.5 py-1.5 bg-amber-50 text-amber-800 border border-amber-200 text-sm font-normal rounded-full whitespace-nowrap">
                   รอเรียกคิว
                 </span>
               )}
 
               {/* สำหรับผู้ที่พร้อมจบกิจกรรม (สัมภาษณ์เสร็จ / กิจกรรมทั่วไป) */}
-              {(isExaminerDone || reg.status === 'interviewing' || (reg.status === 'checked-in' && !isQueueType)) && !isCheckedOut && (
+              {(isExaminerDone || isInterviewingStatus || (isCheckedInStatus && !isQueueType)) && !isCheckedOut && (
                 <>
                   {/* หากยังไม่ได้ประเมิน: แสดงเฉพาะปุ่มประเมินกิจกรรมก่อน */}
                   {!hasEvaluated && (activity.enableEvaluation === true || activity.enableEvaluation === undefined) ? (

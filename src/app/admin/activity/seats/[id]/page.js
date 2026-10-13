@@ -700,6 +700,42 @@ export default function SeatAssignmentPage({ params }) {
           'สถานะ': 'status'
         };
 
+        const normalizeImportStatus = (rawStatus) => {
+          if (!rawStatus) return 'registered';
+          const s = String(rawStatus).trim().toLowerCase();
+          if (s === 'registered' || s === 'ลงทะเบียนแล้ว' || s === 'รอเช็คอิน' || s === 'ยังไม่เช็คอิน') {
+            return 'registered';
+          }
+          if (s === 'checked-in' || s === 'เช็คอินแล้ว' || s === 'เช็คอิน') {
+            return 'checked-in';
+          }
+          if (s === 'calling' || s === 'กำลังเรียก') {
+            return 'calling';
+          }
+          if (s === 'called' || s === 'เรียกคิวแล้ว') {
+            return 'called';
+          }
+          if (s === 'interviewing' || s === 'serving' || s === 'สอบสัมภาษณ์') {
+            return 'interviewing';
+          }
+          if (s === 'completed' || s === 'สำเร็จแล้ว' || s === 'จบกิจกรรมแล้ว') {
+            return 'completed';
+          }
+          if (s === 'waitlisted' || s === 'รอคิว') {
+            return 'waitlisted';
+          }
+          if (s === 'cancelled' || s === 'ยกเลิกแล้ว') {
+            return 'cancelled';
+          }
+          if (s === 'absent' || s === 'ไม่มารายงานตัว') {
+            return 'absent';
+          }
+          if (s === 'skipped' || s === 'ข้ามคิว') {
+            return 'skipped';
+          }
+          return s;
+        };
+
         const mappedData = results.data.map(row => {
           const newRow = {};
           Object.keys(row).forEach(key => {
@@ -769,7 +805,7 @@ export default function SeatAssignmentPage({ params }) {
                 quota: reg.quota || null,
                 seatNumber: reg.seatNumber || null,
                 timeSlot: reg.timeSlot || null,
-                status: reg.status || 'registered',
+                status: normalizeImportStatus(reg.status),
                 registeredBy: 'admin_csv_import',
                 registeredAt: serverTimestamp(),
                 lineUserId: lineUserIdToUse,
