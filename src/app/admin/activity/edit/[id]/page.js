@@ -71,6 +71,13 @@ export default function EditActivityPage({ params }) {
   // Registration State
   const [isRegistrationOpen, setIsRegistrationOpen] = useState(true);
 
+  // Post-Activity Actions (Certificate & Photo) State
+  const [enableCertificate, setEnableCertificate] = useState(true);
+  const [certificateButtonLabel, setCertificateButtonLabel] = useState('Certificate');
+  const [enablePhoto, setEnablePhoto] = useState(true);
+  const [photoButtonLabel, setPhotoButtonLabel] = useState('Photo');
+  const [photoUrl, setPhotoUrl] = useState('');
+
   // Evaluation helpers
   const handleAddQuestion = () => {
     setEvaluationQuestions([
@@ -271,6 +278,22 @@ export default function EditActivityPage({ params }) {
           if (data.enableEvaluation !== undefined) {
             setEnableEvaluation(data.enableEvaluation);
           }
+
+          if (data.enableCertificate !== undefined) {
+            setEnableCertificate(data.enableCertificate);
+          }
+          if (data.certificateButtonLabel !== undefined) {
+            setCertificateButtonLabel(data.certificateButtonLabel);
+          }
+          if (data.enablePhoto !== undefined) {
+            setEnablePhoto(data.enablePhoto);
+          }
+          if (data.photoButtonLabel !== undefined) {
+            setPhotoButtonLabel(data.photoButtonLabel);
+          }
+          if (data.photoUrl !== undefined) {
+            setPhotoUrl(data.photoUrl);
+          }
           if (data.evaluationQuestions) {
             const sanitizedQuestions = data.evaluationQuestions.map(q => {
               if ((q.type === 'radio' || q.type === 'checkbox') && (!Array.isArray(q.options) || q.options.length === 0)) {
@@ -340,7 +363,12 @@ export default function EditActivityPage({ params }) {
           quotaCriteriaList,
           requiredDocuments
         } : null,
-        isRegistrationOpen
+        isRegistrationOpen,
+        enableCertificate,
+        certificateButtonLabel: certificateButtonLabel.trim() || 'Certificate',
+        enablePhoto,
+        photoButtonLabel: photoButtonLabel.trim() || 'Photo',
+        photoUrl: photoUrl.trim() || ''
       });
 
       showToast({ message: 'อัปเดตกิจกรรมเรียบร้อยแล้ว!', type: 'success' });
@@ -862,6 +890,105 @@ export default function EditActivityPage({ params }) {
                 </div>
               </div>
             )}
+
+            {/* POST-ACTIVITY BUTTONS BUILDER (Certificate & Photo) */}
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+              <div className="border-b border-slate-200 pb-2">
+                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                  <span>🎖️</span>
+                  <span>ปุ่มกดหลังจบกิจกรรม (Certificate & Photo)</span>
+                </h3>
+                <p className="text-sm text-slate-500 font-normal mt-0.5">
+                  แสดงปุ่มหลังจบกิจกรรมและทำแบบประเมินเรียบร้อยแล้ว สามารถเปลี่ยนชื่อปุ่มตามชื่องานได้
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                {/* 1. Certificate Button Configuration */}
+                <div className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
+                      <span>📜</span>
+                      <span>ปุ่ม Certificate (เกียรติบัตร)</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setEnableCertificate(!enableCertificate)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-normal border transition-colors shrink-0 whitespace-nowrap cursor-pointer ${
+                        enableCertificate
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                          : 'bg-white text-slate-600 border-slate-300'
+                      }`}
+                    >
+                      {enableCertificate ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}
+                    </button>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-slate-600 font-normal mb-1">
+                      ชื่อปุ่ม (เปลี่ยนได้ตามต้องการ)
+                    </label>
+                    <input
+                      type="text"
+                      value={certificateButtonLabel}
+                      onChange={(e) => setCertificateButtonLabel(e.target.value)}
+                      placeholder="Certificate (เช่น วุฒิบัตร, ใบประกาศ)"
+                      className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-normal text-slate-800 outline-none focus:border-[#000946]"
+                    />
+                  </div>
+                  <div className="text-xs text-slate-500 bg-slate-50 p-2.5 rounded-lg border border-slate-100 font-normal leading-relaxed">
+                    💡 <span className="font-semibold text-slate-700">ลิงก์รายบุคคล:</span> แอดมินสามารถแนบลิงก์เกียรติบัตรของผู้สมัครแต่ละคนได้ในหน้าจัดการผู้ลงทะเบียน หรือนำเข้าจากไฟล์ CSV
+                  </div>
+                </div>
+
+                {/* 2. Photo Button Configuration */}
+                <div className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
+                      <span>📷</span>
+                      <span>ปุ่ม Photo (รูปภาพกิจกรรม)</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setEnablePhoto(!enablePhoto)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-normal border transition-colors shrink-0 whitespace-nowrap cursor-pointer ${
+                        enablePhoto
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                          : 'bg-white text-slate-600 border-slate-300'
+                      }`}
+                    >
+                      {enablePhoto ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}
+                    </button>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-slate-600 font-normal mb-1">
+                      ชื่อปุ่ม (เปลี่ยนได้ตามต้องการ)
+                    </label>
+                    <input
+                      type="text"
+                      value={photoButtonLabel}
+                      onChange={(e) => setPhotoButtonLabel(e.target.value)}
+                      placeholder="Photo (เช่น รูปภาพกิจกรรม, บรรยากาศงาน)"
+                      className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-normal text-slate-800 outline-none focus:border-[#000946]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-slate-600 font-normal mb-1">
+                      ลิงก์อัลบั้มรูปภาพกิจกรรม (ใช้ลิงก์เดียวกันทั้งโครงการ)
+                    </label>
+                    <input
+                      type="url"
+                      value={photoUrl}
+                      onChange={(e) => setPhotoUrl(e.target.value)}
+                      placeholder="https://drive.google.com/... หรือ Google Photos"
+                      className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-normal text-slate-800 outline-none focus:border-[#000946]"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
           {message && (

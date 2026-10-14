@@ -383,5 +383,37 @@ AERO Student is an end-to-end Student Activity Registration, Seating Allocation,
     - แสดงป้ายกำกับสถานะชัดเจนบนการ์ดผู้สมัคร: `⚠️ ยังไม่ได้ให้คะแนน` (สีส้มกะพริบ) หรือ `✓ ให้คะแนนแล้ว (${score} คะแนน)` (สีเขียว)
     - ปุ่มบันทึกคะแนนไฮไลต์เป็นสีส้มชัดเจน `⭐ กรอกคะแนนและผลประเมินสัมภาษณ์ (จำเป็นก่อนเรียกคิวถัดไป)`
 
+### 23. Post-Activity Action Buttons: Certificate (Individual) & Photo (Project-wide)
+- **Problem & Requirement**:
+  - เมื่อจบกิจกรรม และผู้เข้าร่วมทำแบบประเมินเรียบร้อยแล้ว (ใต้ป้ายสีเขียว "✓ ทำแบบประเมินเรียบร้อยแล้ว" ในหน้ารายการลงทะเบียนของฉัน `/student/my-registrations`)
+  - ต้องการให้มีปุ่มเพิ่มขึ้นมา 2 ปุ่ม:
+    1. **Certificate (เกียรติบัตร)**: แนบลิงก์รายบุคคล (`certificateUrl` ในเอกสาร `registrations`)
+    2. **Photo (รูปภาพกิจกรรม)**: ใช้ลิงก์เดียวกันทั้งโครงการ/กิจกรรม (`photoUrl` ในเอกสาร `activities`)
+    3. **Customizable Button Titles**: ชื่อปุ่มของทั้ง 2 ปุ่มสามารถปรับเปลี่ยนได้ตามความเหมาะสมของแต่ละงาน เช่น เปลี่ยนเป็น "ใบประกาศ", "วุฒิบัตร", "รูปถ่ายกิจกรรม", "บรรยากาศงาน" (`certificateButtonLabel`, `photoButtonLabel`)
+- **System Architecture & Data Modeling**:
+  - **Activity Document (`activities/{id}`)**:
+    - `enableCertificate`: boolean (เปิด/ปิดปุ่ม Certificate)
+    - `certificateButtonLabel`: string (ชื่อปุ่ม Certificate เช่น "Certificate", "เกียรติบัตร")
+    - `enablePhoto`: boolean (เปิด/ปิดปุ่ม Photo)
+    - `photoButtonLabel`: string (ชื่อปุ่ม Photo เช่น "Photo", "รูปภาพกิจกรรม")
+    - `photoUrl`: string (URL ลิงก์อัลบั้มภาพกิจกรรม เช่น Google Drive, Google Photos, OneDrive)
+  - **Registration Document (`registrations/{id}`)**:
+    - `certificateUrl`: string (ลิงก์ไฟล์เกียรติบัตรเฉพาะบุคคล เช่น Google Drive PDF / Cloud link)
+- **Student Portal UX (`/student/my-registrations`)**:
+  - แสดงปุ่ม 2 ปุ่มใต้ป้ายเขียว "✓ ทำแบบประเมินเรียบร้อยแล้ว" (หรือเมื่อประเมินเสร็จสิ้น):
+    - ปุ่ม **Certificate**: คลิกเพื่อเปิดลิงก์เกียรติบัตรรายบุคคลในแท็บใหม่ หากยังไม่มีการแนบลิงก์ จะแสดงข้อความแจ้งเตือนอย่างสุภาพ
+    - ปุ่ม **Photo**: คลิกเพื่อเปิดอัลบั้มรูปภาพกิจกรรมทั้งโครงการในแท็บใหม่
+- **Admin Management Operations**:
+  - **Activity Settings (`/admin/activity/add` & `/admin/activity/edit/[id]`)**: แผงตั้งค่าปุ่มหลังจบกิจกรรม สามารถกำหนดชื่อปุ่ม Certificate, ชื่อปุ่ม Photo, และใส่ลิงก์อัลบั้มรูปกิจกรรมส่วนกลาง
+  - **Individual Certificate Assignment (`/admin/activity/seats/[id]`)**:
+    - นำเข้า / ส่งออก CSV: รองรับคอลัมน์ `certificateUrl` / `ลิงก์เกียรติบัตร` เพื่ออัปโหลดลิงก์เกียรติบัตรรายบุคคลจำนวนมากพร้อมกันได้ในไฟล์เดียว
+    - จัดการในตาราง: มีคอลัมน์เกียรติบัตร พร้อมปุ่มลัด `+ แนบลิงก์` / `✎ แก้ไข` เปิดหน้าต่างด่วนให้แอดมินวางลิงก์ได้ทันทีรายคน และรองรับการแก้ไขผ่านโหมดแก้ตาราง
+
+### 24. Admin Root Redirection Standard (`/admin` -> `/admin/login`)
+- **Requirement & Architecture**:
+  - เมื่อผู้ใช้งานหรือผู้ดูแลระบบพิมพ์ URL หรือเข้าสู่เส้นทาง `/admin` ระบบจะทำการ Redirect ส่งต่อไปยังหน้าเข้าสู่ระบบ `/admin/login` โดยอัตโนมัติทันที
+  - สร้างไฟล์ `src/app/admin/page.js` ใช้คำสั่ง `redirect('/admin/login')` ของ Next.js App Router เพื่อทำการ Redirect ทันทีตั้งแต่ฝั่ง Server (Zero-Flicker)
+  - หากผู้ดูแลระบบมีเซสชันการเข้าสู่ระบบอยู่แล้ว (`currentUser`) ระบบในหน้า `/admin/login` จะทำการนำทางต่อไปยังหน้าหลักของแอดมิน (`/admin/activity`) โดยอัตโนมัติ
+
 
 

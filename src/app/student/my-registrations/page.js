@@ -7,6 +7,7 @@ import useLiff from '../../../hooks/useLiff';
 import { QRCodeSVG } from 'qrcode.react';
 import ProfileSetupForm from '../../../components/student/ProfileSetupForm';
 import Link from 'next/link';
+import { useModal } from '../../../context/ModalContext';
 
 const QRModal = ({ qrData, onClose }) => {
   if (!qrData) return null;
@@ -281,6 +282,7 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
 };
 
 const CompletedRegistrationCard = ({ reg, activities, courses, hasEvaluated, onShowQr }) => {
+  const { showAlert } = useModal();
   const activity = activities[reg.activityId];
   const course = activity ? courses[activity.categoryId] : null;
   if (!activity) return null;
@@ -402,6 +404,77 @@ const CompletedRegistrationCard = ({ reg, activities, courses, hasEvaluated, onS
             </button>
           )}
         </div>
+
+        {/* Post-Activity Buttons (Certificate & Photo) - แสดงใต้ป้ายเขียวทำแบบประเมินเรียบร้อยแล้ว */}
+        {(!needsEvaluation || activity.enableEvaluation === false) && (activity.enableCertificate !== false || activity.enablePhoto !== false) && (
+          <div className="pt-0.5 grid grid-cols-2 gap-2.5">
+            {/* 1. Certificate Button (แนบ link รายบุคคล) */}
+            {activity.enableCertificate !== false && (
+              reg.certificateUrl ? (
+                <a
+                  href={reg.certificateUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="py-2.5 px-3 bg-[#000946] hover:bg-[#00125e] text-white text-sm font-normal rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 active:scale-98 text-center"
+                >
+                  <svg className="w-4 h-4 shrink-0 text-amber-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+                  </svg>
+                  <span className="truncate">{activity.certificateButtonLabel || 'Certificate'}</span>
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => showAlert({
+                    title: 'ยังไม่มีลิงก์เกียรติบัตร',
+                    message: 'ผู้จัดกิจกรรมยังไม่ได้แนบลิงก์เกียรติบัตรสำหรับคุณในขณะนี้ หรืออยู่ระหว่างการจัดทำ กรุณาตรวจสอบอีกครั้งในภายหลัง',
+                    type: 'info'
+                  })}
+                  className="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-normal rounded-xl transition-all border border-slate-200 flex items-center justify-center gap-1.5 active:scale-98 text-center cursor-pointer"
+                >
+                  <svg className="w-4 h-4 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+                  </svg>
+                  <span className="truncate">{activity.certificateButtonLabel || 'Certificate'}</span>
+                </button>
+              )
+            )}
+
+            {/* 2. Photo Button (ใช้ link เดียวกันทั้งโครงการ) */}
+            {activity.enablePhoto !== false && (
+              activity.photoUrl ? (
+                <a
+                  href={activity.photoUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="py-2.5 px-3 bg-[#ff741f] hover:bg-[#e55e0b] text-white text-sm font-normal rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 active:scale-98 text-center"
+                >
+                  <svg className="w-4 h-4 shrink-0 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  <span className="truncate">{activity.photoButtonLabel || 'Photo'}</span>
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => showAlert({
+                    title: 'ยังไม่มีลิงก์รูปภาพ',
+                    message: 'ผู้จัดกิจกรรมยังไม่ได้แนบลิงก์รูปภาพสำหรับกิจกรรมนี้ กรุณาตรวจสอบอีกครั้งในภายหลัง',
+                    type: 'info'
+                  })}
+                  className="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-normal rounded-xl transition-all border border-slate-200 flex items-center justify-center gap-1.5 active:scale-98 text-center cursor-pointer"
+                >
+                  <svg className="w-4 h-4 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  <span className="truncate">{activity.photoButtonLabel || 'Photo'}</span>
+                </button>
+              )
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -560,7 +560,7 @@ export default function StudentDetailPage({ params }) {
                           {reg.quota && <span className="font-semibold text-indigo-700">• โควตา: {reg.quota}</span>}
                         </div>
                         {/* Score & Document Badges */}
-                        {(evalScore.isScored || totalAttachedFiles > 0) && (
+                        {(evalScore.isScored || totalAttachedFiles > 0 || reg.certificateUrl) && (
                           <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
                             {evalScore.isScored && (
                               <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -571,6 +571,18 @@ export default function StudentDetailPage({ params }) {
                               <span className="px-2 py-0.5 rounded text-[11px] bg-indigo-50 text-indigo-700 border border-indigo-200">
                                 📷 รูปถ่ายหลักฐาน {totalAttachedFiles} รูป
                               </span>
+                            )}
+                            {reg.certificateUrl && (
+                              <a
+                                href={reg.certificateUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-2 py-0.5 rounded text-[11px] bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 flex items-center gap-1 transition-colors"
+                                title="เปิดดูเกียรติบัตร"
+                              >
+                                <span>📜</span>
+                                <span>เกียรติบัตร</span>
+                              </a>
                             )}
                           </div>
                         )}
@@ -614,17 +626,34 @@ export default function StudentDetailPage({ params }) {
                         <div className="flex items-center justify-center gap-1">
                           <button
                             onClick={() => {
+                              const newUrl = prompt('ระบุ URL ลิงก์เกียรติบัตรสำหรับกิจกรรมนี้:', reg.certificateUrl || '');
+                              if (newUrl !== null) {
+                                updateDoc(doc(db, 'registrations', reg.id), {
+                                  certificateUrl: newUrl.trim() || null
+                                }).then(() => {
+                                  showToast({ message: 'บันทึกลิงก์เกียรติบัตรเรียบร้อยแล้ว', type: 'success' });
+                                  fetchStudentData();
+                                });
+                              }
+                            }}
+                            className="p-1 text-slate-600 hover:bg-slate-100 rounded border border-transparent hover:border-slate-200 transition-colors cursor-pointer"
+                            title="แนบ/แก้ไข ลิงก์เกียรติบัตร"
+                          >
+                            📜
+                          </button>
+                          <button
+                            onClick={() => {
                               setScoringRegistrant(reg);
                               setActiveActivityForModal(activity || { id: reg.activityId, name: 'กิจกรรม' });
                             }}
-                            className="p-1 text-indigo-600 hover:bg-indigo-50 rounded border border-transparent hover:border-indigo-200 transition-colors"
+                            className="p-1 text-indigo-600 hover:bg-indigo-50 rounded border border-transparent hover:border-indigo-200 transition-colors cursor-pointer"
                             title="ดูคะแนน/รูปถ่ายหลักฐาน"
                           >
                             📝
                           </button>
                           <button
                             onClick={() => handleDeleteRegistration(reg.id)}
-                            className="p-1 text-red-600 hover:bg-red-50 rounded border border-transparent hover:border-red-200 transition-colors"
+                            className="p-1 text-red-600 hover:bg-red-50 rounded border border-transparent hover:border-red-200 transition-colors cursor-pointer"
                             title="ลบรายการนี้"
                           >
                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
