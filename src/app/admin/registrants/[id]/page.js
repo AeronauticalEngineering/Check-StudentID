@@ -54,6 +54,7 @@ export default function StudentDetailPage({ params }) {
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [profileForm, setProfileForm] = useState({
     fullName: '',
+    fullNameEn: '',
     studentId: '',
     nationalId: '',
     lineUserId: ''
@@ -120,6 +121,7 @@ export default function StudentDetailPage({ params }) {
         setStudentInfo(primaryRecord);
         setProfileForm({
           fullName: primaryRecord.fullName || '',
+          fullNameEn: primaryRecord.fullNameEn || '',
           studentId: primaryRecord.studentId || '',
           nationalId: primaryRecord.nationalId || '',
           lineUserId: primaryRecord.lineUserId || ''
@@ -152,6 +154,7 @@ export default function StudentDetailPage({ params }) {
     try {
       const updatedNationalId = profileForm.nationalId.trim();
       const updatedFullName = profileForm.fullName.trim();
+      const updatedFullNameEn = profileForm.fullNameEn ? profileForm.fullNameEn.trim().toUpperCase() : null;
       const updatedStudentId = profileForm.studentId.trim() || null;
       const updatedLineUserId = profileForm.lineUserId.trim() || null;
 
@@ -159,6 +162,7 @@ export default function StudentDetailPage({ params }) {
       for (const reg of studentRegistrations) {
         await updateDoc(doc(db, 'registrations', reg.id), {
           fullName: updatedFullName,
+          fullNameEn: updatedFullNameEn,
           nationalId: updatedNationalId,
           studentId: updatedStudentId,
           lineUserId: updatedLineUserId
@@ -170,6 +174,7 @@ export default function StudentDetailPage({ params }) {
         await upsertStudentProfile({
           nationalId: updatedNationalId,
           fullName: updatedFullName,
+          fullNameEn: updatedFullNameEn,
           studentId: updatedStudentId,
           lineUserId: updatedLineUserId,
           source: 'admin_edit_page'
@@ -388,8 +393,12 @@ export default function StudentDetailPage({ params }) {
           {!isEditingProfile ? (
             <div className="space-y-2 text-xs">
               <div className="flex justify-between py-1 border-b border-slate-50">
-                <span className="text-slate-500">ชื่อ-สกุล:</span>
+                <span className="text-slate-500">ชื่อ-สกุล (ไทย):</span>
                 <span className="font-semibold text-slate-900">{studentInfo?.fullName || '-'}</span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-slate-50">
+                <span className="text-slate-500">NAME SURNAME (ENG):</span>
+                <span className="font-semibold text-slate-900 uppercase font-mono">{studentInfo?.fullNameEn || '-'}</span>
               </div>
               <div className="flex justify-between py-1 border-b border-slate-50">
                 <span className="text-slate-500">รหัสผู้สมัคร / นศ.:</span>
@@ -424,7 +433,19 @@ export default function StudentDetailPage({ params }) {
           ) : (
             <div className="space-y-2 text-xs">
               <div>
-                <label className="block text-[11px] text-slate-500 mb-1">ชื่อ-สกุล</label>
+                <label className="block text-[11px] text-slate-500 mb-1">
+                  NAME SURNAME (ENG) <span className="text-amber-700 font-semibold">(ตัวพิมพ์ใหญ่ / No title)</span>
+                </label>
+                <input
+                  type="text"
+                  value={profileForm.fullNameEn}
+                  onChange={e => setProfileForm(p => ({ ...p, fullNameEn: e.target.value.toUpperCase() }))}
+                  placeholder="FIRSTNAME LASTNAME"
+                  className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-xs outline-none focus:border-slate-500 uppercase font-medium"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-500 mb-1">ชื่อ-สกุล (ไทย) *</label>
                 <input
                   type="text"
                   value={profileForm.fullName}

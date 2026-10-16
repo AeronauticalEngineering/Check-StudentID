@@ -8,6 +8,132 @@ import { QRCodeSVG } from 'qrcode.react';
 import ProfileSetupForm from '../../../components/student/ProfileSetupForm';
 import Link from 'next/link';
 import { useModal } from '../../../context/ModalContext';
+import { downloadCertificatePNG, downloadCertificatePDF, getCertificatePreviewDataUrl } from '../../../lib/certificateGenerator';
+
+const CertificatePreviewModal = ({ isOpen, onClose, certData }) => {
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen || !certData) {
+      setPreviewUrl('');
+      return;
+    }
+    let isMounted = true;
+    setIsGenerating(true);
+    getCertificatePreviewDataUrl(certData)
+      .then(url => {
+        if (isMounted) setPreviewUrl(url);
+      })
+      .catch(err => {
+        console.error('Failed to generate preview:', err);
+      })
+      .finally(() => {
+        if (isMounted) setIsGenerating(false);
+      });
+
+    return () => { isMounted = false; };
+  }, [isOpen, certData]);
+
+  if (!isOpen || !certData) return null;
+
+  const handleDownloadPNG = async () => {
+    setIsDownloading(true);
+    try {
+      await downloadCertificatePNG(certData);
+    } catch (e) {
+      alert('ดาวน์โหลดไม่สำเร็จ: ' + e.message);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const handleDownloadPDF = async () => {
+    setIsDownloading(true);
+    try {
+      await downloadCertificatePDF(certData);
+    } catch (e) {
+      alert('ดาวน์โหลด PDF ไม่สำเร็จ: ' + e.message);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex justify-center items-center z-50 p-4 animate-in fade-in" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full p-4 sm:p-5 space-y-4 font-sans" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+          <div>
+            <h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
+              <span>📜</span>
+              <span>เกียรติบัตรของคุณ (Certificate)</span>
+            </h3>
+            <p className="text-xs text-slate-500 font-normal">
+              ออกให้กับ: <span className="font-semibold text-slate-800">{certData.fullNameEn || certData.fullName}</span>
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 text-sm font-bold cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Certificate Display Area */}
+        <div className="bg-slate-900 rounded-xl overflow-hidden p-2 flex items-center justify-center min-h-[220px] shadow-inner">
+          {isGenerating ? (
+            <div className="text-white text-xs flex flex-col items-center gap-2">
+              <div className="w-6 h-6 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin"></div>
+              <span>กำลังสร้างเกียรติบัตร...</span>
+            </div>
+          ) : previewUrl ? (
+            <img
+              src={previewUrl}
+              alt="Generated Certificate"
+              className="max-h-[360px] w-auto object-contain rounded shadow-lg"
+            />
+          ) : (
+            <span className="text-slate-400 text-xs">ไม่สามารถสร้างภาพตัวอย่างได้</span>
+          )}
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full sm:w-auto px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs rounded-xl font-normal transition-colors cursor-pointer"
+          >
+            ปิด
+          </button>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <button
+              type="button"
+              disabled={isDownloading || isGenerating}
+              onClick={handleDownloadPNG}
+              className="flex-1 sm:flex-initial px-4 py-2 bg-[#000946] hover:bg-[#00125e] text-white text-xs font-medium rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              <span>🖼️</span>
+              <span>ดาวน์โหลดภาพ (PNG)</span>
+            </button>
+            <button
+              type="button"
+              disabled={isDownloading || isGenerating}
+              onClick={handleDownloadPDF}
+              className="flex-1 sm:flex-initial px-4 py-2 bg-[#ff741f] hover:bg-[#e55e0b] text-white text-xs font-medium rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              <span>📄</span>
+              <span>ดาวน์โหลด PDF</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const QRModal = ({ qrData, onClose }) => {
   if (!qrData) return null;
@@ -281,7 +407,7 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
   );
 };
 
-const CompletedRegistrationCard = ({ reg, activities, courses, hasEvaluated, onShowQr }) => {
+const CompletedRegistrationCard = ({ reg, activities, courses, hasEvaluated, onShowQr, onOpenCert }) => {
   const { showAlert } = useModal();
   const activity = activities[reg.activityId];
   const course = activity ? courses[activity.categoryId] : null;
@@ -408,20 +534,60 @@ const CompletedRegistrationCard = ({ reg, activities, courses, hasEvaluated, onS
         {/* Post-Activity Buttons (Certificate & Photo) - แสดงใต้ป้ายเขียวทำแบบประเมินเรียบร้อยแล้ว */}
         {(!needsEvaluation || activity.enableEvaluation === false) && (activity.enableCertificate !== false || activity.enablePhoto !== false) && (
           <div className="pt-0.5 grid grid-cols-2 gap-2.5">
-            {/* 1. Certificate Button (แนบ link รายบุคคล) */}
+            {/* 1. Certificate Button: ต้องได้รับการ Checklist อนุมัติจาก Admin ก่อนจึงจะแสดงปุ่มเปิดใบประกาศ */}
             {activity.enableCertificate !== false && (
-              reg.certificateUrl ? (
-                <a
-                  href={reg.certificateUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="py-2.5 px-3 bg-[#000946] hover:bg-[#00125e] text-white text-sm font-normal rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 active:scale-98 text-center"
-                >
-                  <svg className="w-4 h-4 shrink-0 text-amber-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
-                  </svg>
-                  <span className="truncate">{activity.certificateButtonLabel || 'Certificate'}</span>
-                </a>
+              (activity.certificateMode !== 'individual_link' && activity.certificateTemplateUrl) ? (
+                reg.certificateApproved ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenCert && onOpenCert({
+                      templateUrl: activity.certificateTemplateUrl,
+                      fullName: reg.fullName,
+                      fullNameEn: reg.fullNameEn,
+                      projectName: activity.certificateProjectName || activity.name,
+                      dateText: activity.certificateDateText || (activityDate ? activityDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '')
+                    })}
+                    className="py-2.5 px-3 bg-[#000946] hover:bg-[#00125e] text-white text-sm font-normal rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 active:scale-98 text-center cursor-pointer"
+                  >
+                    <svg className="w-4 h-4 shrink-0 text-amber-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+                    </svg>
+                    <span className="truncate">{activity.certificateButtonLabel || 'Certificate'}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => showAlert({
+                      title: 'อยู่ระหว่างรอการอนุมัติเกียรติบัตร',
+                      message: 'ผู้จัดกิจกรรมยังไม่ได้เปิดสิทธิ์รับเกียรติบัตรสำหรับคุณในขณะนี้ หรืออยู่ระหว่างการตรวจรายชื่อ (Checklist) กรุณาตรวจสอบอีกครั้งในภายหลัง',
+                      type: 'info'
+                    })}
+                    className="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-500 text-sm font-normal rounded-xl transition-all border border-slate-200 flex items-center justify-center gap-1.5 active:scale-98 text-center cursor-pointer"
+                  >
+                    <svg className="w-4 h-4 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span className="truncate">รออนุมัติ {activity.certificateButtonLabel || 'Certificate'}</span>
+                  </button>
+                )
+              ) : reg.certificateUrl ? (
+                reg.certificateApproved !== false ? (
+                  <a
+                    href={reg.certificateUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="py-2.5 px-3 bg-[#000946] hover:bg-[#00125e] text-white text-sm font-normal rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 active:scale-98 text-center"
+                  >
+                    <svg className="w-4 h-4 shrink-0 text-amber-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+                    </svg>
+                    <span className="truncate">{activity.certificateButtonLabel || 'Certificate'}</span>
+                  </a>
+                ) : (
+                  <div className="py-2.5 px-3 bg-slate-100 text-slate-400 text-xs font-normal rounded-xl border border-slate-200 flex items-center justify-center gap-1.5 text-center">
+                    <span>⏳ รออนุมัติ {activity.certificateButtonLabel || 'Certificate'}</span>
+                  </div>
+                )
               ) : (
                 <button
                   type="button"
@@ -489,6 +655,7 @@ export default function MyRegistrationsPage() {
   const [evaluatedActivities, setEvaluatedActivities] = useState(new Set());
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [visibleQrData, setVisibleQrData] = useState(null);
+  const [certPreview, setCertPreview] = useState({ isOpen: false, data: null });
 
   useEffect(() => {
     const fetchData = async () => {
@@ -653,8 +820,10 @@ export default function MyRegistrationsPage() {
   });
 
   const isActivityEnded = (reg) => {
-    // หากสแกนจบกิจกรรมที่ทางออกเรียบร้อยแล้ว ถือว่าจบกิจกรรมอย่างเป็นทางการ
+    // หากสถานะของผู้สมัครเป็น completed หรือ จบกิจกรรมแล้ว / สแกนออกแล้ว ถือว่าจบกิจกรรม
     if (reg.checkedOut || reg.checkedOutAt) return true;
+    const rawStatus = (reg.status || '').trim();
+    if (rawStatus === 'completed' || rawStatus === 'สำเร็จแล้ว' || rawStatus === 'จบกิจกรรมแล้ว') return true;
 
     // ตรวจสอบวันจัดกิจกรรม หากพ้นกำหนดวันจัดกิจกรรมไปแล้ว (หลังเที่ยงคืน) ถือว่าสิ้นสุดแล้ว
     const activity = activities[reg.activityId];
@@ -685,6 +854,12 @@ export default function MyRegistrationsPage() {
     <div className="max-w-md mx-auto p-4 sm:p-6 space-y-4">
       {visibleQrData && <QRModal qrData={visibleQrData} onClose={() => setVisibleQrData(null)} />}
 
+      {/* Dynamic Certificate Preview & Download Modal */}
+      <CertificatePreviewModal
+        isOpen={certPreview.isOpen}
+        certData={certPreview.data}
+        onClose={() => setCertPreview({ isOpen: false, data: null })}
+      />
 
       {sortedRegistrations.length === 0 ? (
         <div className="text-center py-14 px-5 bg-white rounded-2xl border border-slate-200 font-sans">
@@ -753,6 +928,7 @@ export default function MyRegistrationsPage() {
                     courses={courses}
                     hasEvaluated={evaluatedActivities.has(reg.activityId)}
                     onShowQr={setVisibleQrData}
+                    onOpenCert={(data) => setCertPreview({ isOpen: true, data })}
                   />
                 ))}
               </div>

@@ -56,7 +56,14 @@ export default function StudentHeader() {
                 />
               )}
               <div>
-                <h1 className="font-bold text-lg text-white drop-shadow-sm">{displayName}</h1>
+                <h1 className="font-bold text-lg text-white drop-shadow-sm flex flex-wrap items-baseline gap-2">
+                  <span>{displayName}</span>
+                  {studentDbProfile?.fullNameEn && (
+                    <span className="text-xs text-white/70 font-mono font-normal">
+                      ({studentDbProfile.fullNameEn})
+                    </span>
+                  )}
+                </h1>
                 <p className="text-sm font-normal text-white/80">{displaySubText}</p>
               </div>
             </div>

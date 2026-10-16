@@ -3,8 +3,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { db } from '../../../../lib/firebase';
+import { db, storage } from '../../../../lib/firebase';
 import { collection, getDocs, addDoc, Timestamp, serverTimestamp } from 'firebase/firestore';
+import { ref, uploadString, getDownloadURL } from 'firebase/storage';
 import { useModal } from '../../../../context/ModalContext';
 
 
@@ -60,6 +61,11 @@ export default function AddActivityPage() {
   // Post-Activity Actions (Certificate & Photo) State
   const [enableCertificate, setEnableCertificate] = useState(true);
   const [certificateButtonLabel, setCertificateButtonLabel] = useState('Certificate');
+  const [certificateMode, setCertificateMode] = useState('template'); // 'template' | 'individual_link'
+  const [certificateProjectName, setCertificateProjectName] = useState('');
+  const [certificateDateText, setCertificateDateText] = useState('');
+  const [certificateTemplateUrl, setCertificateTemplateUrl] = useState('');
+  const [isUploadingTemplate, setIsUploadingTemplate] = useState(false);
   const [enablePhoto, setEnablePhoto] = useState(true);
   const [photoButtonLabel, setPhotoButtonLabel] = useState('Photo');
   const [photoUrl, setPhotoUrl] = useState('');
@@ -327,6 +333,10 @@ export default function AddActivityPage() {
         isRegistrationOpen,
         enableCertificate,
         certificateButtonLabel: certificateButtonLabel.trim() || 'Certificate',
+        certificateMode: certificateMode || 'template',
+        certificateProjectName: certificateProjectName.trim(),
+        certificateDateText: certificateDateText.trim(),
+        certificateTemplateUrl: certificateMode === 'individual_link' ? '' : (certificateTemplateUrl ? certificateTemplateUrl.trim() : ''),
         enablePhoto,
         photoButtonLabel: photoButtonLabel.trim() || 'Photo',
         photoUrl: photoUrl.trim() || ''
@@ -852,9 +862,177 @@ export default function AddActivityPage() {
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-normal text-slate-800 outline-none focus:border-[#000946]"
                     />
                   </div>
-                  <div className="text-xs text-slate-500 bg-slate-50 p-2.5 rounded-lg border border-slate-100 font-normal leading-relaxed">
-                    💡 <span className="font-semibold text-slate-700">ลิงก์รายบุคคล:</span> แอดมินสามารถแนบลิงก์เกียรติบัตรของผู้สมัครแต่ละคนได้ในหน้าจัดการผู้ลงทะเบียน หรือนำเข้าจากไฟล์ CSV
+
+                  {/* Template vs Individual Link Selector */}
+                  <div className="pt-1 border-t border-slate-100">
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                      รูปแบบการออกเกียรติบัตร
+                    </label>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setCertificateMode('template')}
+                        className={`p-2 rounded-lg border text-left cursor-pointer transition-colors ${
+                          certificateMode === 'template'
+                            ? 'bg-emerald-50/70 border-emerald-400 text-emerald-900 font-medium ring-1 ring-emerald-300'
+                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="block font-semibold">🎨 ใช้ Template อัตโนมัติ</span>
+                        <span className="text-[11px] text-slate-500 font-normal">กรอกชื่อโครงการ/วันที่ ระบบสร้างให้ทันที</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCertificateMode('individual_link')}
+                        className={`p-2 rounded-lg border text-left cursor-pointer transition-colors ${
+                          certificateMode === 'individual_link'
+                            ? 'bg-emerald-50/70 border-emerald-400 text-emerald-900 font-medium ring-1 ring-emerald-300'
+                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="block font-semibold">🔗 แนบลิงก์รายบุคคล</span>
+                        <span className="text-[11px] text-slate-500 font-normal">นำเข้าลิงก์รายคนจากไฟล์ CSV หรือใส่เอง</span>
+                      </button>
+                    </div>
                   </div>
+
+                  {certificateMode === 'template' ? (
+                    <div className="space-y-2.5 pt-1 bg-amber-50/40 p-3 rounded-xl border border-amber-200">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-800 mb-1">
+                          PROJECT NAME (ชื่อโครงการ/กิจกรรมบนเกียรติบัตร)
+                        </label>
+                        <input
+                          type="text"
+                          value={certificateProjectName}
+                          onChange={(e) => setCertificateProjectName(e.target.value)}
+                          placeholder="เช่น CIVIL AVIATION WORKSHOP 2026 หรือปล่อยว่างเพื่อใช้ชื่อกิจกรรม"
+                          className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-800 outline-none focus:border-[#000946]"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-800 mb-1">
+                          DATE MONTH YEAR (วันที่ระบุบนเกียรติบัตร)
+                        </label>
+                        <input
+                          type="text"
+                          value={certificateDateText}
+                          onChange={(e) => setCertificateDateText(e.target.value)}
+                          placeholder="เช่น 21 October 2026 หรือ 21 ตุลาคม 2569"
+                          className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-800 outline-none focus:border-[#000946]"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-800 mb-1">
+                          แนบ template (รูปภาพพื้นหลังเกียรติบัตร) <span className="text-red-500">* อัปโหลดเท่านั้น</span>
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="file"
+                            accept="image/*"
+                            disabled={isUploadingTemplate}
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              setIsUploadingTemplate(true);
+                              try {
+                                const reader = new FileReader();
+                                reader.onload = async (ev) => {
+                                  try {
+                                    const base64 = ev.target?.result;
+                                    let uploadedUrl = '';
+
+                                    // 1. ลองอัปโหลดไปยัง Firebase Storage ก่อน
+                                    if (storage) {
+                                      try {
+                                        const storagePath = `cert-templates/template_${Date.now()}.png`;
+                                        const storageRef = ref(storage, storagePath);
+                                        const snap = await uploadString(storageRef, base64, 'data_url');
+                                        uploadedUrl = await getDownloadURL(snap.ref);
+                                      } catch (storageErr) {
+                                        console.warn('Firebase Storage upload error, falling back to server upload:', storageErr?.message);
+                                      }
+                                    }
+
+                                    // 2. ถ้า Storage ไม่ได้เปิดใช้งาน ให้ส่งผ่าน /api/upload
+                                    if (!uploadedUrl) {
+                                      const res = await fetch('/api/upload', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                          base64: base64,
+                                          file: base64,
+                                          path: `cert-templates/template_${Date.now()}.png`
+                                        })
+                                      });
+                                      const json = await res.json();
+                                      if (json.url) {
+                                        uploadedUrl = json.url;
+                                      } else {
+                                        throw new Error(json.error || 'Upload failed');
+                                      }
+                                    }
+
+                                    if (uploadedUrl) {
+                                      setCertificateTemplateUrl(uploadedUrl);
+                                      showToast({ message: 'อัปโหลด Template เกียรติบัตรเรียบร้อย!', type: 'success' });
+                                    }
+                                  } catch (err) {
+                                    console.error('Template upload error:', err);
+                                    showAlert({ title: 'อัปโหลดไม่สำเร็จ', message: err.message, type: 'error' });
+                                  } finally {
+                                    setIsUploadingTemplate(false);
+                                  }
+                                };
+                                reader.readAsDataURL(file);
+                              } catch (err) {
+                                setIsUploadingTemplate(false);
+                              }
+                            }}
+                            className="block w-full text-xs text-slate-500 file:mr-2 file:py-1 file:px-2.5 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 cursor-pointer"
+                          />
+                          {certificateTemplateUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setCertificateTemplateUrl('')}
+                              className="text-[11px] text-red-600 hover:text-red-800 underline whitespace-nowrap cursor-pointer"
+                              title="ลบไฟล์รูปภาพเทมเพลต"
+                            >
+                              ลบเทมเพลต
+                            </button>
+                          )}
+                        </div>
+                        {isUploadingTemplate && (
+                          <div className="text-xs text-indigo-600 mt-1 flex items-center gap-1.5">
+                            <span className="w-3 h-3 border border-indigo-600 border-t-transparent rounded-full animate-spin"></span>
+                            <span>กำลังอัปโหลดไฟล์เทมเพลต...</span>
+                          </div>
+                        )}
+                        {certificateTemplateUrl ? (
+                          <div className="mt-2 relative rounded-lg overflow-hidden border border-slate-300 max-h-36 bg-slate-900 flex items-center justify-center">
+                            <img
+                              src={certificateTemplateUrl}
+                              alt="Certificate Template Preview"
+                              className="max-h-36 object-contain"
+                            />
+                            <span className="absolute bottom-1 right-1 px-1.5 py-0.5 bg-black/70 text-[10px] text-white rounded">
+                              Template ที่อัปโหลดแล้ว
+                            </span>
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-amber-700 mt-1.5 bg-amber-50 p-2 rounded-lg border border-amber-200">
+                            ⚠️ กรุณาอัปโหลดรูปภาพเทมเพลตเกียรติบัตร (PNG/JPG) ที่ไม่มีชื่อผู้เข้าร่วม เพื่อให้ระบบนำไปสร้างใบประกาศอัตโนมัติ
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-slate-500 bg-slate-50 p-2.5 rounded-lg border border-slate-100 font-normal leading-relaxed">
+                      💡 <span className="font-semibold text-slate-700">ลิงก์รายบุคคล:</span> แอดมินสามารถแนบลิงก์เกียรติบัตรของผู้สมัครแต่ละคนได้ในหน้าจัดการผู้ลงทะเบียน หรือนำเข้าจากไฟล์ CSV
+                    </div>
+                  )}
                 </div>
 
                 {/* 2. Photo Button Configuration */}

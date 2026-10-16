@@ -100,6 +100,7 @@ export default function AllRegistrantsPage() {
       regList.forEach(r => {
         initialEdits[r.id] = {
           fullName: r.fullName || '',
+          fullNameEn: r.fullNameEn || '',
           studentId: r.studentId || '',
           nationalId: r.nationalId || '',
           lineUserId: r.lineUserId || '',
@@ -108,6 +109,7 @@ export default function AllRegistrantsPage() {
       profileList.forEach(p => {
         initialEdits[p.id] = {
           fullName: p.fullName || '',
+          fullNameEn: p.fullNameEn || '',
           studentId: p.studentId || '',
           nationalId: p.nationalId || '',
           lineUserId: p.lineUserId || '',
@@ -368,9 +370,13 @@ export default function AllRegistrantsPage() {
   };
 
   const handleInputChange = (id, field, value) => {
+    let finalValue = value;
+    if (field === 'fullNameEn') {
+      finalValue = value.toUpperCase();
+    }
     setEditStates(prev => ({
       ...prev,
-      [id]: { ...prev[id], [field]: value }
+      [id]: { ...prev[id], [field]: finalValue }
     }));
   };
 
@@ -379,6 +385,7 @@ export default function AllRegistrantsPage() {
     const dataToUpdate = editStates[registrantId];
     const trimmedNat = dataToUpdate.nationalId.trim();
     const trimmedName = dataToUpdate.fullName.trim();
+    const trimmedNameEn = dataToUpdate.fullNameEn ? dataToUpdate.fullNameEn.trim().toUpperCase() : null;
     const trimmedStd = dataToUpdate.studentId.trim() || null;
 
     if (!trimmedName) {
@@ -405,6 +412,7 @@ export default function AllRegistrantsPage() {
 
       await updateDoc(doc(db, 'registrations', registrantId), {
         fullName: trimmedName,
+        fullNameEn: trimmedNameEn,
         studentId: trimmedStd,
         nationalId: trimmedNat,
         lineUserId: dataToUpdate.lineUserId || null
@@ -414,6 +422,7 @@ export default function AllRegistrantsPage() {
         await upsertStudentProfile({
           nationalId: trimmedNat,
           fullName: trimmedName,
+          fullNameEn: trimmedNameEn,
           studentId: trimmedStd,
           lineUserId: dataToUpdate.lineUserId || null,
           source: 'admin_edit'
@@ -433,6 +442,7 @@ export default function AllRegistrantsPage() {
     const dataToUpdate = editStates[profileId];
     const trimmedNat = dataToUpdate.nationalId.trim();
     const trimmedName = dataToUpdate.fullName.trim();
+    const trimmedNameEn = dataToUpdate.fullNameEn ? dataToUpdate.fullNameEn.trim().toUpperCase() : null;
     const trimmedStd = dataToUpdate.studentId.trim() || null;
 
     if (!trimmedName) {
@@ -460,6 +470,7 @@ export default function AllRegistrantsPage() {
       await upsertStudentProfile({
         nationalId: trimmedNat,
         fullName: trimmedName,
+        fullNameEn: trimmedNameEn,
         studentId: trimmedStd,
         lineUserId: dataToUpdate.lineUserId || (profileId.startsWith('U') ? profileId : null),
         source: 'admin_edit'
@@ -548,7 +559,8 @@ export default function AllRegistrantsPage() {
       if (viewMode === 'registrations') {
         csvData = filteredRegistrations.map((reg, index) => ({
           'ลำดับ': index + 1,
-          'ชื่อ-สกุล': reg.fullName || '',
+          'ชื่อ-สกุล (ไทย)': reg.fullName || '',
+          'NAME SURNAME (ENG)': reg.fullNameEn || '',
           'รหัสนักศึกษา': reg.studentId || '',
           'เลขบัตรประชาชน': reg.nationalId || '',
           'Line User ID': reg.lineUserId || '',
@@ -560,7 +572,8 @@ export default function AllRegistrantsPage() {
       } else {
         csvData = filteredProfiles.map((p, index) => ({
           'ลำดับ': index + 1,
-          'ชื่อ-สกุล': p.fullName || '',
+          'ชื่อ-สกุล (ไทย)': p.fullName || '',
+          'NAME SURNAME (ENG)': p.fullNameEn || '',
           'รหัสนักศึกษา': p.studentId || '',
           'เลขบัตรประชาชน': p.nationalId || '',
           'Line User ID': p.lineUserId || '',
@@ -800,7 +813,8 @@ export default function AllRegistrantsPage() {
                     />
                   </th>
                   <th className="px-3 py-2.5 w-12 text-center border-r border-slate-200 whitespace-nowrap">#</th>
-                  <th className="px-3 py-2.5 min-w-[160px] border-r border-slate-200 whitespace-nowrap">ชื่อ-สกุล</th>
+                  <th className="px-3 py-2.5 min-w-[160px] border-r border-slate-200 whitespace-nowrap">ชื่อ-สกุล (ไทย)</th>
+                  <th className="px-3 py-2.5 min-w-[160px] border-r border-slate-200 whitespace-nowrap">NAME SURNAME (ENG)</th>
                   <th className="px-3 py-2.5 min-w-[120px] border-r border-slate-200 whitespace-nowrap">รหัสผู้สมัคร</th>
                   <th className="px-3 py-2.5 min-w-[150px] border-r border-slate-200 whitespace-nowrap">เลขบัตร ปชช.</th>
                   <th className="px-3 py-2.5 w-24 min-w-[90px] text-center border-r border-slate-200 whitespace-nowrap">LINE</th>
@@ -812,7 +826,7 @@ export default function AllRegistrantsPage() {
               <tbody className="divide-y divide-slate-100 text-slate-700">
                 {isLoading ? (
                   <tr>
-                    <td colSpan="9" className="p-10 text-center text-slate-400">
+                    <td colSpan="10" className="p-10 text-center text-slate-400">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <div className="w-6 h-6 border-2 border-slate-600 border-t-transparent rounded-full animate-spin"></div>
                         <span>กำลังโหลดข้อมูลการลงทะเบียน...</span>
@@ -821,7 +835,7 @@ export default function AllRegistrantsPage() {
                   </tr>
                 ) : currentItems.length === 0 ? (
                   <tr>
-                    <td colSpan="9" className="p-10 text-center text-slate-400">
+                    <td colSpan="10" className="p-10 text-center text-slate-400">
                       ไม่พบข้อมูลการลงทะเบียนกิจกรรม
                     </td>
                   </tr>
@@ -873,6 +887,19 @@ export default function AllRegistrantsPage() {
                                 ↗
                               </span>
                             </Link>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-slate-800 font-medium border-r border-slate-100 uppercase">
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              value={editStates[reg.id]?.fullNameEn || ''}
+                              onChange={e => handleInputChange(reg.id, 'fullNameEn', e.target.value.toUpperCase())}
+                              placeholder="NAME SURNAME"
+                              className="w-full px-2 py-1 border border-slate-300 rounded text-xs bg-white outline-none focus:border-slate-500 uppercase"
+                            />
+                          ) : (
+                            reg.fullNameEn || '-'
                           )}
                         </td>
                         <td className="px-3 py-2 text-slate-600 border-r border-slate-100 whitespace-nowrap font-mono">
@@ -1022,7 +1049,8 @@ export default function AllRegistrantsPage() {
                     />
                   </th>
                   <th className="px-3 py-2.5 w-12 text-center border-r border-slate-200 whitespace-nowrap">#</th>
-                  <th className="px-3 py-2.5 min-w-[160px] border-r border-slate-200 whitespace-nowrap">ชื่อ-สกุล</th>
+                  <th className="px-3 py-2.5 min-w-[160px] border-r border-slate-200 whitespace-nowrap">ชื่อ-สกุล (ไทย)</th>
+                  <th className="px-3 py-2.5 min-w-[160px] border-r border-slate-200 whitespace-nowrap">NAME SURNAME (ENG)</th>
                   <th className="px-3 py-2.5 min-w-[120px] border-r border-slate-200 whitespace-nowrap">รหัสผู้สมัคร</th>
                   <th className="px-3 py-2.5 min-w-[150px] border-r border-slate-200 whitespace-nowrap">เลขบัตร ปชช.</th>
                   <th className="px-3 py-2.5 w-28 min-w-[100px] text-center border-r border-slate-200 whitespace-nowrap">สถานะ LINE</th>
@@ -1035,7 +1063,7 @@ export default function AllRegistrantsPage() {
               <tbody className="divide-y divide-slate-100 text-slate-700">
                 {isLoading ? (
                   <tr>
-                    <td colSpan="10" className="p-10 text-center text-slate-400">
+                    <td colSpan="11" className="p-10 text-center text-slate-400">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <div className="w-6 h-6 border-2 border-slate-600 border-t-transparent rounded-full animate-spin"></div>
                         <span>กำลังโหลดข้อมูลโปรไฟล์นักเรียน...</span>
@@ -1044,7 +1072,7 @@ export default function AllRegistrantsPage() {
                   </tr>
                 ) : currentItems.length === 0 ? (
                   <tr>
-                    <td colSpan="10" className="p-10 text-center text-slate-400">
+                    <td colSpan="11" className="p-10 text-center text-slate-400">
                       ไม่พบข้อมูลโปรไฟล์นักเรียน
                     </td>
                   </tr>
@@ -1097,6 +1125,19 @@ export default function AllRegistrantsPage() {
                                 ↗
                               </span>
                             </Link>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-slate-800 font-medium border-r border-slate-100 uppercase">
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              value={editStates[profile.id]?.fullNameEn || ''}
+                              onChange={e => handleInputChange(profile.id, 'fullNameEn', e.target.value.toUpperCase())}
+                              placeholder="NAME SURNAME"
+                              className="w-full px-2 py-1 border border-slate-300 rounded text-xs bg-white outline-none focus:border-slate-500 uppercase"
+                            />
+                          ) : (
+                            profile.fullNameEn || '-'
                           )}
                         </td>
                         <td className="px-3 py-2 text-slate-600 border-r border-slate-100 whitespace-nowrap font-mono">

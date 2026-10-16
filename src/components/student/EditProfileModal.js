@@ -7,6 +7,7 @@ import { checkDuplicateNationalId } from '../../lib/studentService';
 
 export default function EditProfileModal({ currentProfile, liffProfile, onProfileUpdated, onCancel }) {
   const [fullName, setFullName] = useState(currentProfile?.fullName || '');
+  const [fullNameEn, setFullNameEn] = useState(currentProfile?.fullNameEn || '');
   const [studentId, setStudentId] = useState(currentProfile?.studentId || '');
   const [nationalId, setNationalId] = useState(currentProfile?.nationalId || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -18,11 +19,12 @@ export default function EditProfileModal({ currentProfile, liffProfile, onProfil
     setError('');
     
     const trimmedFullName = fullName.trim();
+    const trimmedFullNameEn = fullNameEn.trim().toUpperCase();
     const trimmedNationalId = nationalId.trim();
     const trimmedStudentId = studentId.trim() || null;
 
     if (!trimmedFullName) {
-      setError('กรุณากรอกชื่อ-นามสกุล');
+      setError('กรุณากรอกชื่อ-นามสกุล (ไทย)');
       setIsSubmitting(false);
       return;
     }
@@ -44,6 +46,7 @@ export default function EditProfileModal({ currentProfile, liffProfile, onProfil
 
       const profileData = { 
         fullName: trimmedFullName, 
+        fullNameEn: trimmedFullNameEn || null,
         studentId: trimmedStudentId, 
         nationalId: trimmedNationalId, 
         updatedAt: serverTimestamp() 
@@ -90,8 +93,30 @@ export default function EditProfileModal({ currentProfile, liffProfile, onProfil
         
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label htmlFor="editFullName" className="block text-sm font-normal text-slate-700 mb-1">
-              ชื่อ-สกุล <span className="text-red-500">*</span>
+            <div className="flex items-center justify-between mb-1">
+              <label htmlFor="editFullNameEn" className="block text-sm font-semibold text-slate-800">
+                NAME SURNAME (ENG)
+              </label>
+              <span className="text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                ตัวพิมพ์ใหญ่
+              </span>
+            </div>
+            <input 
+              id="editFullNameEn" 
+              type="text" 
+              value={fullNameEn} 
+              onChange={(e) => setFullNameEn(e.target.value.toUpperCase())} 
+              className="w-full p-3 bg-white text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#000946]/20 focus:border-[#000946] outline-none placeholder:text-slate-400 font-medium text-sm transition-all uppercase tracking-wide" 
+              placeholder="FIRSTNAME LASTNAME"
+            />
+            <p className="text-xs text-rose-600 mt-1 font-medium">
+              * No title (Mr./Miss) - ไม่ต้องใส่คำนำหน้าชื่อ
+            </p>
+          </div>
+
+          <div>
+            <label htmlFor="editFullName" className="block text-sm font-medium text-slate-700 mb-1">
+              ชื่อ-นามสกุล (ไทย) <span className="text-red-500">*</span>
             </label>
             <input 
               id="editFullName" 

@@ -415,5 +415,72 @@ AERO Student is an end-to-end Student Activity Registration, Seating Allocation,
   - สร้างไฟล์ `src/app/admin/page.js` ใช้คำสั่ง `redirect('/admin/login')` ของ Next.js App Router เพื่อทำการ Redirect ทันทีตั้งแต่ฝั่ง Server (Zero-Flicker)
   - หากผู้ดูแลระบบมีเซสชันการเข้าสู่ระบบอยู่แล้ว (`currentUser`) ระบบในหน้า `/admin/login` จะทำการนำทางต่อไปยังหน้าหลักของแอดมิน (`/admin/activity`) โดยอัตโนมัติ
 
+### 25. NAME SURNAME (ENG) Standardization Across Registration & Profiles
+- **Problem & Requirement**:
+  - ต้องการเพิ่มฟิลด์ข้อมูล **`NAME SURNAME (ENG)`** (ชื่อ-นามสกุลภาษาอังกฤษ) ในการลงทะเบียนใหม่และแก้ไขข้อมูลทั้งหมดในระบบ:
+    1. **Format Enforcement**: ตัวพิมพ์ใหญ่ทั้งหมด (UPPERCASE) ทั้งในการพิมพ์ (`onChange`) และการจัดเก็บในฐานข้อมูล
+    2. **No Title Prefix**: ห้ามใส่คำนำหน้าชื่อ (เช่น Mr., Miss, Mrs., นาย, นางสาว) โดยมีข้อความคำแนะนำกำกับชัดเจน "* No title (Mr./Miss) - ไม่ต้องใส่คำนำหน้าชื่อ"
+    3. **Thai Name Label Distinction**: ปรับป้ายกำกับชื่อภาษาไทยเป็น **"ชื่อ-นามสกุล (ไทย)"** เพื่อความชัดเจนและไม่สับสน
+- **Coverage & Touchpoints**:
+  - **Student Self Setup & Edit**:
+    - `src/components/student/ProfileSetupForm.js`: ฟอร์มตั้งค่าโปรไฟล์นักเรียนครั้งแรก (LIFF)
+    - `src/components/student/EditProfileModal.js`: หน้าต่างแก้ไขโปรไฟล์นักเรียนจากแถบส่วนหัว (`StudentHeader`)
+    - `src/components/student/EditProfileForm.js`: ฟอร์มแก้ไขข้อมูลโปรไฟล์นักเรียน
+    - `src/components/StudentHeader.js`: แสดงชื่อภาษาอังกฤษกำกับไว้ข้างชื่อภาษาไทย
+  - **Service & Database Synchronization**:
+    - `src/lib/studentService.js`: รองรับฟิลด์ `fullNameEn` ใน `upsertStudentProfile` และ `registerOrLinkStudentProfile` ทั้งการสร้างและอัปเดตเอกสาร `studentProfiles`
+    - `src/lib/registrationService.js`: บันทึก `fullNameEn` ลงในเอกสาร `registrations` เมื่อนักเรียนลงทะเบียนกิจกรรม
+  - **Admin Operations**:
+    - `src/app/admin/activity/seats/[id]/page.js`:
+      - ช่องกรอกเพิ่มรายชื่อนักเรียนรายคน (Add Participant) มีช่อง `NAME SURNAME (ENG)` แปลงตัวพิมพ์ใหญ่
+      - โหมดแก้ไขตาราง (Inline Edit) มีคอลัมน์ `NAME SURNAME (ENG)` ซิงค์ลงทั้ง `registrations` และ `studentProfiles`
+      - นำเข้าไฟล์ CSV: แปลง header `NAME SURNAME (ENG)`, `NAME SUERNAME (ENG)`, `NAME (ENG)`, `ชื่อภาษาอังกฤษ`, `fullNameEn`, `nameEn` เข้าสู่ `fullNameEn` อัตโนมัติ
+      - ส่งออก CSV: เพิ่มคอลัมน์ `NAME SURNAME (ENG)` ในรายงานผล
+    - `src/app/admin/registrants/page.js`:
+      - ตารางการลงทะเบียนกิจกรรม (Table 1) และ ตารางโปรไฟล์นักเรียนทั้งหมด (Table 2) มีคอลัมน์ `NAME SURNAME (ENG)` พร้อมรองรับการแก้ไขข้อมูลในตาราง
+      - ส่งออก CSV: รวมคอลัมน์ `NAME SURNAME (ENG)`
+    - `src/app/admin/registrants/[id]/page.js`: หน้ารายละเอียดนักเรียนรายบุคคล แสดงและรองรับการแก้ไข `fullNameEn` พร้อมบันทึกลงทุกกิจกรรมที่เกี่ยวข้อง
+    - `src/app/admin/activity/register-student/page.js`: ฟอร์มที่แอดมินลงทะเบียนให้นักเรียนโดยตรง มีช่องกรอก `NAME SURNAME (ENG)`
+
+### 26. Dynamic Certificate Template Generator & Auto-Issuance Engine
+- **Problem & Requirement**:
+  - ต้องการให้สามารถใช้รูปภาพเทมเพลต (Template Background Image) ในการสร้างใบประกาศนียบัตร/เกียรติบัตรได้โดยตรงจากระบบ
+  - เมื่อผู้เข้าร่วมกิจกรรมมีสถานะผ่าน/สำเร็จ (`completed` / จบกิจกรรมแล้ว) และทำแบบประเมินเรียบร้อยแล้ว จะสามารถดาวน์โหลดใบประกาศนียบัตรได้ทันที
+  - สามารถกำหนดค่าในส่วนของกิจกรรมได้ 3 ส่วนหลัก:
+    1. **`PROJECT NAME`**: ชื่อโครงการ/กิจกรรมบนใบประกาศ (ภาษาอังกฤษ หรือชื่อกิจกรรม)
+    2. **`DATE MONTH YEAR`**: วันที่จัดกิจกรรมที่ระบุบนใบประกาศ (เช่น 21 October 2026)
+    3. **`แนบ template`**: อัปโหลดรูปภาพพื้นหลังเกียรติบัตร (Template Image เช่น Civil Aviation Training Center)
+- **Technical Architecture**:
+  - **Generator Utility (`src/lib/certificateGenerator.js`)**:
+    - ใช้ HTML5 Canvas Client-side Rendering ผสานกับ `jsPDF` เพื่อสร้างใบประกาศนียบัตรความละเอียดสูงทันทีในเบราว์เซอร์ ไม่ต้องพึ่งพา External API Server
+    - วางตำแหน่งข้อความอัตโนมัติตามสัดส่วนแม่นยำ:
+      - `NAME SURNAME`: ดึงจาก `fullNameEn` (ตัวพิมพ์ใหญ่) หรือชื่อภาษาไทย ใช้ฟอนต์ serif สไตล์มาตรฐานเกียรติบัตรทางการบิน กึ่งกลาง Y ~ 385px
+      - `PROJECT NAME`: ดึงจาก `certificateProjectName` กึ่งกลาง Y ~ 468px
+      - `DATE MONTH YEAR`: ดึงจาก `certificateDateText` กึ่งกลาง Y ~ 534px
+    - รองรับการดาวน์โหลดทั้งรูปแบบ **ภาพความละเอียดสูง (PNG)** และ **เอกสาร PDF ขนาด A4 แนวนอน**
+  - **Activity Document Schema (`activities/{id}`)**:
+    - `certificateMode`: `'template'` | `'individual_link'`
+    - `certificateProjectName`: string
+    - `certificateDateText`: string
+    - `certificateTemplateUrl`: string (URL รูปภาพเทมเพลตเริ่มต้นหรือที่อัปโหลดใหม่)
+  - **Student Portal Flow (`/student/my-registrations`)**:
+    - เมื่อผู้เข้าร่วมมีสถานะเสร็จสิ้น (`completed` / `checkedOut`) และผ่านแบบประเมิน ปุ่ม Certificate จะเปิดหน้าต่าง Preview ใบประกาศพร้อมปุ่มดาวน์โหลด PNG และ PDF ได้ทันที
+  - **Admin Workspace Flow (`/admin/activity/seats/[id]`)**:
+    - แอดมินสามารถคลิกปุ่ม `📜 ออกใบประกาศ` ในคอลัมน์เกียรติบัตร เพื่อเปิดดูตัวอย่างและดาวน์โหลดใบประกาศของนักเรียนแต่ละคนได้ทันที
+
+### 27. Student Certificate Checklist & Verification Approval Gate
+- **Requirement**:
+  - ต้อง Checklist นักเรียน (อนุมัติสิทธิ์รายบุคคลโดยแอดมิน) ก่อน จึงจะแสดงปุ่มเปิดรับ Certificate ในฝั่งนักเรียน
+- **Implementation**:
+  - **Admin Table (`/admin/activity/seats/[id]`)**:
+    - เพิ่มคอลัมน์ `เกียรติบัตร (Checklist)` พร้อม **Toggle Switch** (สีเขียว `bg-emerald-500` เมื่ออนุมัติ, สีเทา `bg-slate-300` เมื่อยังไม่อนุมัติ) ให้แอดมินคลิกเปิด-ปิดสิทธิ์ `certificateApproved` ได้ทันทีแบบ 1-click
+    - รองรับการแก้ไขผ่าน Edit Mode พร้อมช่อง Checkbox ในตาราง
+    - แถบการจัดการหลายรายการ (Batch Action Toolbar): เพิ่มปุ่ม `✓ อนุมัติเกียรติบัตร (N)` และ `ปิดสิทธิ์ (N)` เพื่อ Checklist นักเรียนพร้อมกันจำนวนมากได้อย่างรวดเร็ว
+  - **Student Portal (`/student/my-registrations`)**:
+    - ตรวจสอบเงื่อนไข `reg.certificateApproved === true` ก่อนแสดงปุ่มเปิดดู/ดาวน์โหลด Certificate
+    - หากนักเรียนจบกิจกรรมและทำแบบประเมินแล้ว แต่ยังไม่ได้รับการ Checklist อนุมัติจากแอดมิน จะแสดงปุ่มสถานะ `⏳ รออนุมัติ Certificate` เพื่อแจ้งให้นักเรียนทราบว่าอยู่ระหว่างการตรวจรายชื่อของผู้จัดงาน
+
+
+
 
 
