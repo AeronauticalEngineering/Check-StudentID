@@ -10,6 +10,7 @@ import {
 import Papa from 'papaparse';
 import { CSVLink } from 'react-csv';
 import ExaminerScoringModal from '../../../../../components/ExaminerScoringModal';
+import { downloadCertificatePNG, downloadCertificatePDF, getCertificatePreviewDataUrl } from '../../../../../lib/certificateGenerator';
 
 function formatSeatLabel(zoneName, runningNumber, labelFormat) {
   const numStr = runningNumber.toString().padStart(3, '0');
@@ -94,7 +95,7 @@ export default function SeatAssignmentPage({ params }) {
 
 
   const [form, setForm] = useState({
-    fullName: '', studentId: '', nationalId: '', course: '', quota: '', timeSlot: '', displayQueueNumber: '', certificateUrl: '', status: 'registered'
+    fullName: '', fullNameEn: '', studentId: '', nationalId: '', course: '', quota: '', timeSlot: '', displayQueueNumber: '', certificateUrl: '', status: 'registered'
   });
 
   const [certModal, setCertModal] = useState({
@@ -103,6 +104,7 @@ export default function SeatAssignmentPage({ params }) {
     studentName: '',
     url: ''
   });
+  const [certPreview, setCertPreview] = useState({ isOpen: false, data: null, previewUrl: '', isGenerating: false });
 
   const [editStates, setEditStates] = useState({});
   const [originalEditStates, setOriginalEditStates] = useState({});
@@ -164,6 +166,7 @@ export default function SeatAssignmentPage({ params }) {
       registrantsData.forEach(r => {
         initialEdits[r.id] = {
           fullName: r.fullName || '',
+          fullNameEn: r.fullNameEn || '',
           studentId: r.studentId || '',
           nationalId: r.nationalId || '',
           seatNumber: r.seatNumber || '',
@@ -172,7 +175,8 @@ export default function SeatAssignmentPage({ params }) {
           timeSlot: r.timeSlot || '',
           status: r.status || 'registered',
           displayQueueNumber: r.displayQueueNumber || '',
-          certificateUrl: r.certificateUrl || ''
+          certificateUrl: r.certificateUrl || '',
+          certificateApproved: r.certificateApproved || false
         };
       });
       setEditStates(initialEdits);
@@ -223,7 +227,7 @@ export default function SeatAssignmentPage({ params }) {
 
   const handleInputChange = (registrantId, field, value) => {
     let finalValue = value;
-    if (field === 'seatNumber') {
+    if (field === 'seatNumber' || field === 'fullNameEn') {
       finalValue = value.toUpperCase();
     }
     if (field === 'nationalId') {
@@ -257,12 +261,14 @@ export default function SeatAssignmentPage({ params }) {
         const updatedData = editStates[reg.id];
         const originalData = {
           fullName: reg.fullName,
+          fullNameEn: reg.fullNameEn,
           studentId: reg.studentId,
           nationalId: reg.nationalId
         };
 
         const hasIdentityChange =
           updatedData.fullName !== originalData.fullName ||
+          updatedData.fullNameEn !== originalData.fullNameEn ||
           updatedData.studentId !== originalData.studentId ||
           updatedData.nationalId !== originalData.nationalId;
 
@@ -274,6 +280,7 @@ export default function SeatAssignmentPage({ params }) {
             const profileDoc = snapshot.docs[0];
             batch.update(doc(db, 'studentProfiles', profileDoc.id), {
               fullName: updatedData.fullName,
+              fullNameEn: updatedData.fullNameEn ? updatedData.fullNameEn.trim().toUpperCase() : null,
               studentId: updatedData.studentId,
               nationalId: updatedData.nationalId,
               updatedAt: serverTimestamp()
@@ -282,6 +289,7 @@ export default function SeatAssignmentPage({ params }) {
             const newProfileRef = doc(collection(db, 'studentProfiles'));
             batch.set(newProfileRef, {
               fullName: updatedData.fullName,
+              fullNameEn: updatedData.fullNameEn ? updatedData.fullNameEn.trim().toUpperCase() : null,
               studentId: updatedData.studentId || '',
               nationalId: updatedData.nationalId,
               lineUserId: '',
@@ -293,7 +301,10 @@ export default function SeatAssignmentPage({ params }) {
         }
 
         const registrantDocRef = doc(db, 'registrations', reg.id);
-        batch.update(registrantDocRef, updatedData);
+        batch.update(registrantDocRef, {
+          ...updatedData,
+          fullNameEn: updatedData.fullNameEn ? updatedData.fullNameEn.trim().toUpperCase() : null
+        });
       });
 
       await Promise.all(updatePromises);
@@ -331,10 +342,67 @@ export default function SeatAssignmentPage({ params }) {
     }
   };
 
+  const handleToggleCertificateApproved = async (regId, currentVal) => {
+    try {
+      const newVal = !currentVal;
+      setRegistrants(prev => prev.map(r => r.id === regId ? { ...r, certificateApproved: newVal } : r));
+      setEditStates(prev => ({
+        ...prev,
+        [regId]: { ...(prev[regId] || {}), certificateApproved: newVal }
+      }));
+      await updateDoc(doc(db, 'registrations', regId), {
+        certificateApproved: newVal
+      });
+      showToast({
+        message: newVal ? 'อนุมัติเกียรติบัตรแล้ว (เปิดปุ่มให้นักเรียน)' : 'ยกเลิกสิทธิ์เกียรติบัตรแล้ว',
+        type: 'success'
+      });
+    } catch (err) {
+      console.error('Toggle cert approved error:', err);
+      showAlert({ title: 'เกิดข้อผิดพลาด', message: err.message, type: 'error' });
+      fetchData();
+    }
+  };
+
+  const handleBatchToggleCertificate = async (approved) => {
+    if (selectedIds.length === 0) return;
+    setIsLoading(true);
+    try {
+      const chunkSize = 400;
+      for (let i = 0; i < selectedIds.length; i += chunkSize) {
+        const batch = writeBatch(db);
+        const chunk = selectedIds.slice(i, i + chunkSize);
+        chunk.forEach(id => batch.update(doc(db, 'registrations', id), { certificateApproved: approved }));
+        await batch.commit();
+      }
+      setRegistrants(prev => prev.map(r => selectedIds.includes(r.id) ? { ...r, certificateApproved: approved } : r));
+      setEditStates(prev => {
+        const updated = { ...prev };
+        selectedIds.forEach(id => {
+          if (updated[id]) updated[id] = { ...updated[id], certificateApproved: approved };
+        });
+        return updated;
+      });
+      showToast({
+        message: approved
+          ? `อนุมัติเกียรติบัตร ${selectedIds.length} รายการเรียบร้อยแล้ว`
+          : `ยกเลิกการอนุมัติเกียรติบัตร ${selectedIds.length} รายการเรียบร้อยแล้ว`,
+        type: 'success'
+      });
+      setSelectedIds([]);
+    } catch (err) {
+      console.error('Batch cert approved error:', err);
+      showAlert({ title: 'เกิดข้อผิดพลาด', message: err.message, type: 'error' });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleAddParticipant = async (e) => {
     e.preventDefault();
-    const { fullName, nationalId, course, quota, timeSlot, studentId, displayQueueNumber, certificateUrl } = form;
+    const { fullName, fullNameEn, nationalId, course, quota, timeSlot, studentId, displayQueueNumber, certificateUrl } = form;
     const cleanNat = String(nationalId || '').replace(/\D/g, '');
+    const cleanFullNameEn = fullNameEn ? fullNameEn.trim().toUpperCase() : null;
 
     if (!fullName || !cleanNat || (activity?.type === 'queue' && (!course || !timeSlot))) {
       setMessage('กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน');
@@ -370,6 +438,7 @@ export default function SeatAssignmentPage({ params }) {
         lineUserIdToUse = profileDoc.data().lineUserId;
         batch.update(doc(db, 'studentProfiles', profileDoc.id), {
           fullName,
+          fullNameEn: cleanFullNameEn || profileDoc.data().fullNameEn || null,
           studentId: studentId || profileDoc.data().studentId,
           nationalId: cleanNat,
           updatedAt: serverTimestamp()
@@ -378,6 +447,7 @@ export default function SeatAssignmentPage({ params }) {
         const newProfileRef = doc(collection(db, 'studentProfiles'));
         batch.set(newProfileRef, {
           fullName,
+          fullNameEn: cleanFullNameEn,
           studentId: studentId || '',
           nationalId: cleanNat,
           lineUserId: '',
@@ -392,6 +462,7 @@ export default function SeatAssignmentPage({ params }) {
         activityId,
         courseId: activity?.courseId || null,
         fullName,
+        fullNameEn: cleanFullNameEn,
         studentId: studentId || null,
         nationalId: cleanNat,
         course: course || null,
@@ -408,7 +479,7 @@ export default function SeatAssignmentPage({ params }) {
       await batch.commit();
 
       setMessage('✅ เพิ่มรายชื่อสำเร็จ!');
-      setForm({ fullName: '', studentId: '', nationalId: '', course: '', quota: '', timeSlot: '', displayQueueNumber: '', certificateUrl: '', status: 'registered' });
+      setForm({ fullName: '', fullNameEn: '', studentId: '', nationalId: '', course: '', quota: '', timeSlot: '', displayQueueNumber: '', certificateUrl: '', status: 'registered' });
       fetchData();
       setTimeout(() => setMessage(''), 3000);
     } catch (error) {
@@ -711,6 +782,16 @@ export default function SeatAssignmentPage({ params }) {
       complete: async (results) => {
         const thaiToEnglishHeaderMap = {
           'ชื่อ-สกุล': 'fullName',
+          'ชื่อ-นามสกุล': 'fullName',
+          'ชื่อ-นามสกุล (ไทย)': 'fullName',
+          'NAME SURNAME (ENG)': 'fullNameEn',
+          'NAME SURNAME': 'fullNameEn',
+          'NAME SUERNAME (ENG)': 'fullNameEn',
+          'NAME (ENG)': 'fullNameEn',
+          'ชื่อภาษาอังกฤษ': 'fullNameEn',
+          'ชื่อ-นามสกุล (อังกฤษ)': 'fullNameEn',
+          'fullNameEn': 'fullNameEn',
+          'nameEn': 'fullNameEn',
           'รหัสผู้สมัคร': 'studentId',
           'เลขบัตรประชาชน': 'nationalId',
           'หลักสูตร': 'course',
@@ -768,7 +849,8 @@ export default function SeatAssignmentPage({ params }) {
         const mappedData = results.data.map(row => {
           const newRow = {};
           Object.keys(row).forEach(key => {
-            const engKey = thaiToEnglishHeaderMap[key] || key;
+            const cleanKey = key.trim();
+            const engKey = thaiToEnglishHeaderMap[cleanKey] || cleanKey;
             newRow[engKey] = row[key];
           });
           return newRow;
@@ -785,6 +867,7 @@ export default function SeatAssignmentPage({ params }) {
             const reg = mappedData[i];
             if (reg.fullName && reg.nationalId) {
               const cleanNat = String(reg.nationalId).replace(/\D/g, '');
+              const cleanFullNameEn = reg.fullNameEn ? String(reg.fullNameEn).trim().toUpperCase() : null;
               if (cleanNat.length !== 13) {
                 invalidNatIdCount++;
                 continue;
@@ -807,6 +890,7 @@ export default function SeatAssignmentPage({ params }) {
                 lineUserIdToUse = profileDoc.data().lineUserId;
                 batch.update(doc(db, 'studentProfiles', profileDoc.id), {
                   fullName: reg.fullName,
+                  fullNameEn: cleanFullNameEn || profileDoc.data().fullNameEn || null,
                   studentId: reg.studentId || profileDoc.data().studentId,
                   updatedAt: serverTimestamp()
                 });
@@ -814,6 +898,7 @@ export default function SeatAssignmentPage({ params }) {
                 const newProfileRef = doc(collection(db, 'studentProfiles'));
                 batch.set(newProfileRef, {
                   fullName: reg.fullName,
+                  fullNameEn: cleanFullNameEn,
                   studentId: reg.studentId || '',
                   nationalId: reg.nationalId,
                   lineUserId: '',
@@ -828,6 +913,7 @@ export default function SeatAssignmentPage({ params }) {
                 activityId,
                 courseId: activity?.courseId || null,
                 fullName: reg.fullName,
+                fullNameEn: cleanFullNameEn,
                 studentId: reg.studentId || null,
                 nationalId: reg.nationalId,
                 course: reg.course || null,
@@ -868,7 +954,8 @@ export default function SeatAssignmentPage({ params }) {
 
   const csvExportHeaders = [
     { label: "ลำดับ", key: "index" },
-    { label: "ชื่อ-สกุล", key: "fullName" },
+    { label: "ชื่อ-สกุล (ไทย)", key: "fullName" },
+    { label: "NAME SURNAME (ENG)", key: "fullNameEn" },
     { label: "รหัสผู้สมัคร", key: "studentId" },
     { label: "เลขบัตรประชาชน", key: "nationalId" },
     { label: "ประเภทโควตา", key: "quota" },
@@ -903,6 +990,7 @@ export default function SeatAssignmentPage({ params }) {
     const row = {
       index: idx + 1,
       fullName: reg.fullName || '',
+      fullNameEn: reg.fullNameEn || '',
       studentId: reg.studentId || '',
       nationalId: reg.nationalId || '',
       quota: reg.quota || evalScore.quota || '-',
@@ -1174,13 +1262,27 @@ export default function SeatAssignmentPage({ params }) {
         <div className="bg-white p-3.5 rounded-lg border border-slate-200 space-y-2">
           <h2 className="text-xs font-semibold text-slate-900 uppercase">เพิ่มนักเรียนรายบุคคล</h2>
           <form onSubmit={handleAddParticipant} className="space-y-2">
+            <div>
+              <div className="flex items-center justify-between mb-0.5">
+                <span className="text-[10px] text-slate-600 font-semibold">NAME SURNAME (ENG)</span>
+                <span className="text-[9px] text-amber-700 bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200">ตัวพิมพ์ใหญ่ / No title</span>
+              </div>
+              <input
+                type="text"
+                value={form.fullNameEn}
+                onChange={e => setForm({ ...form, fullNameEn: e.target.value.toUpperCase() })}
+                placeholder="FIRSTNAME LASTNAME"
+                className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-800 outline-none focus:border-slate-400 font-medium uppercase"
+              />
+            </div>
+
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <input
                   type="text"
                   value={form.fullName}
                   onChange={e => setForm({ ...form, fullName: e.target.value })}
-                  placeholder="ชื่อ-สกุล *"
+                  placeholder="ชื่อ-นามสกุล (ไทย) *"
                   className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-800 outline-none focus:border-slate-400"
                   required
                 />
@@ -1389,20 +1491,39 @@ export default function SeatAssignmentPage({ params }) {
           <div className="flex items-center gap-1.5 flex-wrap">
             {/* Selected items action banner */}
             {selectedIds.length > 0 && (
-              <div className="flex items-center gap-1.5 bg-rose-50 border border-rose-200 px-2.5 py-1 rounded">
+              <div className="flex items-center gap-1.5 bg-rose-50 border border-rose-200 px-2.5 py-1 rounded flex-wrap">
                 <span className="text-xs font-semibold text-rose-800">
-                  เลือกอยู่ {selectedIds.length} รายการ
+                  เลือกอยู่ {selectedIds.length} รายการ:
                 </span>
+                <button
+                  type="button"
+                  onClick={() => handleBatchToggleCertificate(true)}
+                  disabled={isLoading}
+                  className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded transition-colors shadow-xs flex items-center gap-1 cursor-pointer"
+                  title="อนุมัติเกียรติบัตรให้นักเรียนที่เลือกทั้งหมด"
+                >
+                  <span>✓</span>
+                  <span>อนุมัติ ({selectedIds.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleBatchToggleCertificate(false)}
+                  disabled={isLoading}
+                  className="px-2 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-medium rounded transition-colors cursor-pointer"
+                  title="ปิดสิทธิ์เกียรติบัตรของนักเรียนที่เลือก"
+                >
+                  ปิดสิทธิ์ ({selectedIds.length})
+                </button>
                 <button
                   onClick={handleDeleteSelected}
                   disabled={isLoading}
-                  className="px-2.5 py-0.5 bg-red-600 hover:bg-red-700 text-white text-xs font-medium rounded transition-colors shadow-xs"
+                  className="px-2.5 py-0.5 bg-red-600 hover:bg-red-700 text-white text-xs font-medium rounded transition-colors shadow-xs cursor-pointer"
                 >
                   ลบที่เลือก ({selectedIds.length})
                 </button>
                 <button
                   onClick={() => setSelectedIds([])}
-                  className="px-2 py-0.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-600 text-xs rounded transition-colors"
+                  className="px-2 py-0.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-600 text-xs rounded transition-colors cursor-pointer"
                 >
                   ยกเลิก
                 </button>
@@ -1467,7 +1588,10 @@ export default function SeatAssignmentPage({ params }) {
                 </th>
                 <th className="px-3 py-2.5 w-10 text-center border-r border-slate-200">#</th>
                 <th className="px-3 py-2.5 min-w-[160px] border-r border-slate-200 cursor-pointer hover:text-slate-900" onClick={() => handleSort('fullName')}>
-                  <div className="flex items-center justify-between">ชื่อ-สกุล <SortIcon columnKey="fullName" /></div>
+                  <div className="flex items-center justify-between">ชื่อ-สกุล (ไทย) <SortIcon columnKey="fullName" /></div>
+                </th>
+                <th className="px-3 py-2.5 min-w-[160px] border-r border-slate-200 cursor-pointer hover:text-slate-900" onClick={() => handleSort('fullNameEn')}>
+                  <div className="flex items-center justify-between">NAME SURNAME (ENG) <SortIcon columnKey="fullNameEn" /></div>
                 </th>
                 <th className="px-3 py-2.5 w-28 border-r border-slate-200 cursor-pointer hover:text-slate-900" onClick={() => handleSort('studentId')}>
                   <div className="flex items-center justify-between">รหัสผู้สมัคร <SortIcon columnKey="studentId" /></div>
@@ -1508,10 +1632,10 @@ export default function SeatAssignmentPage({ params }) {
                   </th>
                 )}
 
-                <th className="px-3 py-2.5 min-w-[130px] text-center border-r border-slate-200 cursor-pointer hover:text-slate-900" onClick={() => handleSort('certificateUrl')}>
+                <th className="px-2.5 py-2.5 w-28 text-center border-r border-slate-200 cursor-pointer hover:text-slate-900" onClick={() => handleSort('certificateApproved')}>
                   <div className="flex items-center justify-between">
                     <span>เกียรติบัตร</span>
-                    <SortIcon columnKey="certificateUrl" />
+                    <SortIcon columnKey="certificateApproved" />
                   </div>
                 </th>
 
@@ -1552,6 +1676,19 @@ export default function SeatAssignmentPage({ params }) {
                         />
                       ) : (
                         reg.fullName
+                      )}
+                    </td>
+                    <td className="px-3 py-2 font-medium text-slate-800 border-r border-slate-100 uppercase">
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          value={editStates[reg.id]?.fullNameEn || ''}
+                          onChange={(e) => handleInputChange(reg.id, 'fullNameEn', e.target.value.toUpperCase())}
+                          placeholder="NAME SURNAME"
+                          className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs uppercase"
+                        />
+                      ) : (
+                        reg.fullNameEn || '-'
                       )}
                     </td>
                     <td className="px-3 py-2 text-slate-600 border-r border-slate-100">
@@ -1725,15 +1862,76 @@ export default function SeatAssignmentPage({ params }) {
 
                     <td className="px-3 py-2 text-center border-r border-slate-100 whitespace-nowrap">
                       {isEditing ? (
-                        <input
-                          type="url"
-                          value={editStates[reg.id]?.certificateUrl || ''}
-                          onChange={(e) => handleInputChange(reg.id, 'certificateUrl', e.target.value)}
-                          placeholder="https://..."
-                          className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs"
-                        />
+                        <div className="flex items-center gap-2">
+                          <label className="inline-flex items-center gap-1 cursor-pointer text-xs">
+                            <input
+                              type="checkbox"
+                              checked={editStates[reg.id]?.certificateApproved || false}
+                              onChange={(e) => handleInputChange(reg.id, 'certificateApproved', e.target.checked)}
+                              className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                            />
+                            <span className="text-[11px] text-slate-600">อนุมัติ</span>
+                          </label>
+                          <input
+                            type="url"
+                            value={editStates[reg.id]?.certificateUrl || ''}
+                            onChange={(e) => handleInputChange(reg.id, 'certificateUrl', e.target.value)}
+                            placeholder="https://..."
+                            className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs"
+                          />
+                        </div>
                       ) : (
-                        <div className="flex items-center justify-center gap-1">
+                        <div className="flex items-center justify-center gap-1.5">
+                          {/* Checklist Mini Toggle Switch */}
+                          <button
+                            type="button"
+                            onClick={() => handleToggleCertificateApproved(reg.id, reg.certificateApproved)}
+                            className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                              reg.certificateApproved ? 'bg-emerald-500' : 'bg-slate-300'
+                            }`}
+                            title={reg.certificateApproved ? 'อนุมัติเกียรติบัตรแล้ว (คลิกเพื่อปิดสิทธิ์)' : 'คลิกเพื่ออนุมัติเกียรติบัตร'}
+                          >
+                            <span
+                              aria-hidden="true"
+                              className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow-xs transition duration-200 ease-in-out ${
+                                reg.certificateApproved ? 'translate-x-3' : 'translate-x-0.5'
+                              }`}
+                            />
+                          </button>
+
+                          {/* Template Certificate Preview Button (Available when mode is template AND template uploaded) */}
+                          {activity?.certificateMode !== 'individual_link' && activity?.certificateTemplateUrl && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const certData = {
+                                  templateUrl: activity.certificateTemplateUrl,
+                                  fullName: reg.fullName,
+                                  fullNameEn: reg.fullNameEn,
+                                  projectName: activity.certificateProjectName || activity.name,
+                                  dateText: activity.certificateDateText || ''
+                                };
+                                setCertPreview({ isOpen: true, data: certData, previewUrl: '', isGenerating: true });
+                                try {
+                                  const url = await getCertificatePreviewDataUrl(certData);
+                                  setCertPreview({ isOpen: true, data: certData, previewUrl: url, isGenerating: false });
+                                } catch (e) {
+                                  console.error('Cert preview error:', e);
+                                  setCertPreview(p => ({ ...p, isGenerating: false }));
+                                }
+                              }}
+                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] transition-colors cursor-pointer ${
+                                reg.certificateApproved
+                                  ? 'font-medium bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200'
+                                  : 'font-normal bg-slate-50 hover:bg-slate-100 text-slate-500 border border-slate-200'
+                              }`}
+                              title={reg.certificateApproved ? 'ดูตัวอย่าง / ดาวน์โหลดใบประกาศ' : 'ดูตัวอย่างใบประกาศ (ยังไม่อนุมัติ)'}
+                            >
+                              <span>📜</span>
+                              <span>ใบประกาศ</span>
+                            </button>
+                          )}
+
                           {reg.certificateUrl ? (
                             <>
                               <a
@@ -1743,7 +1941,7 @@ export default function SeatAssignmentPage({ params }) {
                                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition-colors"
                                 title={reg.certificateUrl}
                               >
-                                <span>📜</span>
+                                <span>🔗</span>
                                 <span>เปิดดู</span>
                               </a>
                               <button
@@ -1761,19 +1959,21 @@ export default function SeatAssignmentPage({ params }) {
                               </button>
                             </>
                           ) : (
-                            <button
-                              type="button"
-                              onClick={() => setCertModal({
-                                isOpen: true,
-                                regId: reg.id,
-                                studentName: reg.fullName,
-                                url: ''
-                              })}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs text-slate-500 hover:text-[#000946] bg-slate-50 hover:bg-slate-100 border border-slate-200 transition-colors cursor-pointer"
-                            >
-                              <span>+</span>
-                              <span>แนบลิงก์</span>
-                            </button>
+                            (activity?.certificateMode === 'individual_link' || !activity?.certificateTemplateUrl) && (
+                              <button
+                                type="button"
+                                onClick={() => setCertModal({
+                                  isOpen: true,
+                                  regId: reg.id,
+                                  studentName: reg.fullName,
+                                  url: ''
+                                })}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs text-slate-500 hover:text-[#000946] bg-slate-50 hover:bg-slate-100 border border-slate-200 transition-colors cursor-pointer"
+                              >
+                                <span>+</span>
+                                <span>แนบลิงก์</span>
+                              </button>
+                            )
                           )}
                         </div>
                       )}
@@ -1989,6 +2189,77 @@ export default function SeatAssignmentPage({ params }) {
               >
                 บันทึกลิงก์
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Certificate Preview & Download Modal */}
+      {certPreview.isOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex justify-center items-center z-50 p-4 animate-in fade-in" onClick={() => setCertPreview(p => ({ ...p, isOpen: false }))}>
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full p-5 space-y-4 font-sans" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
+                  <span>📜</span>
+                  <span>ตัวอย่างใบประกาศนียบัตร (Certificate Preview)</span>
+                </h3>
+                <p className="text-xs text-slate-500 font-normal">
+                  ผู้เข้าร่วม: <span className="font-semibold text-slate-800">{certPreview.data?.fullNameEn || certPreview.data?.fullName}</span>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCertPreview(p => ({ ...p, isOpen: false }))}
+                className="text-slate-400 hover:text-slate-600 text-sm font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="bg-slate-900 rounded-xl overflow-hidden p-2 flex items-center justify-center min-h-[220px] shadow-inner">
+              {certPreview.isGenerating ? (
+                <div className="text-white text-xs flex flex-col items-center gap-2">
+                  <div className="w-6 h-6 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin"></div>
+                  <span>กำลังสร้างใบประกาศนียบัตร...</span>
+                </div>
+              ) : certPreview.previewUrl ? (
+                <img
+                  src={certPreview.previewUrl}
+                  alt="Certificate Preview"
+                  className="max-h-[380px] w-auto object-contain rounded shadow"
+                />
+              ) : (
+                <span className="text-slate-400 text-xs">ไม่สามารถสร้างตัวอย่างได้</span>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setCertPreview(p => ({ ...p, isOpen: false }))}
+                className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs rounded-lg transition-colors cursor-pointer"
+              >
+                ปิด
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={certPreview.isGenerating || !certPreview.data}
+                  onClick={() => downloadCertificatePNG(certPreview.data)}
+                  className="px-3.5 py-1.5 bg-[#000946] hover:bg-[#00125e] text-white text-xs font-medium rounded-lg shadow-sm transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                >
+                  ดาวน์โหลด PNG
+                </button>
+                <button
+                  type="button"
+                  disabled={certPreview.isGenerating || !certPreview.data}
+                  onClick={() => downloadCertificatePDF(certPreview.data)}
+                  className="px-3.5 py-1.5 bg-[#ff741f] hover:bg-[#e55e0b] text-white text-xs font-medium rounded-lg shadow-sm transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                >
+                  ดาวน์โหลด PDF
+                </button>
+              </div>
             </div>
           </div>
         </div>

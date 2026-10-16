@@ -6,6 +6,7 @@ import { syncUnlinkedRegistrations } from '../../lib/registrationService';
 
 export default function ProfileSetupForm({ liffProfile, onProfileCreated }) {
   const [fullName, setFullName] = useState(liffProfile?.displayName || '');
+  const [fullNameEn, setFullNameEn] = useState('');
   const [nationalId, setNationalId] = useState('');
   const [studentId, setStudentId] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -19,10 +20,11 @@ export default function ProfileSetupForm({ liffProfile, onProfileCreated }) {
     try {
       const trimmedNationalId = nationalId.trim();
       const trimmedFullName = fullName.trim();
+      const trimmedFullNameEn = fullNameEn.trim().toUpperCase();
       const trimmedStudentId = studentId.trim();
 
       if (!trimmedFullName) {
-        throw new Error('กรุณากรอกชื่อ-นามสกุล');
+        throw new Error('กรุณากรอกชื่อ-นามสกุล (ไทย)');
       }
 
       if (trimmedNationalId.length !== 13 || !/^\d{13}$/.test(trimmedNationalId)) {
@@ -33,6 +35,7 @@ export default function ProfileSetupForm({ liffProfile, onProfileCreated }) {
       const profile = await registerOrLinkStudentProfile({
         nationalId: trimmedNationalId,
         fullName: trimmedFullName,
+        fullNameEn: trimmedFullNameEn || null,
         studentId: trimmedStudentId || null,
         liffProfile
       });
@@ -65,10 +68,33 @@ export default function ProfileSetupForm({ liffProfile, onProfileCreated }) {
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-4 text-left">
-          {/* ชื่อ - สกุล */}
+          {/* NAME SURNAME (ENG) */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label htmlFor="fullNameEn" className="block text-sm font-semibold text-slate-800">
+                NAME SURNAME (ENG)
+              </label>
+              <span className="text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                ตัวพิมพ์ใหญ่
+              </span>
+            </div>
+            <input
+              id="fullNameEn"
+              type="text"
+              value={fullNameEn}
+              onChange={(e) => setFullNameEn(e.target.value.toUpperCase())}
+              className="w-full px-4 py-3 bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#000946]/20 focus:border-[#000946] outline-none transition-all text-sm font-medium uppercase tracking-wide"
+              placeholder="FIRSTNAME LASTNAME"
+            />
+            <p className="text-xs text-rose-600 mt-1 font-medium flex items-center gap-1">
+              <span>* No title (Mr./Miss) - ไม่ต้องใส่คำนำหน้าชื่อ</span>
+            </p>
+          </div>
+
+          {/* ชื่อ-นามสกุล (ไทย) */}
           <div>
             <label htmlFor="fullName" className="block text-sm font-medium text-slate-700 mb-1">
-              ชื่อ - นามสกุล <span className="text-rose-500">*</span>
+              ชื่อ-นามสกุล (ไทย) <span className="text-rose-500">*</span>
             </label>
             <input
               id="fullName"

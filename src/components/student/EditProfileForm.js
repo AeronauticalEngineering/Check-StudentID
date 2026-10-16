@@ -5,6 +5,7 @@ import { upsertStudentProfile } from '../../lib/studentService';
 
 export default function EditProfileForm({ currentProfile, liffProfile, onProfileUpdated, onCancel }) {
   const [fullName, setFullName] = useState(currentProfile?.fullName || '');
+  const [fullNameEn, setFullNameEn] = useState(currentProfile?.fullNameEn || '');
   const [studentId, setStudentId] = useState(currentProfile?.studentId || '');
   const [nationalId, setNationalId] = useState(currentProfile?.nationalId || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -19,6 +20,7 @@ export default function EditProfileForm({ currentProfile, liffProfile, onProfile
       const updated = await upsertStudentProfile({
         nationalId: nationalId.trim(),
         fullName: fullName.trim(),
+        fullNameEn: fullNameEn.trim().toUpperCase() || null,
         studentId: studentId.trim() || null,
         lineUserId: liffProfile?.userId || currentProfile?.lineUserId || null,
         lineDisplayName: liffProfile?.displayName || currentProfile?.lineDisplayName || null,
@@ -42,8 +44,30 @@ export default function EditProfileForm({ currentProfile, liffProfile, onProfile
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label htmlFor="editFullName" className="block text-sm font-normal text-gray-700 mb-1">
-              ชื่อ-สกุล
+            <div className="flex items-center justify-between mb-1">
+              <label htmlFor="editFormFullNameEn" className="block text-sm font-semibold text-gray-800">
+                NAME SURNAME (ENG)
+              </label>
+              <span className="text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                ตัวพิมพ์ใหญ่
+              </span>
+            </div>
+            <input
+              id="editFormFullNameEn"
+              type="text"
+              value={fullNameEn}
+              onChange={(e) => setFullNameEn(e.target.value.toUpperCase())}
+              className="w-full p-3 bg-white text-slate-900 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#000946]/20 focus:border-[#000946] outline-none transition-all text-sm font-medium placeholder:text-slate-400 uppercase tracking-wide"
+              placeholder="FIRSTNAME LASTNAME"
+            />
+            <p className="text-xs text-rose-600 mt-1 font-medium">
+              * No title (Mr./Miss) - ไม่ต้องใส่คำนำหน้าชื่อ
+            </p>
+          </div>
+
+          <div>
+            <label htmlFor="editFullName" className="block text-sm font-medium text-gray-700 mb-1">
+              ชื่อ-นามสกุล (ไทย) <span className="text-red-500">*</span>
             </label>
             <input
               id="editFullName"

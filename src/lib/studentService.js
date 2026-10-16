@@ -127,6 +127,7 @@ export async function getAllStudentProfiles() {
 export async function upsertStudentProfile({
   nationalId,
   fullName,
+  fullNameEn = null,
   studentId = null,
   lineUserId = null,
   lineDisplayName = null,
@@ -156,6 +157,7 @@ export async function upsertStudentProfile({
   const payload = {
     nationalId: trimmedNationalId,
     fullName: fullName.trim(),
+    fullNameEn: fullNameEn ? fullNameEn.trim().toUpperCase() : null,
     studentId: studentId ? studentId.trim() : null,
     updatedAt: serverTimestamp()
   };
@@ -229,6 +231,7 @@ export async function linkStudentLineAccount(nationalId, liffProfile) {
   const profileData = {
     nationalId: trimmedNationalId,
     fullName: regData.fullName,
+    fullNameEn: regData.fullNameEn || null,
     studentId: regData.studentId || null,
     lineUserId: userId,
     lineDisplayName: displayName || null,
@@ -250,6 +253,7 @@ export async function linkStudentLineAccount(nationalId, liffProfile) {
  * @param {object} params
  * @param {string} params.nationalId - เลขบัตรประชาชน 13 หลัก
  * @param {string} params.fullName - ชื่อ-สกุล
+ * @param {string} [params.fullNameEn] - NAME SURNAME (ENG) ตัวพิมพ์ใหญ่ ไม่มีคำนำหน้า
  * @param {string} [params.studentId] - รหัสนักศึกษา / รหัสผู้สมัคร (ไม่บังคับ)
  * @param {object} params.liffProfile - ข้อมูลจาก LINE LIFF { userId, displayName, pictureUrl }
  * @returns {Promise<object>}
@@ -257,6 +261,7 @@ export async function linkStudentLineAccount(nationalId, liffProfile) {
 export async function registerOrLinkStudentProfile({
   nationalId,
   fullName,
+  fullNameEn = null,
   studentId = null,
   liffProfile
 }) {
@@ -266,6 +271,7 @@ export async function registerOrLinkStudentProfile({
 
   const trimmedNationalId = nationalId.trim();
   const trimmedFullName = fullName.trim();
+  const trimmedFullNameEn = fullNameEn ? fullNameEn.trim().toUpperCase() : null;
   const trimmedStudentId = studentId?.trim() || null;
   const { userId, displayName, pictureUrl } = liffProfile;
 
@@ -287,6 +293,7 @@ export async function registerOrLinkStudentProfile({
     const updatedProfile = {
       ...existingProfile,
       fullName: trimmedFullName || existingProfile.fullName,
+      fullNameEn: trimmedFullNameEn || existingProfile.fullNameEn || null,
       studentId: trimmedStudentId || existingProfile.studentId || null,
       lineUserId: userId,
       lineDisplayName: displayName || existingProfile.lineDisplayName || null,
@@ -315,6 +322,7 @@ export async function registerOrLinkStudentProfile({
     const profileData = {
       nationalId: trimmedNationalId,
       fullName: trimmedFullName || regData.fullName,
+      fullNameEn: trimmedFullNameEn || regData.fullNameEn || null,
       studentId: trimmedStudentId || regData.studentId || null,
       lineUserId: userId,
       lineDisplayName: displayName || null,
@@ -333,6 +341,7 @@ export async function registerOrLinkStudentProfile({
   const newStudentProfile = {
     nationalId: trimmedNationalId,
     fullName: trimmedFullName,
+    fullNameEn: trimmedFullNameEn || null,
     studentId: trimmedStudentId,
     lineUserId: userId,
     lineDisplayName: displayName || null,

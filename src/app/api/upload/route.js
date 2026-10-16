@@ -5,7 +5,8 @@ import path from 'path';
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { base64, path: targetPath } = body;
+    const base64 = body.base64 || body.file;
+    const targetPath = body.path || (body.folder ? `${body.folder}/cert_${Date.now()}.png` : null);
 
     if (!base64) {
       return NextResponse.json({ error: 'No image data provided' }, { status: 400 });

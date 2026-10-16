@@ -115,6 +115,7 @@ function RegistrationComponent() {
         activityId: activityIdFromUrl,
         nationalId: studentDbProfile.nationalId,
         fullName: studentDbProfile.fullName,
+        fullNameEn: studentDbProfile.fullNameEn || null,
         studentId: studentDbProfile.studentId,
         lineUserId: liffProfile.userId,
         course: selectedCourse?.name || null,

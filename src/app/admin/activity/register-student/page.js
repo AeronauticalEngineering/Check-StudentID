@@ -15,6 +15,7 @@ export default function AdminRegisterStudentPage() {
   const [courses, setCourses] = useState({});
   const [selectedActivity, setSelectedActivity] = useState('');
   const [fullName, setFullName] = useState('');
+  const [fullNameEn, setFullNameEn] = useState('');
   const [studentId, setStudentId] = useState('');
   const [nationalId, setNationalId] = useState('');
 
@@ -50,6 +51,7 @@ export default function AdminRegisterStudentPage() {
     setGeneratedLink('');
     setMessage(null);
     setFullName('');
+    setFullNameEn('');
     setStudentId('');
     setNationalId('');
   };
@@ -68,12 +70,14 @@ export default function AdminRegisterStudentPage() {
     try {
       const trimmedNationalId = nationalId.trim();
       const trimmedFullName = fullName.trim();
+      const trimmedFullNameEn = fullNameEn ? fullNameEn.trim().toUpperCase() : null;
       const trimmedStudentId = studentId.trim() || null;
 
       // 1. บันทึกโปรไฟล์นักเรียนเป็น Master Record
       await upsertStudentProfile({
         nationalId: trimmedNationalId,
         fullName: trimmedFullName,
+        fullNameEn: trimmedFullNameEn,
         studentId: trimmedStudentId,
         source: 'admin_register'
       });
@@ -84,6 +88,7 @@ export default function AdminRegisterStudentPage() {
         activityId: selectedActivity,
         nationalId: trimmedNationalId,
         fullName: trimmedFullName,
+        fullNameEn: trimmedFullNameEn,
         studentId: trimmedStudentId,
         courseId: act?.courseId || act?.categoryId || null,
         registeredBy: 'admin'
@@ -198,8 +203,26 @@ export default function AdminRegisterStudentPage() {
               </span>
 
               <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-sm font-semibold text-slate-800">
+                    NAME SURNAME (ENG)
+                  </label>
+                  <span className="text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                    ตัวพิมพ์ใหญ่ / No title
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  placeholder="FIRSTNAME LASTNAME (ไม่ต้องมี Mr./Miss)"
+                  value={fullNameEn}
+                  onChange={(e) => setFullNameEn(e.target.value.toUpperCase())}
+                  className="w-full px-3.5 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-900 outline-none focus:border-[#000946] focus:ring-1 focus:ring-[#000946]/20 transition-all placeholder:text-slate-400 uppercase tracking-wide"
+                />
+              </div>
+
+              <div className="space-y-1.5">
                 <label className="block text-sm font-normal text-slate-700">
-                  ชื่อ-สกุล <span className="text-red-500">*</span>
+                  ชื่อ-สกุล (ไทย) <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
