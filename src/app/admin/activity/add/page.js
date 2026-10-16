@@ -941,44 +941,78 @@ export default function AddActivityPage() {
                                 const reader = new FileReader();
                                 reader.onload = async (ev) => {
                                   try {
-                                    const base64 = ev.target?.result;
+                                    const rawBase64 = ev.target?.result;
+                                    if (!rawBase64) throw new Error('ไม่พบข้อมูลรูปภาพ');
+
+                                    // บีบอัดและปรับขนาดรูปภาพให้อยู่ในขนาดที่เหมาะสม (Max 1280px) เพื่อให้โหลดเร็วและไม่เกินข้อจำกัด
+                                    const optimizedBase64 = await new Promise((resolve) => {
+                                      const img = new Image();
+                                      img.onload = () => {
+                                        let w = img.width;
+                                        let h = img.height;
+                                        const maxDim = 1280;
+                                        if (w > maxDim || h > maxDim) {
+                                          if (w > h) {
+                                            h = Math.round((h * maxDim) / w);
+                                            w = maxDim;
+                                          } else {
+                                            w = Math.round((w * maxDim) / h);
+                                            h = maxDim;
+                                          }
+                                        }
+                                        const c = document.createElement('canvas');
+                                        c.width = w;
+                                        c.height = h;
+                                        const ctx = c.getContext('2d');
+                                        ctx.drawImage(img, 0, 0, w, h);
+                                        resolve(c.toDataURL('image/jpeg', 0.88));
+                                      };
+                                      img.onerror = () => resolve(rawBase64);
+                                      img.src = rawBase64;
+                                    });
+
                                     let uploadedUrl = '';
 
                                     // 1. ลองอัปโหลดไปยัง Firebase Storage ก่อน
                                     if (storage) {
                                       try {
-                                        const storagePath = `cert-templates/template_${Date.now()}.png`;
+                                        const storagePath = `cert-templates/template_${Date.now()}.jpg`;
                                         const storageRef = ref(storage, storagePath);
-                                        const snap = await uploadString(storageRef, base64, 'data_url');
+                                        const snap = await uploadString(storageRef, optimizedBase64, 'data_url');
                                         uploadedUrl = await getDownloadURL(snap.ref);
                                       } catch (storageErr) {
                                         console.warn('Firebase Storage upload error, falling back to server upload:', storageErr?.message);
                                       }
                                     }
 
-                                    // 2. ถ้า Storage ไม่ได้เปิดใช้งาน ให้ส่งผ่าน /api/upload
+                                    // 2. ถ้า Storage อัปโหลดไม่ได้ ให้ลองผ่าน /api/upload
                                     if (!uploadedUrl) {
-                                      const res = await fetch('/api/upload', {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({
-                                          base64: base64,
-                                          file: base64,
-                                          path: `cert-templates/template_${Date.now()}.png`
-                                        })
-                                      });
-                                      const json = await res.json();
-                                      if (json.url) {
-                                        uploadedUrl = json.url;
-                                      } else {
-                                        throw new Error(json.error || 'Upload failed');
+                                      try {
+                                        const res = await fetch('/api/upload', {
+                                          method: 'POST',
+                                          headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({
+                                            base64: optimizedBase64,
+                                            file: optimizedBase64,
+                                            path: `cert-templates/template_${Date.now()}.jpg`
+                                          })
+                                        });
+                                        const json = await res.json();
+                                        if (json.url) {
+                                          uploadedUrl = json.url;
+                                        }
+                                      } catch (apiErr) {
+                                        console.warn('/api/upload fallback error:', apiErr?.message);
                                       }
                                     }
 
-                                    if (uploadedUrl) {
-                                      setCertificateTemplateUrl(uploadedUrl);
-                                      showToast({ message: 'อัปโหลด Template เกียรติบัตรเรียบร้อย!', type: 'success' });
+                                    // 3. Fallback ขั้นสุดท้าย: ใช้ Data URL ที่บีบอัดแล้วโดยตรง (ทำงานได้ 100% บน Vercel แม้ไม่มี Storage)
+                                    if (!uploadedUrl) {
+                                      uploadedUrl = optimizedBase64;
                                     }
+
+                                    setCertificateTemplateUrl(uploadedUrl);
+                                    showToast({ message: 'อัปโหลด Template เกียรติบัตรเรียบร้อย!', type: 'success' });
                                   } catch (err) {
                                     console.error('Template upload error:', err);
                                     showAlert({ title: 'อัปโหลดไม่สำเร็จ', message: err.message, type: 'error' });

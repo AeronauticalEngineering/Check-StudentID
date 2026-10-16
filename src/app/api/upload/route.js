@@ -20,22 +20,29 @@ export async function POST(request) {
 
     const buffer = Buffer.from(matches[2], 'base64');
 
-    // Generate filename from targetPath or timestamp
-    const cleanFilename = (targetPath || `evidence_${Date.now()}.jpg`)
-      .replace(/^documents\//, '')
-      .replace(/\//g, '_')
-      .replace(/[^a-zA-Z0-9._-]/g, '_');
+    // Try writing to local filesystem (works in local development)
+    try {
+      const cleanFilename = (targetPath || `evidence_${Date.now()}.jpg`)
+        .replace(/^documents\//, '')
+        .replace(/\//g, '_')
+        .replace(/[^a-zA-Z0-9._-]/g, '_');
 
-    const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
-    if (!fs.existsSync(uploadsDir)) {
-      fs.mkdirSync(uploadsDir, { recursive: true });
+      const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
+      if (!fs.existsSync(uploadsDir)) {
+        fs.mkdirSync(uploadsDir, { recursive: true });
+      }
+
+      const filePath = path.join(uploadsDir, cleanFilename);
+      await fs.promises.writeFile(filePath, buffer);
+
+      const publicUrl = `/uploads/${cleanFilename}`;
+      return NextResponse.json({ url: publicUrl, success: true });
+    } catch (fsError) {
+      // In serverless environments like Vercel / AWS Lambda, the local filesystem is read-only.
+      // Gracefully fall back to returning the base64 data URL directly, which works everywhere for images and canvas!
+      console.warn('Filesystem write not available (serverless/Vercel): falling back to direct base64 data URL.');
+      return NextResponse.json({ url: base64, success: true });
     }
-
-    const filePath = path.join(uploadsDir, cleanFilename);
-    await fs.promises.writeFile(filePath, buffer);
-
-    const publicUrl = `/uploads/${cleanFilename}`;
-    return NextResponse.json({ url: publicUrl, success: true });
   } catch (error) {
     console.error('Upload API error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });

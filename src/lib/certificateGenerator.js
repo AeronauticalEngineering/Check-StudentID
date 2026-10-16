@@ -4,14 +4,52 @@
 import { jsPDF } from 'jspdf';
 
 /**
- * Loads an image from URL or dataURL into an HTMLImageElement
+ * Loads an image from URL or dataURL into an HTMLImageElement safely without CORS issues
  */
-const loadImage = (src) => {
+const loadImage = async (src) => {
+  if (!src) throw new Error('No image source provided');
+
+  // 1. Data URLs or Blob URLs do not have CORS issues; load directly
+  if (src.startsWith('data:') || src.startsWith('blob:')) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Failed to load data URL image template'));
+      img.src = src;
+    });
+  }
+
+  // 2. For remote URLs (such as Firebase Storage), fetch via server-side proxy
+  // This completely eliminates browser CORS restrictions on Canvas
+  try {
+    const proxyUrl = `/api/proxy-image?url=${encodeURIComponent(src)}`;
+    const res = await fetch(proxyUrl);
+    if (res.ok) {
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Failed to load proxied image template'));
+        img.src = blobUrl;
+      });
+    }
+  } catch (proxyErr) {
+    console.warn('Proxy image fetch failed, trying direct image load:', proxyErr);
+  }
+
+  // 3. Fallback: Direct image element with crossOrigin
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => resolve(img);
-    img.onerror = (err) => reject(new Error('Failed to load image template: ' + (err?.message || 'network or CORS issue')));
+    img.onerror = () => {
+      // Last resort: try without crossOrigin
+      const fallbackImg = new Image();
+      fallbackImg.onload = () => resolve(fallbackImg);
+      fallbackImg.onerror = (err) => reject(new Error('Failed to load image template: ' + (err?.message || 'network or CORS issue')));
+      fallbackImg.src = src;
+    };
     img.src = src;
   });
 };
