@@ -125,6 +125,7 @@ export default function SeatAssignmentPage({ params }) {
     onConfirm: null,
     type: 'danger'
   });
+  const [isSyncingProfiles, setIsSyncingProfiles] = useState(false);
 
   useEffect(() => {
     const unsubCourses = onSnapshot(query(collection(db, 'courseOptions'), orderBy('priority'), orderBy('name')), (snapshot) => {
@@ -398,6 +399,59 @@ export default function SeatAssignmentPage({ params }) {
     }
   };
 
+  const handleSyncEnglishNamesFromProfiles = async () => {
+    setIsSyncingProfiles(true);
+    setMessage('กำลังดึงชื่อภาษาอังกฤษจากโปรไฟล์นักเรียน (studentProfiles)...');
+    try {
+      const updates = [];
+
+      for (const reg of registrants) {
+        if (!reg.nationalId) continue;
+        const cleanNat = String(reg.nationalId).replace(/\D/g, '');
+        if (cleanNat.length !== 13) continue;
+
+        const q = query(collection(db, 'studentProfiles'), where('nationalId', '==', cleanNat), limit(1));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const profileData = snap.docs[0].data();
+          const profileNameEn = profileData.fullNameEn ? profileData.fullNameEn.trim().toUpperCase() : null;
+          
+          if (profileNameEn && reg.fullNameEn !== profileNameEn) {
+            updates.push({ regId: reg.id, fullNameEn: profileNameEn });
+          }
+        }
+      }
+
+      // Batch commit in chunks of 400
+      let syncedCount = 0;
+      for (let i = 0; i < updates.length; i += 400) {
+        const chunk = updates.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach(u => {
+          batch.update(doc(db, 'registrations', u.regId), { fullNameEn: u.fullNameEn });
+        });
+        await batch.commit();
+        syncedCount += chunk.length;
+      }
+
+      if (syncedCount > 0) {
+        setMessage(`✅ ดึงชื่อภาษาอังกฤษจากโปรไฟล์สำเร็จ ${syncedCount} รายการ!`);
+        showToast({ message: `ดึงชื่อภาษาอังกฤษสำเร็จ ${syncedCount} รายการ`, type: 'success' });
+        await fetchData();
+      } else {
+        setMessage('ℹ️ ข้อมูลชื่อภาษาอังกฤษตรงตามโปรไฟล์ทั้งหมดแล้ว (ไม่มีรายการใหม่อัปเดต)');
+        showToast({ message: 'ข้อมูลชื่อภาษาอังกฤษตรงตามโปรไฟล์ทั้งหมดแล้ว', type: 'info' });
+      }
+      setTimeout(() => setMessage(''), 4000);
+    } catch (err) {
+      console.error('Sync English names error:', err);
+      setMessage(`❌ เกิดข้อผิดพลาดในการดึงข้อมูล: ${err.message}`);
+      showAlert({ title: 'เกิดข้อผิดพลาด', message: err.message, type: 'error' });
+    } finally {
+      setIsSyncingProfiles(false);
+    }
+  };
+
   const handleAddParticipant = async (e) => {
     e.preventDefault();
     const { fullName, fullNameEn, nationalId, course, quota, timeSlot, studentId, displayQueueNumber, certificateUrl } = form;
@@ -473,6 +527,7 @@ export default function SeatAssignmentPage({ params }) {
         registeredAt: serverTimestamp(),
         lineUserId: lineUserIdToUse,
         displayQueueNumber: displayQueueNumber || null,
+        certificateApproved: false,
         certificateUrl: certificateUrl ? certificateUrl.trim() : null,
       });
 
@@ -803,6 +858,13 @@ export default function SeatAssignmentPage({ params }) {
           'ช่วงเวลา': 'timeSlot',
           'คิว': 'displayQueueNumber',
           'สถานะ': 'status',
+          'สิทธิ์เกียรติบัตร': 'certificateApproved',
+          'อนุมัติเกียรติบัตร': 'certificateApproved',
+          'สถานะเกียรติบัตร': 'certificateApproved',
+          'รับเกียรติบัตร': 'certificateApproved',
+          'certificateApproved': 'certificateApproved',
+          'isCertified': 'certificateApproved',
+          'certApproved': 'certificateApproved',
           'ลิงก์เกียรติบัตร': 'certificateUrl',
           'เกียรติบัตร': 'certificateUrl',
           'certificateUrl': 'certificateUrl',
@@ -844,6 +906,13 @@ export default function SeatAssignmentPage({ params }) {
             return 'skipped';
           }
           return s;
+        };
+
+        const normalizeApproved = (val) => {
+          if (val === true || val === 1) return true;
+          if (!val) return false;
+          const s = String(val).trim().toLowerCase();
+          return s === 'true' || s === '1' || s === 'อนุมัติ' || s === 'yes' || s === 'ผ่าน' || s === 'เปิด' || s === 'y';
         };
 
         const mappedData = results.data.map(row => {
@@ -925,6 +994,7 @@ export default function SeatAssignmentPage({ params }) {
                 registeredAt: serverTimestamp(),
                 lineUserId: lineUserIdToUse,
                 displayQueueNumber: reg.displayQueueNumber || null,
+                certificateApproved: normalizeApproved(reg.certificateApproved),
                 certificateUrl: reg.certificateUrl ? String(reg.certificateUrl).trim() : null,
                 importOrder: i,
               });
@@ -961,6 +1031,7 @@ export default function SeatAssignmentPage({ params }) {
     { label: "ประเภทโควตา", key: "quota" },
     { label: "สถานะ", key: "status" },
     { label: "หลักสูตร", key: "course" },
+    { label: "สิทธิ์เกียรติบัตร", key: "certificateApproved" },
     { label: "ลิงก์เกียรติบัตร", key: "certificateUrl" },
     ...(isSeatType ? [{ label: "เลขที่นั่ง", key: "seatNumber" }] : []),
     ...(isQueueType ? [
@@ -996,6 +1067,7 @@ export default function SeatAssignmentPage({ params }) {
       quota: reg.quota || evalScore.quota || '-',
       status: translateStatus(reg.status),
       course: reg.course || '',
+      certificateApproved: reg.certificateApproved ? 'อนุมัติ' : 'ยังไม่อนุมัติ',
       certificateUrl: reg.certificateUrl || '',
       seatNumber: reg.seatNumber || '',
       timeSlot: reg.timeSlot || '',
@@ -1222,20 +1294,37 @@ export default function SeatAssignmentPage({ params }) {
                 className="w-full text-xs text-slate-600 file:mr-2 file:py-1 file:px-2.5 file:rounded file:border file:border-slate-200 file:text-xs file:bg-slate-50 file:text-slate-700 hover:file:bg-slate-100 cursor-pointer border border-slate-200 rounded p-1 bg-white"
               />
               <span className="text-[10px] text-slate-400 block mt-1">
-                Header: fullName, studentId, nationalId, course, quota{isSeatType ? ', seatNumber' : ''}{isQueueType ? ', timeSlot, displayQueueNumber' : ''}, certificateUrl, status
+                Header: fullName (ไทย), fullNameEn (อังกฤษ), studentId, nationalId, course, quota{isSeatType ? ', seatNumber' : ''}{isQueueType ? ', timeSlot, displayQueueNumber' : ''}, certificateApproved (สิทธิ์เกียรติบัตร), certificateUrl, status
               </span>
             </div>
           </div>
 
           <div className="space-y-1.5 pt-2 border-t border-slate-100">
-            <CSVLink
-              data={csvExportData}
-              headers={csvExportHeaders}
-              filename={`registrants_${activityId}.csv`}
-              className="w-full py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-medium rounded-lg text-center block transition-colors"
-            >
-              Export CSV ทั้งหมด ({registrants.length})
-            </CSVLink>
+            <div className="flex gap-2 items-center">
+              <CSVLink
+                data={csvExportData}
+                headers={csvExportHeaders}
+                filename={`registrants_${activityId}.csv`}
+                className="flex-1 py-1.5 px-3 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-medium rounded-lg text-center block transition-colors truncate"
+              >
+                Export CSV ทั้งหมด ({registrants.length})
+              </CSVLink>
+
+              <button
+                type="button"
+                onClick={handleSyncEnglishNamesFromProfiles}
+                disabled={isLoading || isSyncingProfiles}
+                className="py-1.5 px-2.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-medium rounded-lg text-center flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
+                title="ดึงชื่อ-นามสกุลภาษาอังกฤษจาก studentProfiles ที่นักเรียนบันทึกไว้ใน LINE มาใส่ในกิจกรรมนี้"
+              >
+                <span>{isSyncingProfiles ? 'กำลังดึงข้อมูล...' : 'ดึงชื่อ ENG จากโปรไฟล์'}</span>
+                {!isSyncingProfiles && registrants.filter(r => !r.fullNameEn).length > 0 && (
+                  <span className="bg-indigo-200/90 text-indigo-800 text-[10px] px-1.5 py-0.2 rounded-full font-semibold">
+                    {registrants.filter(r => !r.fullNameEn).length}
+                  </span>
+                )}
+              </button>
+            </div>
 
             {(activity?.type === 'exam' || activity?.type === 'graduation') && (
               <div className="flex gap-2">

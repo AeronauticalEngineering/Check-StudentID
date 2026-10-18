@@ -154,8 +154,8 @@ export async function getUserRegistrations({ nationalId, lineUserId }) {
  * @param {string} lineUserId 
  * @returns {Promise<number>} จำนวนรายการที่ซิงค์
  */
-export async function syncUnlinkedRegistrations(nationalId, lineUserId) {
-  if (!nationalId || !lineUserId) return 0;
+export async function syncUnlinkedRegistrations(nationalId, lineUserId, profileData = {}) {
+  if (!nationalId) return 0;
 
   const q = query(collection(db, COLLECTION_NAME), where('nationalId', '==', nationalId.trim()));
   const snapshot = await getDocs(q);
@@ -167,8 +167,18 @@ export async function syncUnlinkedRegistrations(nationalId, lineUserId) {
 
   snapshot.forEach(d => {
     const data = d.data();
-    if (data.lineUserId !== lineUserId) {
-      batch.update(d.ref, { lineUserId });
+    const updates = {};
+    if (lineUserId && data.lineUserId !== lineUserId) {
+      updates.lineUserId = lineUserId;
+    }
+    if (profileData.fullNameEn && (!data.fullNameEn || data.fullNameEn !== profileData.fullNameEn)) {
+      updates.fullNameEn = profileData.fullNameEn;
+    }
+    if (profileData.fullName && (!data.fullName || data.fullName !== profileData.fullName)) {
+      updates.fullName = profileData.fullName;
+    }
+    if (Object.keys(updates).length > 0) {
+      batch.update(d.ref, updates);
       updateCount++;
     }
   });

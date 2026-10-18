@@ -543,7 +543,7 @@ const CompletedRegistrationCard = ({ reg, activities, courses, hasEvaluated, onS
                     onClick={() => onOpenCert && onOpenCert({
                       templateUrl: activity.certificateTemplateUrl,
                       fullName: reg.fullName,
-                      fullNameEn: reg.fullNameEn,
+                      fullNameEn: reg.fullNameEn || studentDbProfile?.fullNameEn || null,
                       projectName: activity.certificateProjectName || activity.name,
                       dateText: activity.certificateDateText || (activityDate ? activityDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '')
                     })}
@@ -735,8 +735,15 @@ export default function MyRegistrationsPage() {
             let updateCount = 0;
             snapshot.forEach(doc => {
               const data = doc.data();
+              const updates = {};
               if (data.lineUserId !== liffProfile.userId) {
-                batch.update(doc.ref, { lineUserId: liffProfile.userId });
+                updates.lineUserId = liffProfile.userId;
+              }
+              if (studentDbProfile.fullNameEn && (!data.fullNameEn || data.fullNameEn !== studentDbProfile.fullNameEn)) {
+                updates.fullNameEn = studentDbProfile.fullNameEn;
+              }
+              if (Object.keys(updates).length > 0) {
+                batch.update(doc.ref, updates);
                 updateCount++;
               }
             });

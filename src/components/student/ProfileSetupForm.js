@@ -41,7 +41,10 @@ export default function ProfileSetupForm({ liffProfile, onProfileCreated }) {
       });
 
       // ซิงค์การลงทะเบียนเดิมทั้งหมด (ถ้ามี)
-      await syncUnlinkedRegistrations(trimmedNationalId, liffProfile.userId);
+      await syncUnlinkedRegistrations(trimmedNationalId, liffProfile.userId, {
+        fullName: trimmedFullName,
+        fullNameEn: trimmedFullNameEn || null
+      });
 
       onProfileCreated(profile);
     } catch (err) {

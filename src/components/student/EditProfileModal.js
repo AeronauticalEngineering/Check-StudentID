@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { db } from '../../lib/firebase';
 import { doc, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { checkDuplicateNationalId } from '../../lib/studentService';
+import { syncUnlinkedRegistrations } from '../../lib/registrationService';
 
 export default function EditProfileModal({ currentProfile, liffProfile, onProfileUpdated, onCancel }) {
   const [fullName, setFullName] = useState(currentProfile?.fullName || '');
@@ -65,6 +66,12 @@ export default function EditProfileModal({ currentProfile, liffProfile, onProfil
         });
       }
       
+      // ซิงค์ชื่อและรหัสนักศึกษาไปยังทุกกิจกรรมที่ลงทะเบียนไว้
+      await syncUnlinkedRegistrations(trimmedNationalId, liffProfile.userId, {
+        fullName: trimmedFullName,
+        fullNameEn: trimmedFullNameEn || null
+      });
+
       onProfileUpdated(profileData);
     } catch (err) {
       setError(err.message || "เกิดข้อผิดพลาดในการบันทึกโปรไฟล์");

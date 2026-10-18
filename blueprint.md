@@ -480,6 +480,36 @@ AERO Student is an end-to-end Student Activity Registration, Seating Allocation,
     - ตรวจสอบเงื่อนไข `reg.certificateApproved === true` ก่อนแสดงปุ่มเปิดดู/ดาวน์โหลด Certificate
     - หากนักเรียนจบกิจกรรมและทำแบบประเมินแล้ว แต่ยังไม่ได้รับการ Checklist อนุมัติจากแอดมิน จะแสดงปุ่มสถานะ `⏳ รออนุมัติ Certificate` เพื่อแจ้งให้นักเรียนทราบว่าอยู่ระหว่างการตรวจรายชื่อของผู้จัดงาน
 
+### 28. CSV Import & Export Synchronization for Extended Participant Schema
+- **Requirement & Verification**:
+  - ตรวจสอบและอัปเดตระบบการนำเข้า (CSV Import) และส่งออกข้อมูล (CSV Export) ในหน้า `src/app/admin/activity/seats/[id]/page.js` ให้รองรับข้อมูลที่เพิ่มเข้ามาใหม่ทั้งหมดอย่างสมบูรณ์
+- **Implementation & Schema Mapping**:
+  - **CSV Export**:
+    - เพิ่มคอลัมน์ `สิทธิ์เกียรติบัตร` (`certificateApproved`) แปลงค่าเป็นภาษาไทย `อนุมัติ` / `ยังไม่อนุมัติ`
+    - รวมคอลัมน์ `NAME SURNAME (ENG)` (`fullNameEn`) และ `ลิงก์เกียรติบัตร` (`certificateUrl`)
+    - รองรับทั้งปุ่ม `Export CSV ทั้งหมด` และปุ่ม `Export ข้อมูลทั้งหมด` ในหน้าสรุปผล
+  - **CSV Import**:
+    - รองรับหัวตารางภาษาไทยและอังกฤษ: `สิทธิ์เกียรติบัตร`, `อนุมัติเกียรติบัตร`, `สถานะเกียรติบัตร`, `รับเกียรติบัตร`, `certificateApproved`, `isCertified`, `certApproved`
+    - ระบบแปลงค่าสถานะความยินยอม/สิทธิ์ (Normalize Boolean): รองรับ `true`, `1`, `อนุมัติ`, `yes`, `ผ่าน`, `เปิด`, `y`
+    - บันทึกฟิลด์ `certificateApproved` ลง Firestore ในเอกสาร `registrations` อัตโนมัติ
+    - ซิงค์ `fullNameEn` สู่ทั้ง `registrations` และ `studentProfiles`
+    - อัปเดตข้อความตัวอย่าง Header ในหน้าเว็บให้แนะนำครบทั้ง `fullName (ไทย)`, `fullNameEn (อังกฤษ)`, `certificateApproved (สิทธิ์เกียรติบัตร)`
+
+### 29. Bi-directional Synchronization of English Names (`fullNameEn`) between Student Profiles and Registrations
+- **Context & Requirement**:
+  - เมื่อ Admin สร้างหรือนำเข้ารายชื่อผู้มีสิทธิ์เข้าร่วมกิจกรรมล่วงหน้าโดยที่ยังไม่มีชื่อภาษาอังกฤษ (`fullNameEn`)
+  - ต่อมานักเรียนเข้าสู่ระบบผ่าน LINE และบันทึก/แก้ไขข้อมูลโปรไฟล์ของตนเอง (ระบุ `NAME SURNAME (ENG)`)
+  - Admin ต้องการดึงชื่อภาษาอังกฤษที่นักเรียนบันทึกไว้ในโปรไฟล์มาใส่ในรายการกิจกรรมเพื่อออกใบประกาศนียบัตร
+- **Architecture & Implementation**:
+  - **Single Source of Truth Key**: ผูกโยงข้อมูลด้วยเลขประจำตัวประชาชน 13 หลัก (`nationalId`)
+  - **ฝั่ง Admin (`/admin/activity/seats/[id]`)**:
+    - เพิ่มปุ่ม **"🔄 ดึงชื่อ ENG จากโปรไฟล์นักเรียน"** ในการ์ดเครื่องมือ นำเข้า/ส่งออกข้อมูล พร้อม Badge แจ้งเตือนจำนวนคนที่ยังไม่มีชื่อ ENG (`ยังไม่มี N คน`)
+    - ฟังก์ชัน `handleSyncEnglishNamesFromProfiles`: ค้นหา `studentProfiles` ผ่าน `nationalId` ของผู้เข้าร่วมในกิจกรรม หากพบว่ามี `fullNameEn` จะอัปเดตลง `registrations` แบบ Chunk Batch (ครั้งละ 400 รายการ) และรีเฟรชตารางทันที
+  - **ฝั่งนักเรียน (Auto-Sync & Fallback)**:
+    - `ProfileSetupForm.js` และ `EditProfileModal.js`: เมื่อนักเรียนบันทึกหรือแก้ไขโปรไฟล์ จะเรียก `syncUnlinkedRegistrations` เพื่ออัปเดต `fullNameEn` ไปยังทุกการลงทะเบียนเดิมของนักเรียนโดยอัตโนมัติ
+    - `/student/my-registrations`: มีการตรวจจับใน `syncUnlinkedRegistrations` และในปุ่มเปิดดูเกียรติบัตร (`onOpenCert`) มี Fallback ดึง `studentDbProfile.fullNameEn` ทันทีแม้ว่าข้อมูลในเอกสารการลงทะเบียนจะยังไม่ได้ซิงค์
+
+
 
 
 
