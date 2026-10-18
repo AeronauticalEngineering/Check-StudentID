@@ -833,43 +833,117 @@ export default function SeatAssignmentPage({ params }) {
 
     Papa.parse(file, {
       header: true,
-      skipEmptyLines: true,
+      skipEmptyLines: 'greedy',
+      transformHeader: (header) => header.replace(/^\uFEFF/, '').trim(),
       complete: async (results) => {
-        const thaiToEnglishHeaderMap = {
-          'ชื่อ-สกุล': 'fullName',
-          'ชื่อ-นามสกุล': 'fullName',
-          'ชื่อ-นามสกุล (ไทย)': 'fullName',
-          'NAME SURNAME (ENG)': 'fullNameEn',
-          'NAME SURNAME': 'fullNameEn',
-          'NAME SUERNAME (ENG)': 'fullNameEn',
-          'NAME (ENG)': 'fullNameEn',
-          'ชื่อภาษาอังกฤษ': 'fullNameEn',
-          'ชื่อ-นามสกุล (อังกฤษ)': 'fullNameEn',
-          'fullNameEn': 'fullNameEn',
-          'nameEn': 'fullNameEn',
-          'รหัสผู้สมัคร': 'studentId',
-          'เลขบัตรประชาชน': 'nationalId',
-          'หลักสูตร': 'course',
-          'ประเภทโควตา': 'quota',
-          'โควตา': 'quota',
-          'quota': 'quota',
-          'Quota': 'quota',
-          'เลขที่นั่ง': 'seatNumber',
-          'ช่วงเวลา': 'timeSlot',
-          'คิว': 'displayQueueNumber',
-          'สถานะ': 'status',
-          'สิทธิ์เกียรติบัตร': 'certificateApproved',
-          'อนุมัติเกียรติบัตร': 'certificateApproved',
-          'สถานะเกียรติบัตร': 'certificateApproved',
-          'รับเกียรติบัตร': 'certificateApproved',
-          'certificateApproved': 'certificateApproved',
-          'isCertified': 'certificateApproved',
-          'certApproved': 'certificateApproved',
-          'ลิงก์เกียรติบัตร': 'certificateUrl',
-          'เกียรติบัตร': 'certificateUrl',
-          'certificateUrl': 'certificateUrl',
-          'certificate': 'certificateUrl',
-          'certUrl': 'certificateUrl'
+        const detectFieldFromHeader = (header) => {
+          if (!header) return '';
+          const raw = String(header).replace(/^\uFEFF/, '').trim();
+          const clean = raw.toLowerCase().replace(/[\s\-_()（）[\]]/g, '');
+
+          // Full Name Thai
+          if (
+            raw === 'ชื่อ-สกุล' || raw === 'ชื่อ-นามสกุล' || raw === 'ชื่อ-สกุล (ไทย)' ||
+            raw === 'ชื่อ-นามสกุล (ไทย)' || raw === 'ชื่อ - สกุล (ไทย)' || raw === 'ชื่อ - นามสกุล (ไทย)' ||
+            clean === 'ชื่อสกุล' || clean === 'ชื่อนามสกุล' || clean === 'ชื่อสกุลไทย' || clean === 'ชื่อนามสกุลไทย' ||
+            clean === 'ชื่อ' || clean === 'ชื่อผู้สมัคร' || clean === 'ชื่อผู้ลงทะเบียน' || clean === 'ชื่อนักเรียน' ||
+            clean === 'fullname' || clean === 'name' || clean === 'studentname' || clean === 'applicantname'
+          ) {
+            return 'fullName';
+          }
+
+          // Full Name English
+          if (
+            raw.toUpperCase().includes('ENG') || clean.includes('english') || clean.includes('eng') ||
+            clean === 'namesurname' || clean === 'namesuername' || clean === 'firstnamelastname' ||
+            clean === 'fullnameen' || clean === 'nameen' || clean === 'englishname' ||
+            clean === 'ชื่อภาษาอังกฤษ' || clean === 'ชื่ออังกฤษ' || clean === 'ชื่อสกุลอังกฤษ' || clean === 'ชื่อนามสกุลอังกฤษ'
+          ) {
+            return 'fullNameEn';
+          }
+
+          // National ID
+          if (
+            clean.includes('บัตรประชาชน') || clean.includes('ประจำตัวประชาชน') || clean.includes('บัตรปชช') ||
+            clean === 'เลขบัตร' || clean === 'รหัสบัตรประชาชน' || clean === 'เลขประจำตัว' ||
+            clean === 'nationalid' || clean === 'citizenid' || clean === 'idcard' || clean === 'national_id' ||
+            clean === 'citizen_id' || clean === 'id' || clean === 'identificationnumber'
+          ) {
+            return 'nationalId';
+          }
+
+          // Student ID
+          if (
+            clean.includes('รหัสผู้สมัคร') || clean.includes('รหัสนักเรียน') || clean.includes('รหัสนักศึกษา') ||
+            clean === 'รหัส' || clean === 'studentid' || clean === 'applicantid' || clean === 'student_id' ||
+            clean === 'applicant_id' || clean === 'stdid'
+          ) {
+            return 'studentId';
+          }
+
+          // Course / Major
+          if (
+            clean === 'หลักสูตร' || clean === 'สาขา' || clean === 'สาขาวิชา' || clean === 'แผนการเรียน' ||
+            clean === 'course' || clean === 'major' || clean === 'program'
+          ) {
+            return 'course';
+          }
+
+          // Quota
+          if (
+            clean.includes('โควตา') || clean === 'ประเภทโควตา' || clean === 'quota'
+          ) {
+            return 'quota';
+          }
+
+          // Seat Number
+          if (
+            clean.includes('ที่นั่ง') || clean === 'เลขที่นั่ง' || clean === 'seat' || clean === 'seatnumber' || clean === 'seatno'
+          ) {
+            return 'seatNumber';
+          }
+
+          // Time Slot
+          if (
+            clean.includes('ช่วงเวลา') || clean.includes('รอบเวลา') || clean === 'เวลา' || clean === 'รอบ' ||
+            clean === 'timeslot' || clean === 'time' || clean === 'slot'
+          ) {
+            return 'timeSlot';
+          }
+
+          // Queue Number
+          if (
+            clean.includes('คิว') || clean === 'เลขคิว' || clean === 'ลำดับคิว' ||
+            clean === 'displayqueuenumber' || clean === 'queue' || clean === 'queuenumber' || clean === 'queueno'
+          ) {
+            return 'displayQueueNumber';
+          }
+
+          // Status
+          if (
+            clean === 'สถานะ' || clean === 'สถานะผู้สมัคร' || clean === 'status'
+          ) {
+            return 'status';
+          }
+
+          // Certificate Approved
+          if (
+            clean.includes('สิทธิ์เกียรติบัตร') || clean.includes('อนุมัติเกียรติบัตร') ||
+            clean.includes('สถานะเกียรติบัตร') || clean.includes('รับเกียรติบัตร') ||
+            clean === 'certificateapproved' || clean === 'certapproved' || clean === 'iscertified'
+          ) {
+            return 'certificateApproved';
+          }
+
+          // Certificate URL
+          if (
+            clean.includes('ลิงก์เกียรติบัตร') || clean.includes('ลิงค์เกียรติบัตร') ||
+            clean === 'เกียรติบัตร' || clean === 'certificateurl' || clean === 'certurl' || clean === 'certificate'
+          ) {
+            return 'certificateUrl';
+          }
+
+          return raw;
         };
 
         const normalizeImportStatus = (rawStatus) => {
@@ -918,101 +992,153 @@ export default function SeatAssignmentPage({ params }) {
         const mappedData = results.data.map(row => {
           const newRow = {};
           Object.keys(row).forEach(key => {
-            const cleanKey = key.trim();
-            const engKey = thaiToEnglishHeaderMap[cleanKey] || cleanKey;
+            const cleanKey = key.replace(/^\uFEFF/, '').trim();
+            const engKey = detectFieldFromHeader(cleanKey);
             newRow[engKey] = row[key];
           });
           return newRow;
         });
-        setMessage(`กำลังนำเข้าข้อมูล ${mappedData.length} รายการ...`);
+
+        setMessage(`กำลังประมวลผลข้อมูล ${mappedData.length} รายการ...`);
 
         try {
           const batch = writeBatch(db);
           const existingNationalIds = new Set(registrants.map(r => r.nationalId));
-          let skippedCount = 0;
+          let addedCount = 0;
+          let skippedDuplicateCount = 0;
           let invalidNatIdCount = 0;
+          let missingRequiredCount = 0;
+          const sampleIssues = [];
 
           for (let i = 0; i < mappedData.length; i++) {
             const reg = mappedData[i];
-            if (reg.fullName && reg.nationalId) {
-              const cleanNat = String(reg.nationalId).replace(/\D/g, '');
-              const cleanFullNameEn = reg.fullNameEn ? String(reg.fullNameEn).trim().toUpperCase() : null;
-              if (cleanNat.length !== 13) {
-                invalidNatIdCount++;
-                continue;
+
+            // Normalize national ID (handling dashes, spaces, and Excel scientific notation e.g. 1.23457E+12)
+            let rawNat = reg.nationalId !== undefined && reg.nationalId !== null ? String(reg.nationalId).trim() : '';
+            if (rawNat.toLowerCase().includes('e+')) {
+              try {
+                rawNat = Number(rawNat).toLocaleString('fullwide', { useGrouping: false });
+              } catch (e) {}
+            }
+            const cleanNat = rawNat.replace(/\D/g, '');
+
+            const fullName = reg.fullName ? String(reg.fullName).trim() : '';
+            const cleanFullNameEn = reg.fullNameEn ? String(reg.fullNameEn).trim().toUpperCase() : null;
+
+            if (!fullName && !cleanNat) {
+              // Completely empty row
+              continue;
+            }
+
+            if (!fullName || !cleanNat) {
+              missingRequiredCount++;
+              if (sampleIssues.length < 3) {
+                const missingWhat = !fullName ? 'ไม่มีชื่อ-สกุล' : 'ไม่มีเลขบัตรประชาชน';
+                sampleIssues.push(`แถวที่ ${i + 1}: ${missingWhat}`);
               }
-              reg.nationalId = cleanNat;
+              continue;
+            }
 
-              if (existingNationalIds.has(reg.nationalId)) {
-                skippedCount++;
-                continue;
+            if (cleanNat.length !== 13) {
+              invalidNatIdCount++;
+              if (sampleIssues.length < 3) {
+                sampleIssues.push(`แถวที่ ${i + 1} (${fullName}): เลขบัตร ปชช. มี ${cleanNat.length} หลัก (ต้องครบ 13 หลัก)`);
               }
-              existingNationalIds.add(reg.nationalId);
+              continue;
+            }
 
-              let lineUserIdToUse = null;
+            if (existingNationalIds.has(cleanNat)) {
+              skippedDuplicateCount++;
+              continue;
+            }
+            existingNationalIds.add(cleanNat);
 
-              const q = query(collection(db, 'studentProfiles'), where('nationalId', '==', reg.nationalId), limit(1));
-              const snapshot = await getDocs(q);
+            let lineUserIdToUse = null;
 
-              if (!snapshot.empty) {
-                const profileDoc = snapshot.docs[0];
-                lineUserIdToUse = profileDoc.data().lineUserId;
-                batch.update(doc(db, 'studentProfiles', profileDoc.id), {
-                  fullName: reg.fullName,
-                  fullNameEn: cleanFullNameEn || profileDoc.data().fullNameEn || null,
-                  studentId: reg.studentId || profileDoc.data().studentId,
-                  updatedAt: serverTimestamp()
-                });
-              } else {
-                const newProfileRef = doc(collection(db, 'studentProfiles'));
-                batch.set(newProfileRef, {
-                  fullName: reg.fullName,
-                  fullNameEn: cleanFullNameEn,
-                  studentId: reg.studentId || '',
-                  nationalId: reg.nationalId,
-                  lineUserId: '',
-                  createdAt: serverTimestamp(),
-                  updatedAt: serverTimestamp(),
-                  importedFrom: 'admin_csv_import'
-                });
-              }
+            const q = query(collection(db, 'studentProfiles'), where('nationalId', '==', cleanNat), limit(1));
+            const snapshot = await getDocs(q);
 
-              const newRegRef = doc(collection(db, 'registrations'));
-              batch.set(newRegRef, {
-                activityId,
-                courseId: activity?.courseId || null,
-                fullName: reg.fullName,
+            if (!snapshot.empty) {
+              const profileDoc = snapshot.docs[0];
+              lineUserIdToUse = profileDoc.data().lineUserId;
+              batch.update(doc(db, 'studentProfiles', profileDoc.id), {
+                fullName,
+                fullNameEn: cleanFullNameEn || profileDoc.data().fullNameEn || null,
+                studentId: reg.studentId || profileDoc.data().studentId,
+                updatedAt: serverTimestamp()
+              });
+            } else {
+              const newProfileRef = doc(collection(db, 'studentProfiles'));
+              batch.set(newProfileRef, {
+                fullName,
                 fullNameEn: cleanFullNameEn,
-                studentId: reg.studentId || null,
-                nationalId: reg.nationalId,
-                course: reg.course || null,
-                quota: reg.quota || null,
-                seatNumber: reg.seatNumber || null,
-                timeSlot: reg.timeSlot || null,
-                status: normalizeImportStatus(reg.status),
-                registeredBy: 'admin_csv_import',
-                registeredAt: serverTimestamp(),
-                lineUserId: lineUserIdToUse,
-                displayQueueNumber: reg.displayQueueNumber || null,
-                certificateApproved: normalizeApproved(reg.certificateApproved),
-                certificateUrl: reg.certificateUrl ? String(reg.certificateUrl).trim() : null,
-                importOrder: i,
+                studentId: reg.studentId || '',
+                nationalId: cleanNat,
+                lineUserId: '',
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+                importedFrom: 'admin_csv_import'
               });
             }
+
+            const newRegRef = doc(collection(db, 'registrations'));
+            batch.set(newRegRef, {
+              activityId,
+              courseId: activity?.courseId || null,
+              fullName,
+              fullNameEn: cleanFullNameEn,
+              studentId: reg.studentId || null,
+              nationalId: cleanNat,
+              course: reg.course || null,
+              quota: reg.quota || null,
+              seatNumber: reg.seatNumber || null,
+              timeSlot: reg.timeSlot || null,
+              status: normalizeImportStatus(reg.status),
+              registeredBy: 'admin_csv_import',
+              registeredAt: serverTimestamp(),
+              lineUserId: lineUserIdToUse,
+              displayQueueNumber: reg.displayQueueNumber || null,
+              certificateApproved: normalizeApproved(reg.certificateApproved),
+              certificateUrl: reg.certificateUrl ? String(reg.certificateUrl).trim() : null,
+              importOrder: i,
+            });
+            addedCount++;
           }
-          await batch.commit();
-          let msg = `✅ นำเข้าข้อมูล ${mappedData.length - skippedCount - invalidNatIdCount} รายการสำเร็จ!`;
-          if (skippedCount > 0) msg += ` (ข้ามที่ซ้ำ ${skippedCount} รายการ)`;
-          if (invalidNatIdCount > 0) msg += ` (ข้ามเลขบัตรไม่ครบ 13 หลัก ${invalidNatIdCount} รายการ)`;
-          setMessage(msg);
-          await fetchData();
-          setTimeout(() => setMessage(''), 4000);
+
+          if (addedCount > 0) {
+            await batch.commit();
+            let msg = `✅ นำเข้าข้อมูลสำเร็จ ${addedCount} รายการ!`;
+            if (skippedDuplicateCount > 0) msg += ` (ข้ามที่ซ้ำในกิจกรรม ${skippedDuplicateCount} รายการ)`;
+            if (invalidNatIdCount > 0) msg += ` (ข้ามเลขบัตรไม่ครบ 13 หลัก ${invalidNatIdCount} รายการ)`;
+            if (missingRequiredCount > 0) msg += ` (ข้ามข้อมูลไม่สมบูรณ์ ${missingRequiredCount} รายการ)`;
+            setMessage(msg);
+            showToast({ message: `นำเข้าข้อมูล ${addedCount} รายการสำเร็จ`, type: 'success' });
+            await fetchData();
+            setTimeout(() => setMessage(''), 5000);
+          } else {
+            let errorMsg = '❌ ไม่พบข้อมูลที่สามารถนำเข้าได้';
+            if (sampleIssues.length > 0) {
+              errorMsg += `: ${sampleIssues.join(' | ')}`;
+            } else if (skippedDuplicateCount > 0) {
+              errorMsg += `: เลขบัตรประชาชนซ้ำกับผู้ที่มีรายชื่อในกิจกรรมนี้แล้วทั้งหมด (${skippedDuplicateCount} รายการ)`;
+            } else {
+              const headersFound = Object.keys(mappedData[0] || {}).filter(k => k !== 'index').join(', ');
+              errorMsg += `: กรุณาตรวจสอบหัวตาราง CSV (หัวตารางที่อ่านได้: ${headersFound || 'ไม่พบคอลัมน์'})`;
+            }
+            setMessage(errorMsg);
+            showAlert({ title: 'นำเข้าข้อมูลไม่สำเร็จ', message: errorMsg, type: 'error' });
+          }
         } catch (error) {
           setMessage(`❌ เกิดข้อผิดพลาดในการนำเข้า: ${error.message}`);
+          showAlert({ title: 'เกิดข้อผิดพลาดในการนำเข้า', message: error.message, type: 'error' });
+        } finally {
+          if (e?.target) e.target.value = '';
         }
       },
       error: (error) => {
         setMessage(`❌ เกิดข้อผิดพลาดในการอ่านไฟล์ CSV: ${error.message}`);
+        showAlert({ title: 'ข้อผิดพลาดในการอ่านไฟล์', message: error.message, type: 'error' });
+        if (e?.target) e.target.value = '';
       }
     });
   };

@@ -509,6 +509,20 @@ AERO Student is an end-to-end Student Activity Registration, Seating Allocation,
     - `ProfileSetupForm.js` และ `EditProfileModal.js`: เมื่อนักเรียนบันทึกหรือแก้ไขโปรไฟล์ จะเรียก `syncUnlinkedRegistrations` เพื่ออัปเดต `fullNameEn` ไปยังทุกการลงทะเบียนเดิมของนักเรียนโดยอัตโนมัติ
     - `/student/my-registrations`: มีการตรวจจับใน `syncUnlinkedRegistrations` และในปุ่มเปิดดูเกียรติบัตร (`onOpenCert`) มี Fallback ดึง `studentDbProfile.fullNameEn` ทันทีแม้ว่าข้อมูลในเอกสารการลงทะเบียนจะยังไม่ได้ซิงค์
 
+### 30. Resilient CSV Import Engine & Smart Header Detection
+- **Problem**:
+  - เมื่อนำเข้าไฟล์ CSV จาก Excel หรือ Export CSV หัวคอลัมน์ภาษาไทยอาจมีความแตกต่าง (เช่น `ชื่อ-สกุล (ไทย)`, `เลขประจำตัวประชาชน`, `เลขบัตร ปชช.`) หรือมีอักขระพิเศษ UTF-8 BOM (`\ufeff`) หรือการแปลงเลขเป็น Scientific Notation ใน Excel (`1.23457E+12`)
+  - โค้ดเดิมคำนวณจำนวนแถวแบบคงที่ ทำให้ขึ้นแจ้งเตือน "นำเข้าสำเร็จ" ทั้งที่ไม่มีข้อมูลเข้าฐานข้อมูลจริง
+- **Solution & Implementation**:
+  - **Smart Header Detection (`detectFieldFromHeader`)**:
+    - ลบ UTF-8 BOM (`\ufeff`) และช่องว่างส่วนเกินอัตโนมัติ
+    - แมตช์หัวตารางแบบยืดหยุ่นสูง รองรับทุกรูปแบบ เช่น `ชื่อ-สกุล (ไทย)`, `ชื่อ-นามสกุล`, `ชื่อ`, `fullName`, `เลขประจำตัวประชาชน`, `เลขบัตร ปชช.`, `nationalId`, `citizenId`
+  - **Data Normalization & Error Trapping**:
+    - ดักจับและแปลงเลขบัตรประชาชนแบบ Scientific Notation จาก Excel ให้กลับเป็นเลข 13 หลักที่ถูกต้อง
+    - ตรวจสอบ `addedCount` จากจำนวนที่เพิ่มลงใน `batch.set` จริงเท่านั้น
+    - หากไม่มีข้อมูลที่นำเข้าได้ จะแสดง Popup และข้อความเตือนสาเหตุที่ชัดเจน (เช่น แถวที่ไม่มีชื่อ, เลขบัตรประชาชนไม่ครบ 13 หลัก หรือหัวตารางที่อ่านได้) แทนการแจ้งเตือนสำเร็จ
+
+
 
 
 
