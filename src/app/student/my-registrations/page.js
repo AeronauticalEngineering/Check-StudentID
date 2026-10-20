@@ -11,9 +11,11 @@ import { useModal } from '../../../context/ModalContext';
 import { downloadCertificatePNG, downloadCertificatePDF, getCertificatePreviewDataUrl } from '../../../lib/certificateGenerator';
 
 const CertificatePreviewModal = ({ isOpen, onClose, certData }) => {
+  const { showAlert, showToast } = useModal();
   const [previewUrl, setPreviewUrl] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const isLineBrowser = typeof navigator !== 'undefined' && (/Line/i.test(navigator.userAgent) || Boolean(typeof window !== 'undefined' && window.liff?.isInClient?.()));
 
   useEffect(() => {
     if (!isOpen || !certData) {
@@ -41,8 +43,17 @@ const CertificatePreviewModal = ({ isOpen, onClose, certData }) => {
   const handleDownloadPNG = async () => {
     setIsDownloading(true);
     try {
-      await downloadCertificatePNG(certData);
+      const res = await downloadCertificatePNG(certData);
+      if (res?.method === 'share') {
+        // Handled by native share sheet
+      } else if (isLineBrowser) {
+        showToast({
+          message: 'สำหรับผู้ใช้ LINE: สามารถแตะค้างที่รูปภาพด้านบน แล้วเลือก "บันทึกรูปภาพ" เพื่อเซฟลงเครื่องได้ทันที',
+          type: 'info'
+        });
+      }
     } catch (e) {
+      console.error(e);
       alert('ดาวน์โหลดไม่สำเร็จ: ' + e.message);
     } finally {
       setIsDownloading(false);
@@ -52,8 +63,18 @@ const CertificatePreviewModal = ({ isOpen, onClose, certData }) => {
   const handleDownloadPDF = async () => {
     setIsDownloading(true);
     try {
-      await downloadCertificatePDF(certData);
+      const res = await downloadCertificatePDF(certData);
+      if (res?.method === 'share') {
+        // Handled by native share sheet
+      } else if (isLineBrowser) {
+        showAlert({
+          title: 'คำแนะนำการดาวน์โหลด PDF บน LINE',
+          message: 'แอป LINE บล็อกการดาวน์โหลดไฟล์ PDF ลงเครื่องโดยตรง\n\nวิธีดาวน์โหลด:\n1. แตะที่ปุ่มจุดสามจุด (⋮) ด้านขวาบนของหน้าจอ LINE\n2. เลือก "เปิดในเบราว์เซอร์อื่น" (Open in default browser เช่น Chrome / Safari)\n3. กดปุ่ม "ดาวน์โหลด PDF" ไฟล์จะถูกดาวน์โหลดลงเครื่องทันที',
+          type: 'info'
+        });
+      }
     } catch (e) {
+      console.error(e);
       alert('ดาวน์โหลด PDF ไม่สำเร็จ: ' + e.message);
     } finally {
       setIsDownloading(false);
@@ -62,7 +83,7 @@ const CertificatePreviewModal = ({ isOpen, onClose, certData }) => {
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex justify-center items-center z-50 p-4 animate-in fade-in" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full p-4 sm:p-5 space-y-4 font-sans" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full p-4 sm:p-5 space-y-3.5 font-sans" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
           <div>
             <h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
@@ -83,22 +104,42 @@ const CertificatePreviewModal = ({ isOpen, onClose, certData }) => {
         </div>
 
         {/* Certificate Display Area */}
-        <div className="bg-slate-900 rounded-xl overflow-hidden p-2 flex items-center justify-center min-h-[220px] shadow-inner">
+        <div className="bg-slate-900 rounded-xl overflow-hidden p-2 flex flex-col items-center justify-center min-h-[220px] shadow-inner">
           {isGenerating ? (
-            <div className="text-white text-xs flex flex-col items-center gap-2">
+            <div className="text-white text-xs flex flex-col items-center gap-2 py-8">
               <div className="w-6 h-6 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin"></div>
               <span>กำลังสร้างเกียรติบัตร...</span>
             </div>
           ) : previewUrl ? (
-            <img
-              src={previewUrl}
-              alt="Generated Certificate"
-              className="max-h-[360px] w-auto object-contain rounded shadow-lg"
-            />
+            <>
+              <img
+                src={previewUrl}
+                alt="Generated Certificate"
+                className="max-h-[340px] w-auto object-contain rounded shadow-lg select-none"
+              />
+              <div className="mt-2 text-[11px] text-slate-300 bg-slate-800/90 px-3 py-1 rounded-full flex items-center gap-1.5 shadow-xs border border-slate-700/60">
+                <span className="text-amber-400">👆</span>
+                <span>แตะค้างที่รูปภาพเพื่อบันทึกรูป (Save Image) ลงอัลบั้มรูป</span>
+              </div>
+            </>
           ) : (
             <span className="text-slate-400 text-xs">ไม่สามารถสร้างภาพตัวอย่างได้</span>
           )}
         </div>
+
+        {/* LINE Guidance Box */}
+        {isLineBrowser && (
+          <div className="bg-amber-50/90 border border-amber-200 rounded-xl p-2.5 text-xs text-amber-900 space-y-1">
+            <div className="font-semibold flex items-center gap-1.5 text-amber-950 text-xs">
+              <span>💡</span>
+              <span>คำแนะนำสำหรับผู้ใช้งานผ่าน LINE:</span>
+            </div>
+            <p className="text-[11px] text-amber-800 leading-relaxed">
+              • <strong>บันทึกภาพ (PNG):</strong> แตะค้างที่รูปภาพเกียรติบัตรด้านบน แล้วเลือก <em>"บันทึกรูปภาพ"</em> ลงอัลบั้มรูปได้ทันที<br />
+              • <strong>ดาวน์โหลด PDF:</strong> หากกดแล้วไฟล์ไม่โหลด ให้แตะปุ่มจุดสามจุด <strong>(⋮)</strong> ขวาบนของ LINE แล้วเลือก <em>"เปิดในเบราว์เซอร์อื่น"</em> (Chrome / Safari)
+            </p>
+          </div>
+        )}
 
         {/* Action Buttons */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 pt-1">
@@ -226,6 +267,12 @@ const TicketIcon = () => (
       d="M5 10V8a2 2 0 012-2h10a2 2 0 012 2v2M5 10h14M5 10v8a1 1 0 001 1h1m0 0v2m0-2h10m0 0v2m0-2h1a1 1 0 001-1v-8" />
   </svg>
 );
+
+const hasValidQuota = (quota) => {
+  if (!quota) return false;
+  const trimmed = String(quota).trim();
+  return trimmed !== '' && trimmed !== '-' && trimmed !== '—' && trimmed !== '–' && trimmed !== 'none' && trimmed !== 'null' && trimmed !== 'undefined' && trimmed !== 'ไม่ระบุ';
+};
 
 const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) => {
   const activity = activities[reg.activityId];
@@ -395,9 +442,9 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
           <h2 className="text-base font-bold text-slate-900 mt-2 line-clamp-2">{activity.name}</h2>
           <div className="flex flex-wrap items-center gap-2 mt-1.5">
             <span className="text-sm text-slate-500 font-normal truncate">{course?.name || reg.course || 'ทั่วไป'}</span>
-            {reg.quota && (
+            {hasValidQuota(reg.quota) && (
               <span className="text-sm bg-indigo-50 text-indigo-700 font-normal px-2.5 py-0.5 rounded-lg border border-indigo-100">
-                โควตา: {reg.quota}
+                โควตา: {String(reg.quota).trim()}
               </span>
             )}
           </div>
@@ -458,9 +505,9 @@ const CompletedRegistrationCard = ({ reg, activities, courses, hasEvaluated, onS
           </h3>
           <div className="flex flex-wrap items-center gap-2 mt-1.5 text-sm text-slate-500 font-normal">
             <span>{course?.name || reg.course || 'ทั่วไป'}</span>
-            {reg.quota && (
+            {hasValidQuota(reg.quota) && (
               <span className="px-2.5 py-0.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-100 text-sm font-normal">
-                โควตา: {reg.quota}
+                โควตา: {String(reg.quota).trim()}
               </span>
             )}
           </div>
@@ -545,7 +592,8 @@ const CompletedRegistrationCard = ({ reg, activities, courses, hasEvaluated, onS
                       fullName: reg.fullName,
                       fullNameEn: reg.fullNameEn || studentDbProfile?.fullNameEn || null,
                       projectName: activity.certificateProjectName || activity.name,
-                      dateText: activity.certificateDateText || (activityDate ? activityDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '')
+                      dateText: activity.certificateDateText || (activityDate ? activityDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : ''),
+                      certificateLayout: activity.certificateLayout || null
                     })}
                     className="py-2.5 px-3 bg-[#000946] hover:bg-[#00125e] text-white text-sm font-normal rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 active:scale-98 text-center cursor-pointer"
                   >

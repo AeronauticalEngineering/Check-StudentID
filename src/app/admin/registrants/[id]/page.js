@@ -576,9 +576,10 @@ export default function StudentDetailPage({ params }) {
                           {activity?.name || 'ไม่ระบุชื่อกิจกรรม'}
                         </div>
                         <div className="text-[11px] text-slate-500 mt-0.5 flex flex-wrap items-center gap-2">
-                          <span>ประเภท: {activity?.type === 'queue' ? 'คิวบริการ / สอบสัมภาษณ์' : activity?.type === 'event' ? 'กิจกรรมทั่วไป' : activity?.type === 'exam' ? 'สอบข้อเขียน' : activity?.type === 'graduation' ? 'รับปริญญาบัตร' : 'ทั่วไป'}</span>
                           {activity?.location && <span>• สถานที่: {activity.location}</span>}
-                          {reg.quota && <span className="font-semibold text-indigo-700">• โควตา: {reg.quota}</span>}
+                          {reg.quota && String(reg.quota).trim() !== '' && String(reg.quota).trim() !== '-' && String(reg.quota).trim() !== '—' && (
+                            <span className="font-semibold text-indigo-700">• โควตา: {String(reg.quota).trim()}</span>
+                          )}
                         </div>
                         {/* Score & Document Badges */}
                         {(evalScore.isScored || totalAttachedFiles > 0 || reg.certificateUrl) && (

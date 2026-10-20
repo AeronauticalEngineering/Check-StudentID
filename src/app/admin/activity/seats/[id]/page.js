@@ -2124,7 +2124,8 @@ export default function SeatAssignmentPage({ params }) {
                                   fullName: reg.fullName,
                                   fullNameEn: reg.fullNameEn,
                                   projectName: activity.certificateProjectName || activity.name,
-                                  dateText: activity.certificateDateText || ''
+                                  dateText: activity.certificateDateText || '',
+                                  certificateLayout: activity.certificateLayout || null
                                 };
                                 setCertPreview({ isOpen: true, data: certData, previewUrl: '', isGenerating: true });
                                 try {

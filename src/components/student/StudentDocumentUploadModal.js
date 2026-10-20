@@ -101,9 +101,9 @@ export default function StudentDocumentUploadModal({
                 ถ่ายภาพ/แนบโดย: <span className="font-semibold text-slate-800">{examinerName}</span>
               </span>
             </div>
-            {registration.quota && (
+            {registration.quota && String(registration.quota).trim() !== '' && String(registration.quota).trim() !== '-' && String(registration.quota).trim() !== '—' && (
               <span className="px-3 py-1 bg-indigo-50 border border-indigo-100 rounded-lg text-indigo-700 font-normal text-sm shrink-0 shadow-xs">
-                โควตา: {registration.quota}
+                โควตา: {String(registration.quota).trim()}
               </span>
             )}
           </div>

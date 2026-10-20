@@ -522,6 +522,66 @@ AERO Student is an end-to-end Student Activity Registration, Seating Allocation,
     - ตรวจสอบ `addedCount` จากจำนวนที่เพิ่มลงใน `batch.set` จริงเท่านั้น
     - หากไม่มีข้อมูลที่นำเข้าได้ จะแสดง Popup และข้อความเตือนสาเหตุที่ชัดเจน (เช่น แถวที่ไม่มีชื่อ, เลขบัตรประชาชนไม่ครบ 13 หลัก หรือหัวตารางที่อ่านได้) แทนการแจ้งเตือนสำเร็จ
 
+### 31. LINE In-App Browser Download Resolution (Mobile Web Share & Long-Press Support)
+- **Problem & Root Cause**:
+  - เว็บบราวเซอร์ภายในแอป LINE (LINE In-App WebView ทั้งบน iOS และ Android) มีนโยบายความปลอดภัยที่บล็อกคำสั่งดาวน์โหลดไฟล์อัตโนมัติจากแท็ก `<a download>` สำหรับ `blob:` และ `data:` URL ส่งผลให้ผู้ใช้กดปุ่ม "ดาวน์โหลดภาพ (PNG)" หรือ "ดาวน์โหลด PDF" แล้วไม่มีไฟล์ถูกดาวน์โหลดลงเครื่อง
+- **Solution & Implementation**:
+  - **Web Share API with File Object**:
+    - อัปเดต `downloadCertificatePNG` และ `downloadCertificatePDF` ใน `src/lib/certificateGenerator.js` ให้ตรวจสอบ `navigator.canShare` และสร้าง `File` อ็อบเจกต์เพื่อเรียกใช้ Native Share Sheet ของอุปกรณ์
+    - บนมือถือ (ทั้ง iOS/Android) จะเปิดหน้าต่างแชร์ของระบบให้ผู้ใช้สามารถเลือก "บันทึกรูปภาพ" (Save Image) หรือ "บันทึกลงไฟล์" (Save to Files/Drive) ได้ทันทีจากปุ่มดาวน์โหลด
+  - **Image Long-Press Direct Save (PNG)**:
+    - ในโมดอลพรีวิวเกียรติบัตร เพิ่มป้ายคำแนะนำ `👆 แตะค้างที่รูปภาพเพื่อบันทึกรูป (Save Image) ลงอัลบั้มรูป`
+    - ผู้ใช้บน LINE สามารถใช้นิ้วแตะค้างที่รูปเกียรติบัตร แล้วเลือกบันทึกรูปภาพลง Gallery ได้ทันทีโดยไม่ต้องผ่าน Download Link
+  - **LINE Guidance Box & PDF Instructions**:
+    - ตรวจจับสภาพแวดล้อม LINE ด้วย `isLineBrowser`
+    - แสดงกล่องข้อความสีเหลืองอำพันแนะนำวิธีบันทึกภาพ และวิธีดาวน์โหลด PDF ผ่านการแตะปุ่มจุดสามจุด (⋮) ด้านขวาบนของ LINE แล้วเลือก "เปิดในเบราว์เซอร์อื่น" (Chrome / Safari)
+
+### 32. Dynamic Certificate Layout Position Sliders & Real-Time Canvas Preview Engine (แนวทางที่ 1)
+- **Requirement & Context**:
+  - เมื่อแอดมินอัปโหลดภาพพื้นหลัง Template เกียรติบัตร (Certificate Template Image) รูปแบบและช่องว่างของแต่ละหน่วยงาน/โครงการอาจมีตำแหน่งและขนาดบรรทัดที่แตกต่างกัน
+  - แอดมินต้องการปรับขยับตำแหน่งแนวตั้ง (Y) และขนาดตัวอักษร (Font Size) ของข้อความทั้ง 3 ส่วนได้อย่างอิสระ พร้อมเห็นการเปลี่ยนแปลงแบบเรียลไทม์ (Live Preview) ทันที
+- **Three Customizable Text Sections**:
+  1. **`NAME SURNAME` (ชื่อ-สกุล ผู้เข้าร่วม)**:
+     - ตำแหน่งแนวตั้ง (`nameY`): ปรับได้ตั้งแต่ 150px ถึง 600px (ค่ามาตรฐาน 385px บน baseline 730px)
+     - ขนาดตัวอักษร (`nameFontSize`): ปรับได้ตั้งแต่ 16px ถึง 60px (ค่ามาตรฐาน 32px)
+  2. **`PROJECT NAME` (ชื่อโครงการ/กิจกรรม)**:
+     - ตำแหน่งแนวตั้ง (`projectY`): ปรับได้ตั้งแต่ 200px ถึง 680px (ค่ามาตรฐาน 453px)
+     - ขนาดตัวอักษร (`projectFontSize`): ปรับได้ตั้งแต่ 12px ถึง 44px (ค่ามาตรฐาน 21px)
+  3. **`DATE MONTH YEAR` (วันที่จัดกิจกรรม)**:
+     - ตำแหน่งแนวตั้ง (`dateY`): ปรับได้ตั้งแต่ 250px ถึง 710px (ค่ามาตรฐาน 521px)
+     - ขนาดตัวอักษร (`dateFontSize`): ปรับได้ตั้งแต่ 10px ถึง 32px (ค่ามาตรฐาน 16px)
+- **Interactive Live Preview Canvas**:
+  - แสดงภาพจำลองเกียรติบัตรจริงผ่าน HTML5 Canvas ในหน้า Admin Activity Form (`/admin/activity/edit/[id]` และ `/admin/activity/add`)
+  - ใช้ชื่อจำลอง `MR. SOMCHAI JAIDEE` พร้อมชื่อโครงการและวันที่จริง เพื่อให้แอดมินกะระยะบรรทัดได้ตรงช่องอย่างแม่นยำ
+  - Debounced Render (120ms) ช่วยให้การเลื่อนสไลเดอร์ตอบสนองลื่นไหล ไม่มีอาการกระตุก
+  - ปุ่ม **"↺ รีเซ็ตตำแหน่งเริ่มต้น"** ให้แอดมินคืนค่ามาตรฐานได้ในคลิกเดียว
+- **Data Persistence & Consumer Integration**:
+  - บันทึกโครงสร้าง `certificateLayout: { nameY, nameFontSize, projectY, projectFontSize, dateY, dateFontSize }` ลง Firestore ในเอกสาร `activities/{id}`
+  - `src/lib/certificateGenerator.js`: รองรับ `options.certificateLayout` และคำนวณ `scaleY = canvas.height / 730` โดยอัตโนมัติ พร้อม Fallback คืนค่ามาตรฐาน 100% สำหรับกิจกรรมเดิม
+  - รองรับการสร้างเกียรติบัตรตาม Layout ที่ปรับแต่งไว้ทั้งในฝั่งนักเรียน (`/student/my-registrations`) และฝั่งแอดมิน (`/admin/activity/seats/[id]`)
+
+### 33. Empty / Dash Quota Badge Suppression in Student & Admin Views
+- **Problem & Root Cause**:
+  - เมื่อกิจกรรมไม่มีการกำหนดประเภทโควตา หรือข้อมูลการลงทะเบียนมีฟิลด์ `quota` เป็นเครื่องหมายขีด (`"-"`), ค่าว่าง (`""`), ช่องว่าง (`" "`), หรือ `"ไม่ระบุ"`
+  - ในหน้ารายการลงทะเบียนของนักเรียน (`/student/my-registrations`) เดิมใช้เงื่อนไขตรวจสอบเพียง `{reg.quota && ...}` ซึ่งค่าสตริง `"-"` ถือเป็น Truthy ใน JavaScript ทำให้เกิดการแสดงป้าย `โควตา: -` รกสายตาบนบัตรคิว/ที่นั่ง
+- **Solution & Implementation**:
+  - เพิ่มฟังก์ชันตรวจสอบความถูกต้องของประเภทโควตา `hasValidQuota`:
+    ```javascript
+    const hasValidQuota = (quota) => {
+      if (!quota) return false;
+      const trimmed = String(quota).trim();
+      return trimmed !== '' && trimmed !== '-' && trimmed !== '—' && trimmed !== '–' && trimmed !== 'none' && trimmed !== 'null' && trimmed !== 'undefined' && trimmed !== 'ไม่ระบุ';
+    };
+    ```
+  - อัปเดตจุดแสดงผลป้ายโควตาใน:
+    1. `RegistrationCard` (บัตรกิจกรรมที่กำลังจะมาถึง / กำลังดำเนินการ) ใน `src/app/student/my-registrations/page.js`
+    2. `CompletedRegistrationCard` (บัตรกิจกรรมที่เสร็จสิ้นแล้ว) ใน `src/app/student/my-registrations/page.js`
+    3. `StudentDocumentUploadModal.js` (โมดอลแนบเอกสารและหลักฐาน)
+    4. `src/app/admin/registrants/[id]/page.js` (หน้ารายละเอียดผู้สมัครฝั่ง Admin)
+  - ผลลัพธ์: หากผู้สมัครไม่มีโควตา หรือมีค่าเป็น `-` ป้ายโควตาจะไม่ถูกเรนเดอร์ขึ้นมาบนหน้าจอเลย ทำให้การ์ดสะอาด คมชัด ตามมาตรฐาน Aero Student UI
+
+
+
 
 
 

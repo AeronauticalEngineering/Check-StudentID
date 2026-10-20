@@ -66,7 +66,9 @@ export async function renderCertificateCanvas({
   fullName = '',
   fullNameEn = '',
   projectName = '',
-  dateText = ''
+  dateText = '',
+  certificateLayout = null,
+  layout = null
 }) {
   if (!templateUrl) {
     throw new Error('ไม่พบไฟล์รูปภาพเทมเพลตเกียรติบัตร กรุณาอัปโหลดเทมเพลตในหน้าจัดการกิจกรรม');
@@ -88,29 +90,36 @@ export async function renderCertificateCanvas({
   const scaleY = canvas.height / 730;
   const centerX = canvas.width / 2;
 
+  // Active Layout with fallbacks (Name: 385/32, Project: 453/21, Date: 521/16)
+  const activeLayout = certificateLayout || layout || {};
+  const cfgNameY = activeLayout.nameY !== undefined && activeLayout.nameY !== null ? Number(activeLayout.nameY) : 385;
+  const cfgNameFontSize = activeLayout.nameFontSize !== undefined && activeLayout.nameFontSize !== null ? Number(activeLayout.nameFontSize) : 32;
+  const cfgProjectY = activeLayout.projectY !== undefined && activeLayout.projectY !== null ? Number(activeLayout.projectY) : 453;
+  const cfgProjectFontSize = activeLayout.projectFontSize !== undefined && activeLayout.projectFontSize !== null ? Number(activeLayout.projectFontSize) : 21;
+  const cfgDateY = activeLayout.dateY !== undefined && activeLayout.dateY !== null ? Number(activeLayout.dateY) : 521;
+  const cfgDateFontSize = activeLayout.dateFontSize !== undefined && activeLayout.dateFontSize !== null ? Number(activeLayout.dateFontSize) : 16;
+
   // Decide displayName: Prefer uppercase fullNameEn, fallback to fullName
   const rawName = (fullNameEn && fullNameEn.trim()) ? fullNameEn.trim() : (fullName || '').trim();
   const displayName = rawName.toUpperCase();
 
   // 2. Draw NAME SURNAME
-  // Visual reference: Centered between "This is to certify that" and "has successfully participated in"
-  const nameY = 385 * scaleY;
-  const nameFontSize = Math.round(32 * scaleY);
+  const nameY = cfgNameY * scaleY;
+  const nameFontSize = Math.round(cfgNameFontSize * scaleY);
   ctx.save();
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   // Use classic elegant serif font matching aviation certificates
   ctx.font = `bold italic ${nameFontSize}px "Times New Roman", Times, Georgia, "Noto Serif", serif`;
-  ctx.fillStyle = '#063826'; // Deep hunter green / navy-black as in reference
+  ctx.fillStyle = '#063826'; // Deep hunter green / navy-black
   ctx.shadowColor = 'rgba(0,0,0,0.15)';
   ctx.shadowBlur = 1;
   ctx.fillText(displayName, centerX, nameY);
   ctx.restore();
 
   // 3. Draw PROJECT NAME
-  // Visual reference: Centered between "has successfully participated in" and "This certificate is given on"
-  const projY = 453 * scaleY;
-  const projFontSize = Math.round(21 * scaleY);
+  const projY = cfgProjectY * scaleY;
+  const projFontSize = Math.round(cfgProjectFontSize * scaleY);
   const displayProject = (projectName && projectName.trim()) ? projectName.trim() : 'WORKSHOP TRAINING PROGRAM';
   ctx.save();
   ctx.textAlign = 'center';
@@ -121,9 +130,8 @@ export async function renderCertificateCanvas({
   ctx.restore();
 
   // 4. Draw DATE MONTH YEAR
-  // Visual reference: Centered between "This certificate is given on" and signature line
-  const dateY = 521 * scaleY;
-  const dateFontSize = Math.round(16 * scaleY);
+  const dateY = cfgDateY * scaleY;
+  const dateFontSize = Math.round(cfgDateFontSize * scaleY);
   const displayDate = (dateText && dateText.trim()) ? dateText.trim() : new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   ctx.save();
   ctx.textAlign = 'center';
@@ -137,23 +145,48 @@ export async function renderCertificateCanvas({
 }
 
 /**
- * Downloads Certificate as PNG
+ * Downloads Certificate as PNG (supports Web Share API for LINE/Mobile)
  */
 export async function downloadCertificatePNG(options) {
   const canvas = await renderCertificateCanvas(options);
   const cleanName = (options.fullNameEn || options.fullName || 'student').replace(/[^a-zA-Z0-9_\u0E00-\u0E7F]/g, '_');
   const filename = `Certificate_${cleanName}.png`;
 
+  // 1. Try Web Share API with File (Works directly inside LINE In-App Browser & Mobile)
+  if (typeof navigator !== 'undefined' && navigator.canShare) {
+    try {
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png', 1.0));
+      if (blob) {
+        const file = new File([blob], filename, { type: 'image/png' });
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            files: [file],
+            title: filename,
+            text: 'เกียรติบัตรของคุณ (Certificate)'
+          });
+          return { success: true, method: 'share' };
+        }
+      }
+    } catch (shareErr) {
+      if (shareErr.name === 'AbortError') {
+        return { success: false, method: 'cancelled' };
+      }
+      console.warn('Web Share PNG failed, falling back to anchor download:', shareErr);
+    }
+  }
+
+  // 2. Standard browser download via <a> tag
   const link = document.createElement('a');
   link.download = filename;
   link.href = canvas.toDataURL('image/png');
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+  return { success: true, method: 'download' };
 }
 
 /**
- * Downloads Certificate as high quality PDF (A4 Landscape)
+ * Downloads Certificate as high quality PDF (A4 Landscape, supports Web Share API for LINE/Mobile)
  */
 export async function downloadCertificatePDF(options) {
   const canvas = await renderCertificateCanvas(options);
@@ -171,7 +204,31 @@ export async function downloadCertificatePDF(options) {
   const pdfHeight = pdf.internal.pageSize.getHeight();
 
   pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+
+  // 1. Try Web Share API with PDF File (Opens native share sheet to save to Files/Drive in LINE)
+  if (typeof navigator !== 'undefined' && navigator.canShare) {
+    try {
+      const pdfBlob = pdf.output('blob');
+      const file = new File([pdfBlob], filename, { type: 'application/pdf' });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: filename,
+          text: 'เกียรติบัตรของคุณ (Certificate PDF)'
+        });
+        return { success: true, method: 'share' };
+      }
+    } catch (shareErr) {
+      if (shareErr.name === 'AbortError') {
+        return { success: false, method: 'cancelled' };
+      }
+      console.warn('Web Share PDF failed, falling back to pdf.save:', shareErr);
+    }
+  }
+
+  // 2. Standard jsPDF save
   pdf.save(filename);
+  return { success: true, method: 'download' };
 }
 
 /**

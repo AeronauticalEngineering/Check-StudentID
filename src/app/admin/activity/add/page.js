@@ -7,7 +7,16 @@ import { db, storage } from '../../../../lib/firebase';
 import { collection, getDocs, addDoc, Timestamp, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadString, getDownloadURL } from 'firebase/storage';
 import { useModal } from '../../../../context/ModalContext';
+import { getCertificatePreviewDataUrl } from '../../../../lib/certificateGenerator';
 
+const DEFAULT_CERT_LAYOUT = {
+  nameY: 385,
+  nameFontSize: 32,
+  projectY: 453,
+  projectFontSize: 21,
+  dateY: 521,
+  dateFontSize: 16
+};
 
 export default function AddActivityPage() {
   const router = useRouter();
@@ -66,9 +75,46 @@ export default function AddActivityPage() {
   const [certificateDateText, setCertificateDateText] = useState('');
   const [certificateTemplateUrl, setCertificateTemplateUrl] = useState('');
   const [isUploadingTemplate, setIsUploadingTemplate] = useState(false);
+  const [certificateLayout, setCertificateLayout] = useState(DEFAULT_CERT_LAYOUT);
+  const [livePreviewUrl, setLivePreviewUrl] = useState('');
+  const [isGeneratingLivePreview, setIsGeneratingLivePreview] = useState(false);
   const [enablePhoto, setEnablePhoto] = useState(true);
   const [photoButtonLabel, setPhotoButtonLabel] = useState('Photo');
   const [photoUrl, setPhotoUrl] = useState('');
+
+  // Real-time Live Preview Generator for Certificate Template
+  useEffect(() => {
+    if (!certificateTemplateUrl || certificateMode !== 'template') {
+      setLivePreviewUrl('');
+      return;
+    }
+
+    let isMounted = true;
+    const timer = setTimeout(async () => {
+      try {
+        setIsGeneratingLivePreview(true);
+        const url = await getCertificatePreviewDataUrl({
+          templateUrl: certificateTemplateUrl,
+          fullNameEn: 'MR. SOMCHAI JAIDEE',
+          projectName: certificateProjectName || activityName || 'WORKSHOP TRAINING PROGRAM',
+          dateText: certificateDateText || new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }),
+          certificateLayout
+        });
+        if (isMounted) {
+          setLivePreviewUrl(url);
+        }
+      } catch (err) {
+        console.warn('Live preview generation error:', err);
+      } finally {
+        if (isMounted) setIsGeneratingLivePreview(false);
+      }
+    }, 120);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [certificateTemplateUrl, certificateMode, certificateProjectName, certificateDateText, certificateLayout, activityName]);
 
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -337,6 +383,7 @@ export default function AddActivityPage() {
         certificateProjectName: certificateProjectName.trim(),
         certificateDateText: certificateDateText.trim(),
         certificateTemplateUrl: certificateMode === 'individual_link' ? '' : (certificateTemplateUrl ? certificateTemplateUrl.trim() : ''),
+        certificateLayout: certificateLayout || DEFAULT_CERT_LAYOUT,
         enablePhoto,
         photoButtonLabel: photoButtonLabel.trim() || 'Photo',
         photoUrl: photoUrl.trim() || ''
@@ -1045,15 +1092,201 @@ export default function AddActivityPage() {
                           </div>
                         )}
                         {certificateTemplateUrl ? (
-                          <div className="mt-2 relative rounded-lg overflow-hidden border border-slate-300 max-h-36 bg-slate-900 flex items-center justify-center">
-                            <img
-                              src={certificateTemplateUrl}
-                              alt="Certificate Template Preview"
-                              className="max-h-36 object-contain"
-                            />
-                            <span className="absolute bottom-1 right-1 px-1.5 py-0.5 bg-black/70 text-[10px] text-white rounded">
-                              Template ที่อัปโหลดแล้ว
-                            </span>
+                          <div className="space-y-3 pt-2">
+                            {/* Live Preview Header & Controls */}
+                            <div className="flex items-center justify-between border-t border-slate-200/80 pt-2.5">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs font-bold text-slate-800">👁️ ตัวอย่างผลลัพธ์จริง (Live Preview)</span>
+                                {isGeneratingLivePreview ? (
+                                  <span className="text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 animate-pulse">
+                                    กำลังปรับตำแหน่ง...
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                                    ⚡ อัปเดตสด
+                                  </span>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setCertificateLayout({ ...DEFAULT_CERT_LAYOUT })}
+                                className="text-[11px] text-slate-600 hover:text-slate-900 font-medium px-2 py-0.5 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded transition-colors cursor-pointer"
+                                title="คืนค่าตำแหน่งและขนาดฟอนต์มาตรฐาน"
+                              >
+                                ↺ รีเซ็ตตำแหน่งเริ่มต้น
+                              </button>
+                            </div>
+
+                            {/* Canvas Live Preview Container */}
+                            <div className="relative rounded-xl overflow-hidden border border-slate-300 bg-slate-950 flex items-center justify-center min-h-[170px] max-h-[300px]">
+                              {livePreviewUrl ? (
+                                <img
+                                  src={livePreviewUrl}
+                                  alt="Certificate Live Preview"
+                                  className="max-h-[280px] w-auto object-contain"
+                                />
+                              ) : (
+                                <div className="text-xs text-slate-400 py-6">กำลังประมวลผลตัวอย่าง...</div>
+                              )}
+                              {isGeneratingLivePreview && (
+                                <div className="absolute top-2 right-2 px-2 py-1 bg-black/75 backdrop-blur-xs text-[10px] text-white rounded-md flex items-center gap-1.5">
+                                  <span className="w-2.5 h-2.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                                  <span>เรนเดอร์ตำแหน่งใหม่...</span>
+                                </div>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-slate-500 font-normal">
+                              * ตัวอย่างใช้ชื่อจำลอง <span className="font-semibold text-slate-700">MR. SOMCHAI JAIDEE</span> เพื่อให้คุณกะระยะบรรทัดได้ตรงช่อง
+                            </p>
+
+                            {/* Dynamic Position & Size Controls for 3 Sections */}
+                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2.5">
+                              <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
+                                <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                                  <span>🎛️</span>
+                                  <span>ปรับตำแหน่งแนวตั้ง (Y) และขนาดฟอนต์ 3 ส่วน</span>
+                                </span>
+                                <span className="text-[10px] text-slate-500 font-normal">เลื่อนแถบเพื่อขยับข้อความ</span>
+                              </div>
+
+                              {/* Section 1: NAME SURNAME */}
+                              <div className="bg-white p-2.5 rounded-lg border border-emerald-200/80 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-semibold text-emerald-900 flex items-center gap-1">
+                                    <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
+                                    <span>1. ชื่อ-สกุล (NAME SURNAME)</span>
+                                  </span>
+                                  <span className="text-[11px] font-mono text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                                    Y: {certificateLayout.nameY}px | ขนาด: {certificateLayout.nameFontSize}px
+                                  </span>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2 text-xs">
+                                  <div>
+                                    <div className="flex justify-between text-[11px] text-slate-600 mb-0.5">
+                                      <span>ตำแหน่งขึ้น-ลง (Y)</span>
+                                      <span className="font-mono text-slate-700">{certificateLayout.nameY}</span>
+                                    </div>
+                                    <input
+                                      type="range"
+                                      min="150"
+                                      max="600"
+                                      step="1"
+                                      value={certificateLayout.nameY}
+                                      onChange={(e) => setCertificateLayout(p => ({ ...p, nameY: Number(e.target.value) }))}
+                                      className="w-full accent-emerald-600 cursor-pointer"
+                                    />
+                                  </div>
+                                  <div>
+                                    <div className="flex justify-between text-[11px] text-slate-600 mb-0.5">
+                                      <span>ขนาดฟอนต์ (Size)</span>
+                                      <span className="font-mono text-slate-700">{certificateLayout.nameFontSize}px</span>
+                                    </div>
+                                    <input
+                                      type="range"
+                                      min="16"
+                                      max="60"
+                                      step="1"
+                                      value={certificateLayout.nameFontSize}
+                                      onChange={(e) => setCertificateLayout(p => ({ ...p, nameFontSize: Number(e.target.value) }))}
+                                      className="w-full accent-emerald-600 cursor-pointer"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Section 2: PROJECT NAME */}
+                              <div className="bg-white p-2.5 rounded-lg border border-blue-200/80 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-semibold text-blue-900 flex items-center gap-1">
+                                    <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>
+                                    <span>2. ชื่อโครงการ (PROJECT NAME)</span>
+                                  </span>
+                                  <span className="text-[11px] font-mono text-blue-800 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
+                                    Y: {certificateLayout.projectY}px | ขนาด: {certificateLayout.projectFontSize}px
+                                  </span>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2 text-xs">
+                                  <div>
+                                    <div className="flex justify-between text-[11px] text-slate-600 mb-0.5">
+                                      <span>ตำแหน่งขึ้น-ลง (Y)</span>
+                                      <span className="font-mono text-slate-700">{certificateLayout.projectY}</span>
+                                    </div>
+                                    <input
+                                      type="range"
+                                      min="200"
+                                      max="680"
+                                      step="1"
+                                      value={certificateLayout.projectY}
+                                      onChange={(e) => setCertificateLayout(p => ({ ...p, projectY: Number(e.target.value) }))}
+                                      className="w-full accent-blue-600 cursor-pointer"
+                                    />
+                                  </div>
+                                  <div>
+                                    <div className="flex justify-between text-[11px] text-slate-600 mb-0.5">
+                                      <span>ขนาดฟอนต์ (Size)</span>
+                                      <span className="font-mono text-slate-700">{certificateLayout.projectFontSize}px</span>
+                                    </div>
+                                    <input
+                                      type="range"
+                                      min="12"
+                                      max="44"
+                                      step="1"
+                                      value={certificateLayout.projectFontSize}
+                                      onChange={(e) => setCertificateLayout(p => ({ ...p, projectFontSize: Number(e.target.value) }))}
+                                      className="w-full accent-blue-600 cursor-pointer"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Section 3: DATE MONTH YEAR */}
+                              <div className="bg-white p-2.5 rounded-lg border border-amber-200/80 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-semibold text-amber-900 flex items-center gap-1">
+                                    <span className="w-2 h-2 rounded-full bg-amber-500 inline-block"></span>
+                                    <span>3. วันที่ (DATE MONTH YEAR)</span>
+                                  </span>
+                                  <span className="text-[11px] font-mono text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                                    Y: {certificateLayout.dateY}px | ขนาด: {certificateLayout.dateFontSize}px
+                                  </span>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2 text-xs">
+                                  <div>
+                                    <div className="flex justify-between text-[11px] text-slate-600 mb-0.5">
+                                      <span>ตำแหน่งขึ้น-ลง (Y)</span>
+                                      <span className="font-mono text-slate-700">{certificateLayout.dateY}</span>
+                                    </div>
+                                    <input
+                                      type="range"
+                                      min="250"
+                                      max="710"
+                                      step="1"
+                                      value={certificateLayout.dateY}
+                                      onChange={(e) => setCertificateLayout(p => ({ ...p, dateY: Number(e.target.value) }))}
+                                      className="w-full accent-amber-600 cursor-pointer"
+                                    />
+                                  </div>
+                                  <div>
+                                    <div className="flex justify-between text-[11px] text-slate-600 mb-0.5">
+                                      <span>ขนาดฟอนต์ (Size)</span>
+                                      <span className="font-mono text-slate-700">{certificateLayout.dateFontSize}px</span>
+                                    </div>
+                                    <input
+                                      type="range"
+                                      min="10"
+                                      max="32"
+                                      step="1"
+                                      value={certificateLayout.dateFontSize}
+                                      onChange={(e) => setCertificateLayout(p => ({ ...p, dateFontSize: Number(e.target.value) }))}
+                                      className="w-full accent-amber-600 cursor-pointer"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         ) : (
                           <p className="text-[11px] text-amber-700 mt-1.5 bg-amber-50 p-2 rounded-lg border border-amber-200">
