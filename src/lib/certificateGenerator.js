@@ -94,10 +94,15 @@ export async function renderCertificateCanvas({
   const activeLayout = certificateLayout || layout || {};
   const cfgNameY = activeLayout.nameY !== undefined && activeLayout.nameY !== null ? Number(activeLayout.nameY) : 385;
   const cfgNameFontSize = activeLayout.nameFontSize !== undefined && activeLayout.nameFontSize !== null ? Number(activeLayout.nameFontSize) : 32;
+  const cfgNameColor = activeLayout.nameColor || '#063826';
+
   const cfgProjectY = activeLayout.projectY !== undefined && activeLayout.projectY !== null ? Number(activeLayout.projectY) : 453;
   const cfgProjectFontSize = activeLayout.projectFontSize !== undefined && activeLayout.projectFontSize !== null ? Number(activeLayout.projectFontSize) : 21;
+  const cfgProjectColor = activeLayout.projectColor || '#1e293b';
+
   const cfgDateY = activeLayout.dateY !== undefined && activeLayout.dateY !== null ? Number(activeLayout.dateY) : 521;
   const cfgDateFontSize = activeLayout.dateFontSize !== undefined && activeLayout.dateFontSize !== null ? Number(activeLayout.dateFontSize) : 16;
+  const cfgDateColor = activeLayout.dateColor || '#1e293b';
 
   // Decide displayName: Prefer uppercase fullNameEn, fallback to fullName
   const rawName = (fullNameEn && fullNameEn.trim()) ? fullNameEn.trim() : (fullName || '').trim();
@@ -111,7 +116,7 @@ export async function renderCertificateCanvas({
   ctx.textBaseline = 'middle';
   // Use classic elegant serif font matching aviation certificates
   ctx.font = `bold italic ${nameFontSize}px "Times New Roman", Times, Georgia, "Noto Serif", serif`;
-  ctx.fillStyle = '#063826'; // Deep hunter green / navy-black
+  ctx.fillStyle = cfgNameColor; // Customizable color (default: #063826)
   ctx.shadowColor = 'rgba(0,0,0,0.15)';
   ctx.shadowBlur = 1;
   ctx.fillText(displayName, centerX, nameY);
@@ -125,7 +130,7 @@ export async function renderCertificateCanvas({
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.font = `bold ${projFontSize}px "Times New Roman", Times, Georgia, "Noto Serif", serif`;
-  ctx.fillStyle = '#1e293b'; // Slate 800
+  ctx.fillStyle = cfgProjectColor; // Customizable color (default: #1e293b)
   ctx.fillText(displayProject, centerX, projY);
   ctx.restore();
 
@@ -137,7 +142,7 @@ export async function renderCertificateCanvas({
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.font = `bold italic ${dateFontSize}px "Times New Roman", Times, Georgia, "Noto Serif", serif`;
-  ctx.fillStyle = '#1e293b';
+  ctx.fillStyle = cfgDateColor; // Customizable color (default: #1e293b)
   ctx.fillText(displayDate, centerX, dateY);
   ctx.restore();
 

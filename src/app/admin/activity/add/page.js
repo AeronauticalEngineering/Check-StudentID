@@ -12,11 +12,16 @@ import { getCertificatePreviewDataUrl } from '../../../../lib/certificateGenerat
 const DEFAULT_CERT_LAYOUT = {
   nameY: 385,
   nameFontSize: 32,
+  nameColor: '#063826',
   projectY: 453,
   projectFontSize: 21,
+  projectColor: '#1e293b',
   dateY: 521,
-  dateFontSize: 16
+  dateFontSize: 16,
+  dateColor: '#1e293b'
 };
+
+const isValidHex = (hex) => /^#[0-9A-Fa-f]{6}$/.test(hex || '');
 
 export default function AddActivityPage() {
   const router = useRouter();
@@ -1152,8 +1157,11 @@ export default function AddActivityPage() {
                               {/* Section 1: NAME SURNAME */}
                               <div className="bg-white p-2.5 rounded-lg border border-emerald-200/80 space-y-2">
                                 <div className="flex items-center justify-between">
-                                  <span className="text-xs font-semibold text-emerald-900 flex items-center gap-1">
-                                    <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
+                                  <span className="text-xs font-semibold text-emerald-900 flex items-center gap-1.5">
+                                    <span
+                                      className="w-2.5 h-2.5 rounded-full inline-block border border-black/20"
+                                      style={{ backgroundColor: certificateLayout.nameColor || '#063826' }}
+                                    ></span>
                                     <span>1. ชื่อ-สกุล (NAME SURNAME)</span>
                                   </span>
                                   <span className="text-[11px] font-mono text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
@@ -1193,13 +1201,51 @@ export default function AddActivityPage() {
                                     />
                                   </div>
                                 </div>
+
+                                {/* Color Swatch Box + HEX Text Input */}
+                                <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between text-xs">
+                                  <span className="text-[11px] text-slate-600 font-medium">สีตัวอักษร:</span>
+                                  <div className="flex items-center gap-1.5">
+                                    <label
+                                      className="relative w-6 h-6 rounded-md border border-slate-300 hover:border-slate-400 shadow-2xs cursor-pointer overflow-hidden flex items-center justify-center shrink-0 transition-transform active:scale-95"
+                                      style={{ backgroundColor: certificateLayout.nameColor || '#063826' }}
+                                      title="คลิกเพื่อเลือกสี (Color Picker)"
+                                    >
+                                      <input
+                                        type="color"
+                                        value={isValidHex(certificateLayout.nameColor) ? certificateLayout.nameColor : '#063826'}
+                                        onChange={(e) => setCertificateLayout(p => ({ ...p, nameColor: e.target.value }))}
+                                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                                      />
+                                    </label>
+
+                                    <div className="flex items-center bg-white border border-slate-200 rounded-md overflow-hidden focus-within:border-emerald-600 focus-within:ring-1 focus-within:ring-emerald-600 h-6">
+                                      <span className="px-1 text-[11px] text-slate-400 font-mono select-none">#</span>
+                                      <input
+                                        type="text"
+                                        maxLength={6}
+                                        value={(certificateLayout.nameColor || '#063826').replace(/^#/, '')}
+                                        onChange={(e) => {
+                                          const hex = e.target.value.replace(/[^0-9A-Fa-f]/g, '');
+                                          setCertificateLayout(p => ({ ...p, nameColor: '#' + hex }));
+                                        }}
+                                        placeholder="063826"
+                                        className="w-16 py-0.5 pr-1 text-[11px] font-mono uppercase text-slate-800 outline-none"
+                                        title="พิมพ์หรือวางรหัสสี HEX"
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
                               </div>
 
                               {/* Section 2: PROJECT NAME */}
                               <div className="bg-white p-2.5 rounded-lg border border-blue-200/80 space-y-2">
                                 <div className="flex items-center justify-between">
-                                  <span className="text-xs font-semibold text-blue-900 flex items-center gap-1">
-                                    <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>
+                                  <span className="text-xs font-semibold text-blue-900 flex items-center gap-1.5">
+                                    <span
+                                      className="w-2.5 h-2.5 rounded-full inline-block border border-black/20"
+                                      style={{ backgroundColor: certificateLayout.projectColor || '#1e293b' }}
+                                    ></span>
                                     <span>2. ชื่อโครงการ (PROJECT NAME)</span>
                                   </span>
                                   <span className="text-[11px] font-mono text-blue-800 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
@@ -1239,13 +1285,51 @@ export default function AddActivityPage() {
                                     />
                                   </div>
                                 </div>
+
+                                {/* Color Swatch Box + HEX Text Input */}
+                                <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between text-xs">
+                                  <span className="text-[11px] text-slate-600 font-medium">สีตัวอักษร:</span>
+                                  <div className="flex items-center gap-1.5">
+                                    <label
+                                      className="relative w-6 h-6 rounded-md border border-slate-300 hover:border-slate-400 shadow-2xs cursor-pointer overflow-hidden flex items-center justify-center shrink-0 transition-transform active:scale-95"
+                                      style={{ backgroundColor: certificateLayout.projectColor || '#1e293b' }}
+                                      title="คลิกเพื่อเลือกสี (Color Picker)"
+                                    >
+                                      <input
+                                        type="color"
+                                        value={isValidHex(certificateLayout.projectColor) ? certificateLayout.projectColor : '#1e293b'}
+                                        onChange={(e) => setCertificateLayout(p => ({ ...p, projectColor: e.target.value }))}
+                                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                                      />
+                                    </label>
+
+                                    <div className="flex items-center bg-white border border-slate-200 rounded-md overflow-hidden focus-within:border-blue-600 focus-within:ring-1 focus-within:ring-blue-600 h-6">
+                                      <span className="px-1 text-[11px] text-slate-400 font-mono select-none">#</span>
+                                      <input
+                                        type="text"
+                                        maxLength={6}
+                                        value={(certificateLayout.projectColor || '#1e293b').replace(/^#/, '')}
+                                        onChange={(e) => {
+                                          const hex = e.target.value.replace(/[^0-9A-Fa-f]/g, '');
+                                          setCertificateLayout(p => ({ ...p, projectColor: '#' + hex }));
+                                        }}
+                                        placeholder="1E293B"
+                                        className="w-16 py-0.5 pr-1 text-[11px] font-mono uppercase text-slate-800 outline-none"
+                                        title="พิมพ์หรือวางรหัสสี HEX"
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
                               </div>
 
                               {/* Section 3: DATE MONTH YEAR */}
                               <div className="bg-white p-2.5 rounded-lg border border-amber-200/80 space-y-2">
                                 <div className="flex items-center justify-between">
-                                  <span className="text-xs font-semibold text-amber-900 flex items-center gap-1">
-                                    <span className="w-2 h-2 rounded-full bg-amber-500 inline-block"></span>
+                                  <span className="text-xs font-semibold text-amber-900 flex items-center gap-1.5">
+                                    <span
+                                      className="w-2.5 h-2.5 rounded-full inline-block border border-black/20"
+                                      style={{ backgroundColor: certificateLayout.dateColor || '#1e293b' }}
+                                    ></span>
                                     <span>3. วันที่ (DATE MONTH YEAR)</span>
                                   </span>
                                   <span className="text-[11px] font-mono text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
@@ -1283,6 +1367,41 @@ export default function AddActivityPage() {
                                       onChange={(e) => setCertificateLayout(p => ({ ...p, dateFontSize: Number(e.target.value) }))}
                                       className="w-full accent-amber-600 cursor-pointer"
                                     />
+                                  </div>
+                                </div>
+
+                                {/* Color Swatch Box + HEX Text Input */}
+                                <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between text-xs">
+                                  <span className="text-[11px] text-slate-600 font-medium">สีตัวอักษร:</span>
+                                  <div className="flex items-center gap-1.5">
+                                    <label
+                                      className="relative w-6 h-6 rounded-md border border-slate-300 hover:border-slate-400 shadow-2xs cursor-pointer overflow-hidden flex items-center justify-center shrink-0 transition-transform active:scale-95"
+                                      style={{ backgroundColor: certificateLayout.dateColor || '#1e293b' }}
+                                      title="คลิกเพื่อเลือกสี (Color Picker)"
+                                    >
+                                      <input
+                                        type="color"
+                                        value={isValidHex(certificateLayout.dateColor) ? certificateLayout.dateColor : '#1e293b'}
+                                        onChange={(e) => setCertificateLayout(p => ({ ...p, dateColor: e.target.value }))}
+                                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                                      />
+                                    </label>
+
+                                    <div className="flex items-center bg-white border border-slate-200 rounded-md overflow-hidden focus-within:border-amber-600 focus-within:ring-1 focus-within:ring-amber-600 h-6">
+                                      <span className="px-1 text-[11px] text-slate-400 font-mono select-none">#</span>
+                                      <input
+                                        type="text"
+                                        maxLength={6}
+                                        value={(certificateLayout.dateColor || '#1e293b').replace(/^#/, '')}
+                                        onChange={(e) => {
+                                          const hex = e.target.value.replace(/[^0-9A-Fa-f]/g, '');
+                                          setCertificateLayout(p => ({ ...p, dateColor: '#' + hex }));
+                                        }}
+                                        placeholder="1E293B"
+                                        className="w-16 py-0.5 pr-1 text-[11px] font-mono uppercase text-slate-800 outline-none"
+                                        title="พิมพ์หรือวางรหัสสี HEX"
+                                      />
+                                    </div>
                                   </div>
                                 </div>
                               </div>

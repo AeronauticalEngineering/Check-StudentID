@@ -536,29 +536,39 @@ AERO Student is an end-to-end Student Activity Registration, Seating Allocation,
     - ตรวจจับสภาพแวดล้อม LINE ด้วย `isLineBrowser`
     - แสดงกล่องข้อความสีเหลืองอำพันแนะนำวิธีบันทึกภาพ และวิธีดาวน์โหลด PDF ผ่านการแตะปุ่มจุดสามจุด (⋮) ด้านขวาบนของ LINE แล้วเลือก "เปิดในเบราว์เซอร์อื่น" (Chrome / Safari)
 
-### 32. Dynamic Certificate Layout Position Sliders & Real-Time Canvas Preview Engine (แนวทางที่ 1)
+### 32. Dynamic Certificate Layout Position Sliders, Color Palette & Real-Time Canvas Preview Engine (แนวทางที่ 1)
 - **Requirement & Context**:
-  - เมื่อแอดมินอัปโหลดภาพพื้นหลัง Template เกียรติบัตร (Certificate Template Image) รูปแบบและช่องว่างของแต่ละหน่วยงาน/โครงการอาจมีตำแหน่งและขนาดบรรทัดที่แตกต่างกัน
-  - แอดมินต้องการปรับขยับตำแหน่งแนวตั้ง (Y) และขนาดตัวอักษร (Font Size) ของข้อความทั้ง 3 ส่วนได้อย่างอิสระ พร้อมเห็นการเปลี่ยนแปลงแบบเรียลไทม์ (Live Preview) ทันที
+  - เมื่อแอดมินอัปโหลดภาพพื้นหลัง Template เกียรติบัตร (Certificate Template Image) รูปแบบและโทนสีของแต่ละหน่วยงาน/โครงการอาจมีตำแหน่ง ขนาดบรรทัด และสีตัวอักษรที่แตกต่างกัน
+  - แอดมินต้องการปรับขยับตำแหน่งแนวตั้ง (Y), ขนาดตัวอักษร (Font Size), และ **กำหนดสีตัวอักษร (Text Color)** ของข้อความทั้ง 3 ส่วนได้อย่างอิสระ พร้อมเห็นการเปลี่ยนแปลงแบบเรียลไทม์ (Live Preview) ทันที
 - **Three Customizable Text Sections**:
   1. **`NAME SURNAME` (ชื่อ-สกุล ผู้เข้าร่วม)**:
      - ตำแหน่งแนวตั้ง (`nameY`): ปรับได้ตั้งแต่ 150px ถึง 600px (ค่ามาตรฐาน 385px บน baseline 730px)
      - ขนาดตัวอักษร (`nameFontSize`): ปรับได้ตั้งแต่ 16px ถึง 60px (ค่ามาตรฐาน 32px)
+     - สีตัวอักษร (`nameColor`): เลือกสีอิสระผ่าน Color Picker พร้อม Palette สียอดนิยม (เขียวเข้ม `#063826`, กรมท่า `#000946`, เทาดำ `#1e293b`, ดำสนิท `#000000`, ทองบรอนซ์ `#854d0e`, แดงเข้ม `#7f1d1d`)
   2. **`PROJECT NAME` (ชื่อโครงการ/กิจกรรม)**:
      - ตำแหน่งแนวตั้ง (`projectY`): ปรับได้ตั้งแต่ 200px ถึง 680px (ค่ามาตรฐาน 453px)
      - ขนาดตัวอักษร (`projectFontSize`): ปรับได้ตั้งแต่ 12px ถึง 44px (ค่ามาตรฐาน 21px)
+     - สีตัวอักษร (`projectColor`): ค่ามาตรฐาน `#1e293b`
   3. **`DATE MONTH YEAR` (วันที่จัดกิจกรรม)**:
      - ตำแหน่งแนวตั้ง (`dateY`): ปรับได้ตั้งแต่ 250px ถึง 710px (ค่ามาตรฐาน 521px)
      - ขนาดตัวอักษร (`dateFontSize`): ปรับได้ตั้งแต่ 10px ถึง 32px (ค่ามาตรฐาน 16px)
+     - สีตัวอักษร (`dateColor`): ค่ามาตรฐาน `#1e293b`
+- **ระบบกำหนดสีตัวอักษรแบบมินิมอล กระชับ สบายตา (Streamlined Compact Color System)**:
+  - **กล่องจานสีแบบคลิก (Native HTML5 Color Picker)**: คลิกที่กล่องสีตัวอย่าง (Swatch 24x24px) เพื่อเปิดจานสีสากล / หลอดดูดสี Eyedropper จากหน้าจอได้โดยตรง
+  - **ช่องพิมพ์รหัสสี HEX แบบอิสระ (`# [HEX]`)**:
+    - กล่องกรอกรหัสสีขนาดกะทัดรัด ความสูงเท่ากล่องสี (h-6) มีสัญลักษณ์ `#` นำหน้า
+    - พิมพ์หรือวางรหัส HEX 6 หลักได้ทันที (เช่น `063826`, `7F1D1D`, `000946`, `1E293B`)
+  - **ดีไซน์สะอาดตา**: ตัดปุ่มเลือกด่วนและข้อความหัวข้อยาวซ้ำซ้อนออก เหลือเพียงบรรทัดเดียว `สีตัวอักษร: [กล่องสี] [# HEX]` จัดชิดซ้าย-ขวาอย่างสมดุล ไม่เกะกะและไม่กินพื้นที่
+  - **การทำงานร่วมกับทั้งระบบ**: ปรับปรุงทั้งในหน้าเพิ่มกิจกรรมใหม่ (`/admin/activity/add`) และหน้าแก้ไขกิจกรรม (`/admin/activity/edit/[id]`)
 - **Interactive Live Preview Canvas**:
   - แสดงภาพจำลองเกียรติบัตรจริงผ่าน HTML5 Canvas ในหน้า Admin Activity Form (`/admin/activity/edit/[id]` และ `/admin/activity/add`)
-  - ใช้ชื่อจำลอง `MR. SOMCHAI JAIDEE` พร้อมชื่อโครงการและวันที่จริง เพื่อให้แอดมินกะระยะบรรทัดได้ตรงช่องอย่างแม่นยำ
-  - Debounced Render (120ms) ช่วยให้การเลื่อนสไลเดอร์ตอบสนองลื่นไหล ไม่มีอาการกระตุก
+  - ใช้ชื่อจำลอง `MR. SOMCHAI JAIDEE` พร้อมชื่อโครงการและวันที่จริง เพื่อให้แอดมินกะระยะบรรทัดและเทียบความคมชัดของสีกับพื้นหลังได้ตรงช่องอย่างแม่นยำ
+  - Debounced Render (120ms) ช่วยให้การเลื่อนสไลเดอร์และการเปลี่ยนสีตอบสนองลื่นไหล ไม่มีอาการกระตุก
   - ปุ่ม **"↺ รีเซ็ตตำแหน่งเริ่มต้น"** ให้แอดมินคืนค่ามาตรฐานได้ในคลิกเดียว
 - **Data Persistence & Consumer Integration**:
-  - บันทึกโครงสร้าง `certificateLayout: { nameY, nameFontSize, projectY, projectFontSize, dateY, dateFontSize }` ลง Firestore ในเอกสาร `activities/{id}`
-  - `src/lib/certificateGenerator.js`: รองรับ `options.certificateLayout` และคำนวณ `scaleY = canvas.height / 730` โดยอัตโนมัติ พร้อม Fallback คืนค่ามาตรฐาน 100% สำหรับกิจกรรมเดิม
-  - รองรับการสร้างเกียรติบัตรตาม Layout ที่ปรับแต่งไว้ทั้งในฝั่งนักเรียน (`/student/my-registrations`) และฝั่งแอดมิน (`/admin/activity/seats/[id]`)
+  - บันทึกโครงสร้าง `certificateLayout: { nameY, nameFontSize, nameColor, projectY, projectFontSize, projectColor, dateY, dateFontSize, dateColor }` ลง Firestore ในเอกสาร `activities/{id}`
+  - `src/lib/certificateGenerator.js`: รองรับ `options.certificateLayout` ทั้งพิกัดและสีตัวอักษร โดยคำนวณ `scaleY = canvas.height / 730` อัตโนมัติ พร้อม Fallback คืนค่ามาตรฐาน 100% สำหรับกิจกรรมเดิม
+  - รองรับการสร้างเกียรติบัตรตาม Layout และสีที่ปรับแต่งไว้ทั้งในฝั่งนักเรียน (`/student/my-registrations`) และฝั่งแอดมิน (`/admin/activity/seats/[id]`)
 
 ### 33. Empty / Dash Quota Badge Suppression in Student & Admin Views
 - **Problem & Root Cause**:
