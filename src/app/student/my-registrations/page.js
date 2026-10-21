@@ -590,7 +590,7 @@ const CompletedRegistrationCard = ({ reg, activities, courses, hasEvaluated, onS
                     onClick={() => onOpenCert && onOpenCert({
                       templateUrl: activity.certificateTemplateUrl,
                       fullName: reg.fullName,
-                      fullNameEn: reg.fullNameEn || studentDbProfile?.fullNameEn || null,
+                      fullNameEn: reg.fullNameEn || null,
                       projectName: activity.certificateProjectName || activity.name,
                       dateText: activity.certificateDateText || (activityDate ? activityDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : ''),
                       certificateLayout: activity.certificateLayout || null
@@ -787,9 +787,7 @@ export default function MyRegistrationsPage() {
               if (data.lineUserId !== liffProfile.userId) {
                 updates.lineUserId = liffProfile.userId;
               }
-              if (studentDbProfile.fullNameEn && (!data.fullNameEn || data.fullNameEn !== studentDbProfile.fullNameEn)) {
-                updates.fullNameEn = studentDbProfile.fullNameEn;
-              }
+              // หมายเหตุ: ปิดการซิงค์ fullNameEn อัตโนมัติจาก studentDbProfile เพื่อป้องกันการเขียนทับข้อมูลในกิจกรรม
               if (Object.keys(updates).length > 0) {
                 batch.update(doc.ref, updates);
                 updateCount++;

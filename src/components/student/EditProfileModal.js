@@ -7,7 +7,13 @@ import { checkDuplicateNationalId } from '../../lib/studentService';
 import { syncUnlinkedRegistrations } from '../../lib/registrationService';
 
 export default function EditProfileModal({ currentProfile, liffProfile, onProfileUpdated, onCancel }) {
-  const [fullName, setFullName] = useState(currentProfile?.fullName || '');
+  // หากชื่อเดิมตรงกับชื่อใน LINE ให้เคลียร์เป็นค่าว่าง เพื่อบังคับให้กรอกชื่อ-นามสกุลจริงภาษาไทย
+  const lineName = (liffProfile?.displayName || currentProfile?.lineDisplayName || '').trim().toLowerCase();
+  const rawFullName = (currentProfile?.fullName || '').trim();
+  const isLineNameUsed = lineName && rawFullName.toLowerCase() === lineName;
+  const initialFullName = isLineNameUsed ? '' : rawFullName;
+
+  const [fullName, setFullName] = useState(initialFullName);
   const [fullNameEn, setFullNameEn] = useState(currentProfile?.fullNameEn || '');
   const [studentId, setStudentId] = useState(currentProfile?.studentId || '');
   const [nationalId, setNationalId] = useState(currentProfile?.nationalId || '');
@@ -26,6 +32,12 @@ export default function EditProfileModal({ currentProfile, liffProfile, onProfil
 
     if (!trimmedFullName) {
       setError('กรุณากรอกชื่อ-นามสกุล (ไทย)');
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (lineName && trimmedFullName.toLowerCase() === lineName) {
+      setError('กรุณากรอกชื่อ-นามสกุลจริงภาษาไทย (ไม่สามารถใช้ชื่อ LINE ได้)');
       setIsSubmitting(false);
       return;
     }
@@ -66,11 +78,8 @@ export default function EditProfileModal({ currentProfile, liffProfile, onProfil
         });
       }
       
-      // ซิงค์ชื่อและรหัสนักศึกษาไปยังทุกกิจกรรมที่ลงทะเบียนไว้
-      await syncUnlinkedRegistrations(trimmedNationalId, liffProfile.userId, {
-        fullName: trimmedFullName,
-        fullNameEn: trimmedFullNameEn || null
-      });
+      // ผูก LINE User ID เข้ากับการลงทะเบียนเดิมที่ตรงกับเลขบัตรประชาชน (ไม่เขียนทับชื่อในกิจกรรม)
+      await syncUnlinkedRegistrations(trimmedNationalId, liffProfile.userId);
 
       onProfileUpdated(profileData);
     } catch (err) {
@@ -132,7 +141,7 @@ export default function EditProfileModal({ currentProfile, liffProfile, onProfil
               onChange={(e) => setFullName(e.target.value)} 
               required 
               className="w-full p-3 bg-white text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#000946]/20 focus:border-[#000946] outline-none placeholder:text-slate-400 font-normal text-sm transition-all" 
-              placeholder="กรุณากรอกชื่อและนามสกุล"
+              placeholder="เช่น นายสมชาย ใจดี (ไม่ใช้ชื่อ LINE)"
             />
           </div>
           

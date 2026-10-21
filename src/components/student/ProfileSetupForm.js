@@ -5,7 +5,8 @@ import { registerOrLinkStudentProfile } from '../../lib/studentService';
 import { syncUnlinkedRegistrations } from '../../lib/registrationService';
 
 export default function ProfileSetupForm({ liffProfile, onProfileCreated }) {
-  const [fullName, setFullName] = useState(liffProfile?.displayName || '');
+  // ไม่นำชื่อ LINE (displayName) มาเป็นค่าเริ่มต้น เพื่อบังคับให้กรอกชื่อ-นามสกุลจริงภาษาไทย
+  const [fullName, setFullName] = useState('');
   const [fullNameEn, setFullNameEn] = useState('');
   const [nationalId, setNationalId] = useState('');
   const [studentId, setStudentId] = useState('');
@@ -27,6 +28,10 @@ export default function ProfileSetupForm({ liffProfile, onProfileCreated }) {
         throw new Error('กรุณากรอกชื่อ-นามสกุล (ไทย)');
       }
 
+      if (liffProfile?.displayName && trimmedFullName.toLowerCase() === liffProfile.displayName.trim().toLowerCase()) {
+        throw new Error('กรุณากรอกชื่อ-นามสกุลจริงภาษาไทย (ไม่สามารถใช้ชื่อ LINE ได้)');
+      }
+
       if (trimmedNationalId.length !== 13 || !/^\d{13}$/.test(trimmedNationalId)) {
         throw new Error('กรุณากรอกเลขประจำตัวประชาชน 13 หลักให้ถูกต้อง');
       }
@@ -40,11 +45,8 @@ export default function ProfileSetupForm({ liffProfile, onProfileCreated }) {
         liffProfile
       });
 
-      // ซิงค์การลงทะเบียนเดิมทั้งหมด (ถ้ามี)
-      await syncUnlinkedRegistrations(trimmedNationalId, liffProfile.userId, {
-        fullName: trimmedFullName,
-        fullNameEn: trimmedFullNameEn || null
-      });
+      // ผูก LINE User ID เข้ากับการลงทะเบียนเดิมที่ตรงกับเลขบัตรประชาชน (ไม่เขียนทับชื่อในกิจกรรม)
+      await syncUnlinkedRegistrations(trimmedNationalId, liffProfile.userId);
 
       onProfileCreated(profile);
     } catch (err) {

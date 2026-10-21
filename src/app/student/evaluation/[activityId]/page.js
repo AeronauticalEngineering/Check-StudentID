@@ -266,7 +266,7 @@ export default function EvaluationPage() {
                 activityId,
                 userId: liffProfile?.userId || 'unknown',
                 lineUserId: liffProfile?.userId || 'unknown',
-                fullName: studentDbProfile?.fullName || liffProfile?.displayName || '',
+                fullName: studentDbProfile?.fullName || '',
                 studentId: studentDbProfile?.studentId || '',
                 nationalId: studentDbProfile?.nationalId || '',
                 submittedAt: serverTimestamp()
