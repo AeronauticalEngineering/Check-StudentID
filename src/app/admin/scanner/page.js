@@ -10,31 +10,35 @@ import {
 import { createCheckInSuccessFlex, createActivityCompleteFlex, createQueueCheckInSuccessFlex } from '../../../lib/flexMessageTemplates';
 
 // Helper Functions
-const translateStatus = (status) => {
+const translateStatus = (status, checkedOut) => {
+  if (checkedOut) return 'จบกิจกรรมแล้ว (เช็คเอาท์)';
   switch (status) {
     case 'checked-in': return 'เช็คอินแล้ว';
     case 'interviewing': return 'เข้าสอบสัมภาษณ์';
     case 'registered': return 'ลงทะเบียนแล้ว';
-    case 'completed': return 'จบกิจกรรมแล้ว';
+    case 'completed': return 'จบกิจกรรมแล้ว (เช็คเอาท์)';
     case 'cancelled': return 'ยกเลิกแล้ว';
     case 'waitlisted': return 'รอคิว';
     default: return status || 'N/A';
   }
 };
 
-const StatusBadge = ({ status }) => {
+const StatusBadge = ({ status, checkedOut }) => {
   let colorClass = 'bg-slate-100 text-slate-700 border-slate-200';
-  switch (status) {
-    case 'checked-in': colorClass = 'bg-emerald-50 text-emerald-700 border-emerald-200'; break;
-    case 'interviewing': colorClass = 'bg-purple-50 text-purple-700 border-purple-200'; break;
-    case 'registered': colorClass = 'bg-blue-50 text-blue-700 border-blue-200'; break;
-    case 'cancelled': colorClass = 'bg-red-50 text-red-700 border-red-200'; break;
-    case 'waitlisted': colorClass = 'bg-amber-50 text-amber-700 border-amber-200'; break;
-    case 'completed': colorClass = 'bg-slate-100 text-slate-700 border-slate-200'; break;
+  if (checkedOut || status === 'completed') {
+    colorClass = 'bg-blue-50 text-blue-700 border-blue-200';
+  } else {
+    switch (status) {
+      case 'checked-in': colorClass = 'bg-emerald-50 text-emerald-700 border-emerald-200'; break;
+      case 'interviewing': colorClass = 'bg-purple-50 text-purple-700 border-purple-200'; break;
+      case 'registered': colorClass = 'bg-blue-50 text-blue-700 border-blue-200'; break;
+      case 'cancelled': colorClass = 'bg-red-50 text-red-700 border-red-200'; break;
+      case 'waitlisted': colorClass = 'bg-amber-50 text-amber-700 border-amber-200'; break;
+    }
   }
   return (
     <span className={`inline-flex px-2.5 py-0.5 rounded-md text-sm font-normal border ${colorClass}`}>
-      {translateStatus(status)}
+      {translateStatus(status, checkedOut)}
     </span>
   );
 };
@@ -134,20 +138,41 @@ export default function UniversalScannerPage() {
   const executeAdminCheckOut = async (registration, activity) => {
     setScannerState('submitting');
     try {
+      const regRef = doc(db, 'registrations', registration.id);
+      const regSnap = await getDoc(regRef);
+      if (!regSnap.exists()) {
+        throw new Error('ไม่พบข้อมูลการลงทะเบียน');
+      }
+      const freshData = regSnap.data();
+
+      // Idempotency: if already checked out in DB or in-memory, prevent duplicate logs & notification
+      if (freshData.checkedOut || freshData.checkedOutAt || registration.checkedOut) {
+        setMessage(`🏁 คุณ ${freshData.fullName || registration.fullName} ได้สแกนจบกิจกรรม (เช็คเอาท์) เรียบร้อยแล้ว`);
+        setFoundData({
+          registration: { ...registration, ...freshData, status: 'completed', queueStatus: 'completed', checkedOut: true },
+          activity,
+          isAlreadyDone: true
+        });
+        setScannerState('found');
+        setTimeout(() => resetState(), 3500);
+        return true;
+      }
+
       const settingsRef = doc(db, 'systemSettings', 'notifications');
       const settingsSnap = await getDoc(settingsRef);
       const settings = settingsSnap.exists() ? settingsSnap.data() : { onCheckIn: true, onCheckOut: true };
-      const lineUserId = registration.lineUserId || await findLineUserId(registration.nationalId);
+      const lineUserId = freshData.lineUserId || registration.lineUserId || await findLineUserId(freshData.nationalId || registration.nationalId);
 
       // Robust Evaluation Check
       if (activity.enableEvaluation !== false) {
         let hasEval = false;
-        if (registration.hasEvaluated || registration.evaluated || registration.evaluationScore?.isScored) {
+        if (freshData.hasEvaluated || freshData.evaluated || freshData.evaluationScore?.isScored || registration.hasEvaluated) {
           hasEval = true;
         }
 
-        if (!hasEval && registration.nationalId) {
-          const rawNat = String(registration.nationalId).trim();
+        const natId = freshData.nationalId || registration.nationalId;
+        if (!hasEval && natId) {
+          const rawNat = String(natId).trim();
           const cleanNat = rawNat.replace(/\D/g, '');
           const evalQueryNat = query(
             collection(db, 'evaluations'),
@@ -168,8 +193,8 @@ export default function UniversalScannerPage() {
           }
         }
 
-        if (!hasEval && (registration.lineUserId || lineUserId)) {
-          const targetLineUser = registration.lineUserId || lineUserId;
+        const targetLineUser = freshData.lineUserId || lineUserId;
+        if (!hasEval && targetLineUser) {
           const evalQueryLine = query(
             collection(db, 'evaluations'),
             where("activityId", "==", activity.id),
@@ -190,14 +215,13 @@ export default function UniversalScannerPage() {
         }
 
         if (!hasEval) {
-          setMessage(`❌ ${registration.fullName} ยังไม่ได้ทำแบบประเมิน ไม่สามารถจบกิจกรรมได้ กรุณาให้นักเรียนทำแบบประเมินก่อน`);
-          setFoundData({ registration, activity });
+          setMessage(`❌ ${freshData.fullName || registration.fullName} ยังไม่ได้ทำแบบประเมิน ไม่สามารถจบกิจกรรมได้ กรุณาให้นักเรียนทำแบบประเมินก่อน`);
+          setFoundData({ registration: { ...registration, ...freshData }, activity });
           setScannerState('found');
           return false;
         }
       }
 
-      const regRef = doc(db, 'registrations', registration.id);
       await updateDoc(regRef, {
         status: 'completed',
         queueStatus: 'completed',
@@ -210,25 +234,39 @@ export default function UniversalScannerPage() {
       await addDoc(collection(db, 'checkInLogs'), {
         activityId: activity.id,
         activityName: activity.name,
-        studentName: registration.fullName,
-        nationalId: registration.nationalId,
+        studentName: freshData.fullName || registration.fullName,
+        nationalId: freshData.nationalId || registration.nationalId,
         status: 'check-out',
         timestamp: serverTimestamp(),
         adminId: 'admin'
       });
 
       if (settings.onCheckOut && lineUserId) {
-        const flexMessage = createActivityCompleteFlex({
-          activityId: registration.activityId,
-          activityName: activity.name,
-          requireEvaluation: false,
-          isQueueType: activity.type === 'queue'
-        });
-        await fetch('/api/send-notification', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: lineUserId, flexMessage }) });
+        try {
+          const flexMessage = createActivityCompleteFlex({
+            activityId: freshData.activityId || registration.activityId,
+            activityName: activity.name,
+            requireEvaluation: false,
+            isQueueType: activity.type === 'queue'
+          });
+          await fetch('/api/send-notification', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: lineUserId, flexMessage }) });
+        } catch (flexErr) {
+          console.warn("Failed to send checkout notification:", flexErr);
+        }
       }
 
-      setMessage(`🏁 ${registration.fullName} จบกิจกรรมและสแกนออกเรียบร้อยแล้ว`);
-      setFoundData({ registration: { ...registration, checkedOut: true }, activity });
+      setMessage(`🏁 ${freshData.fullName || registration.fullName} จบกิจกรรมและสแกนออกเรียบร้อยแล้ว`);
+      setFoundData({
+        registration: {
+          ...registration,
+          ...freshData,
+          status: 'completed',
+          queueStatus: 'completed',
+          checkedOut: true
+        },
+        activity,
+        isCompletedNow: true
+      });
       setScannerState('found');
       setTimeout(() => resetState(), 3500);
       return true;
@@ -262,8 +300,13 @@ export default function UniversalScannerPage() {
 
       // Check if already checked out
       if (registrationData.checkedOut || registrationData.checkedOutAt) {
-        setMessage(`ℹ️ ${registrationData.fullName} ได้สแกนจบกิจกรรม (เช็คเอาท์) ไปแล้ว`);
-        setScannerState('idle');
+        setMessage(`🏁 คุณ ${registrationData.fullName} ได้สแกนจบกิจกรรม (เช็คเอาท์) ไปแล้ว`);
+        setFoundData({
+          registration: { ...registrationData, status: 'completed', checkedOut: true },
+          activity: selectedActivity,
+          isAlreadyDone: true
+        });
+        setScannerState('found');
         setTimeout(() => resetState(), 3000);
         return;
       }
@@ -354,6 +397,16 @@ export default function UniversalScannerPage() {
 
   const handleConfirm = async (e) => {
     e.preventDefault();
+    if (!foundData) return;
+    const { registration, activity } = foundData;
+
+    // Safety guard: if already completed or checked out, block duplicate execution
+    if (foundData.isCompletedNow || foundData.isAlreadyDone || registration.checkedOut) {
+      setMessage(`ℹ️ ${registration.fullName} ได้ทำรายการจบกิจกรรมเรียบร้อยแล้ว`);
+      setTimeout(() => resetState(), 2000);
+      return;
+    }
+
     setScannerState('submitting');
 
     try {
@@ -767,7 +820,7 @@ export default function UniversalScannerPage() {
                       </svg>
                       ข้อมูลผู้ลงทะเบียน
                     </span>
-                    <StatusBadge status={foundData.registration.status} />
+                    <StatusBadge status={foundData.registration.status} checkedOut={foundData.registration.checkedOut || foundData.isCompletedNow || foundData.isAlreadyDone} />
                   </div>
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between items-start">
@@ -813,20 +866,26 @@ export default function UniversalScannerPage() {
                     <button
                       type="button"
                       onClick={resetState}
-                      className="flex-1 py-2.5 bg-white border border-slate-200 text-slate-700 text-sm font-normal rounded-lg hover:bg-slate-50 transition-colors cursor-pointer"
-                    >
-                      ยกเลิก
-                    </button>
-                    <button
-                      type="submit"
-                      className={`flex-1 py-2.5 text-white text-sm font-normal rounded-lg shadow-sm transition-all active:scale-95 cursor-pointer ${
-                        scanMode === 'check-in'
-                          ? 'bg-emerald-600 hover:bg-emerald-700'
-                          : 'bg-red-600 hover:bg-red-700'
+                      className={`py-2.5 text-sm font-normal rounded-lg transition-colors cursor-pointer ${
+                        foundData.isCompletedNow || foundData.isAlreadyDone
+                          ? 'w-full bg-[#000946] text-white hover:bg-[#00125e]'
+                          : 'flex-1 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
                       }`}
                     >
-                      {scanMode === 'check-in' ? 'ยืนยันการเช็คอิน' : 'ยืนยันจบกิจกรรม'}
+                      {foundData.isCompletedNow || foundData.isAlreadyDone ? 'เสร็จสิ้น / สแกนคนต่อไป' : 'ยกเลิก'}
                     </button>
+                    {!foundData.isCompletedNow && !foundData.isAlreadyDone && (
+                      <button
+                        type="submit"
+                        className={`flex-1 py-2.5 text-white text-sm font-normal rounded-lg shadow-sm transition-all active:scale-95 cursor-pointer ${
+                          scanMode === 'check-in'
+                            ? 'bg-emerald-600 hover:bg-emerald-700'
+                            : 'bg-red-600 hover:bg-red-700'
+                        }`}
+                      >
+                        {scanMode === 'check-in' ? 'ยืนยันการเช็คอิน' : 'ยืนยันจบกิจกรรม'}
+                      </button>
+                    )}
                   </div>
                 </form>
               </div>

@@ -479,8 +479,8 @@ const CompletedRegistrationCard = ({ reg, activities, courses, hasEvaluated, onS
       {/* Top Header Bar */}
       <div className="bg-slate-50 px-4 py-3 border-b border-slate-100 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-slate-700">
-            จบกิจกรรมแล้ว
+          <span className={`text-sm font-semibold ${isCheckedOut ? 'text-slate-700' : 'text-blue-700'}`}>
+            {isCheckedOut ? 'จบกิจกรรมแล้ว (เช็คเอาต์แล้ว)' : 'สัมภาษณ์เสร็จสิ้น (รอเช็คเอาต์)'}
           </span>
           {activityDate && (
             <span className="text-sm text-slate-500 font-normal">
@@ -590,7 +590,7 @@ const CompletedRegistrationCard = ({ reg, activities, courses, hasEvaluated, onS
                     onClick={() => onOpenCert && onOpenCert({
                       templateUrl: activity.certificateTemplateUrl,
                       fullName: reg.fullName,
-                      fullNameEn: reg.fullNameEn || null,
+                      fullNameEn: reg.fullNameEn || studentDbProfile?.fullNameEn || null,
                       projectName: activity.certificateProjectName || activity.name,
                       dateText: activity.certificateDateText || (activityDate ? activityDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : ''),
                       certificateLayout: activity.certificateLayout || null
@@ -787,7 +787,9 @@ export default function MyRegistrationsPage() {
               if (data.lineUserId !== liffProfile.userId) {
                 updates.lineUserId = liffProfile.userId;
               }
-              // หมายเหตุ: ปิดการซิงค์ fullNameEn อัตโนมัติจาก studentDbProfile เพื่อป้องกันการเขียนทับข้อมูลในกิจกรรม
+              if (studentDbProfile.fullNameEn && (!data.fullNameEn || data.fullNameEn !== studentDbProfile.fullNameEn)) {
+                updates.fullNameEn = studentDbProfile.fullNameEn;
+              }
               if (Object.keys(updates).length > 0) {
                 batch.update(doc.ref, updates);
                 updateCount++;
@@ -806,11 +808,13 @@ export default function MyRegistrationsPage() {
     syncUnlinkedRegistrations();
 
     const registrationsRef = collection(db, 'registrations');
-    const userRegsMap = new Map();
+    let natMap = new Map();
+    let lineMap = new Map();
     const unsubs = [];
 
     const handleUpdate = () => {
-      setRegistrations(Array.from(userRegsMap.values()));
+      const mergedMap = new Map([...natMap, ...lineMap]);
+      setRegistrations(Array.from(mergedMap.values()));
     };
 
     if (studentDbProfile?.nationalId) {
@@ -819,12 +823,9 @@ export default function MyRegistrationsPage() {
         where('nationalId', '==', studentDbProfile.nationalId.trim())
       );
       const unsubNat = onSnapshot(qNat, (snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-          if (change.type === 'removed') {
-            userRegsMap.delete(change.doc.id);
-          } else {
-            userRegsMap.set(change.doc.id, { id: change.doc.id, ...change.doc.data() });
-          }
+        natMap = new Map();
+        snapshot.docs.forEach((docSnap) => {
+          natMap.set(docSnap.id, { id: docSnap.id, ...docSnap.data() });
         });
         handleUpdate();
       });
@@ -837,12 +838,9 @@ export default function MyRegistrationsPage() {
         where('lineUserId', '==', liffProfile.userId)
       );
       const unsubLine = onSnapshot(qLine, (snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-          if (change.type === 'removed') {
-            userRegsMap.delete(change.doc.id);
-          } else {
-            userRegsMap.set(change.doc.id, { id: change.doc.id, ...change.doc.data() });
-          }
+        lineMap = new Map();
+        snapshot.docs.forEach((docSnap) => {
+          lineMap.set(docSnap.id, { id: docSnap.id, ...docSnap.data() });
         });
         handleUpdate();
       });
@@ -873,21 +871,26 @@ export default function MyRegistrationsPage() {
   });
 
   const isActivityEnded = (reg) => {
-    // หากสถานะของผู้สมัครเป็น completed หรือ จบกิจกรรมแล้ว / สแกนออกแล้ว ถือว่าจบกิจกรรม
+    // 1. หากเช็คเอาต์ / สแกนออกเรียบร้อยแล้ว ถือว่าจบกิจกรรม
     if (reg.checkedOut || reg.checkedOutAt) return true;
-    const rawStatus = (reg.status || '').trim();
-    if (rawStatus === 'completed' || rawStatus === 'สำเร็จแล้ว' || rawStatus === 'จบกิจกรรมแล้ว') return true;
 
-    // ตรวจสอบวันจัดกิจกรรม หากพ้นกำหนดวันจัดกิจกรรมไปแล้ว (หลังเที่ยงคืน) ถือว่าสิ้นสุดแล้ว
+    // 2. ตรวจสอบวันจัดกิจกรรม หากพ้นกำหนดวันจัดกิจกรรมไปแล้ว (หลังเที่ยงคืน) ถือว่าสิ้นสุดแล้ว
     const activity = activities[reg.activityId];
-    if (!activity) return false;
-    if (!activity.activityDate?.toDate) return false;
-    const dt = activity.activityDate.toDate();
-    const endOfDay = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate(), 23, 59, 59, 999);
-    if (endOfDay < now) return true;
+    if (activity && activity.activityDate?.toDate) {
+      const dt = activity.activityDate.toDate();
+      const endOfDay = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate(), 23, 59, 59, 999);
+      if (endOfDay < now) return true;
+    }
 
-    // สำหรับกิจกรรมวันนี้หรือข้างหน้า แม้กรรมการจะบันทึกผลเสร็จแล้ว นักเรียนยังอยู่ที่หน้างาน
-    // ต้องแสดงบัตรที่หน้าแรกเพื่อให้เข้าถึง "QR code ออก" และ "ประเมินกิจกรรม" ได้สะดวก
+    // 3. สำหรับกิจกรรมวันนี้หรือข้างหน้า แม้กรรมการจะสัมภาษณ์เสร็จแล้ว (status === 'completed')
+    // หากนักเรียนยังไม่ได้เช็คเอาต์ (checkedOut !== true) ต้องแสดงบัตรที่หน้าแรก เพื่อให้เข้าถึง "QR code ออก" และ "ประเมินกิจกรรม" ได้สะดวก
+    const rawStatus = (reg.status || '').trim();
+    if (rawStatus === 'completed' && !reg.checkedOut && !reg.checkedOutAt) {
+      return false; // ยังให้อยู่หน้าแรกเพื่อรอสแกนออก
+    }
+
+    if (rawStatus === 'สำเร็จแล้ว' || rawStatus === 'จบกิจกรรมแล้ว' || rawStatus === 'เช็คเอาต์แล้ว') return true;
+
     return false;
   };
 

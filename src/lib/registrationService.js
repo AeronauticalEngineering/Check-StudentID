@@ -171,7 +171,12 @@ export async function syncUnlinkedRegistrations(nationalId, lineUserId, profileD
     if (lineUserId && data.lineUserId !== lineUserId) {
       updates.lineUserId = lineUserId;
     }
-    // ปิดการซิงค์ fullNameEn อัตโนมัติจาก profileData เพื่อป้องกันการเขียนทับชื่อในกิจกรรม
+    if (profileData.fullNameEn && (!data.fullNameEn || data.fullNameEn !== profileData.fullNameEn)) {
+      updates.fullNameEn = profileData.fullNameEn;
+    }
+    if (profileData.fullName && (!data.fullName || data.fullName !== profileData.fullName)) {
+      updates.fullName = profileData.fullName;
+    }
     if (Object.keys(updates).length > 0) {
       batch.update(d.ref, updates);
       updateCount++;

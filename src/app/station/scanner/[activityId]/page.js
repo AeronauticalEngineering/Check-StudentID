@@ -17,7 +17,8 @@ import {
 import { Html5Qrcode } from 'html5-qrcode';
 import {
   createCheckInSuccessFlex,
-  createQueueCheckInSuccessFlex
+  createQueueCheckInSuccessFlex,
+  createActivityCompleteFlex
 } from '../../../../lib/flexMessageTemplates';
 
 // Synthesize pleasant success audio beep using Web Audio API
@@ -75,6 +76,7 @@ export default function StationScannerPage({ params }) {
 
   const html5QrCodeRef = useRef(null);
   const isScanningRef = useRef(false);
+  const isProcessingRef = useRef(false);
 
   // Load Staff Name from localStorage
   useEffect(() => {
@@ -302,6 +304,29 @@ export default function StationScannerPage({ params }) {
         adminId: staffName || 'Station Staff'
       });
 
+      // Send checkout notification if enabled
+      try {
+        const settingsRef = doc(db, 'systemSettings', 'notifications');
+        const settingsSnap = await getDoc(settingsRef);
+        const settings = settingsSnap.exists() ? settingsSnap.data() : { onCheckOut: true };
+        const lineUserId = regData.lineUserId || regData.userId;
+        if (settings.onCheckOut && lineUserId) {
+          const flexMsg = createActivityCompleteFlex({
+            activityId: activityId,
+            activityName: activity?.name || '-',
+            requireEvaluation: false,
+            isQueueType: activity?.type === 'queue' || activity?.isQueueType
+          });
+          fetch('/api/send-notification', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: lineUserId, flexMessage: flexMsg })
+          }).catch(e => console.error('Station checkout notification error:', e));
+        }
+      } catch (notifErr) {
+        console.warn('Failed to send station checkout notification:', notifErr);
+      }
+
       playBeep('success');
       setScanResult({
         ...regData,
@@ -506,8 +531,13 @@ export default function StationScannerPage({ params }) {
   };
 
   const onScanSuccess = (decodedText) => {
-    if (scannerState === 'processing') return;
-    processCheckIn(decodedText);
+    if (isProcessingRef.current || scannerState === 'processing') return;
+    isProcessingRef.current = true;
+    processCheckIn(decodedText).finally(() => {
+      setTimeout(() => {
+        isProcessingRef.current = false;
+      }, 1500);
+    });
   };
 
   // Manual Search Handler

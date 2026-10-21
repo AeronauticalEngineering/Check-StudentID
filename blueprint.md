@@ -590,32 +590,11 @@ AERO Student is an end-to-end Student Activity Registration, Seating Allocation,
     4. `src/app/admin/registrants/[id]/page.js` (หน้ารายละเอียดผู้สมัครฝั่ง Admin)
   - ผลลัพธ์: หากผู้สมัครไม่มีโควตา หรือมีค่าเป็น `-` ป้ายโควตาจะไม่ถูกเรนเดอร์ขึ้นมาบนหน้าจอเลย ทำให้การ์ดสะอาด คมชัด ตามมาตรฐาน Aero Student UI
 
-### 34. Disabling Student-side Auto-Sync for English Names (`fullNameEn`)
-- **Problem Statement**:
-  - เดิมทีเมื่อนักเรียนเข้าใช้งานหน้ารายการกิจกรรม (`/student/my-registrations`) หรือบันทึก/แก้ไขโปรไฟล์ผ่าน LINE ระบบจะทำการรัน Auto-sync ในเบื้องหลัง (`syncUnlinkedRegistrations`) โดยอัตโนมัติ
-  - โค้ดดังกล่าวจะนำ `fullNameEn` จากโปรไฟล์นักเรียน (`studentProfiles`) ไปเขียนทับหรืออัปเดตลงใน collection `registrations` ทุกรายการที่มี `nationalId` ตรงกัน
-  - ส่งผลให้ในหน้า Admin Seats (`/admin/activity/seats/[id]`) มีชื่อภาษาอังกฤษถูกดึงเข้ามาเองโดยที่แอดมินไม่ได้กดปุ่ม หรืออาจไปเขียนทับข้อมูลทางการที่แอดมินนำเข้า/จัดเตรียมไว้
-- **Implementation**:
-  1. **`src/app/student/my-registrations/page.js`**:
-     - ในฟังก์ชัน `syncUnlinkedRegistrations()` ปิดการอัปเดต `updates.fullNameEn = studentDbProfile.fullNameEn` คงไว้เฉพาะการผูก `lineUserId`
-     - ปรับปุ่มเปิดเกียรติบัตรให้ใช้ `reg.fullNameEn` ตรงจากรายการลงทะเบียนกิจกรรม
-  2. **`src/lib/registrationService.js`**:
-     - ปรับปรุง `syncUnlinkedRegistrations()` ให้เน้นผูกโยง `lineUserId` กับ `nationalId` เท่านั้น ไม่ซิงค์หรือเขียนทับ `fullNameEn` และชื่อเดิมใน `registrations`
-  3. **`src/components/student/EditProfileModal.js` & `ProfileSetupForm.js`**:
-     - ยกเลิกการส่ง `fullNameEn` ข้ามไปซิงค์กับรายการลงทะเบียนเดิม
-  4. **Admin Manual Sync Intact**:
-     - คงปุ่ม **"ดึงชื่อ ENG จากโปรไฟล์"** (`handleSyncEnglishNamesFromProfiles`) ในหน้า Admin Seats ไว้ ให้แอดมินเป็นผู้ควบคุมการกดดึงข้อมูลตามต้องการ (Manual On-demand)
 
-### 35. Separation of LINE Display Name from Thai Full Name (`fullName`)
-- **Problem Statement**:
-  - ในฟอร์มตั้งค่าโปรไฟล์นักเรียนครั้งแรก (`ProfileSetupForm.js`) เดิมมีการนำ `liffProfile?.displayName` (ชื่อใน LINE) มาเป็นค่าเริ่มต้น (default state) ของช่อง "ชื่อ-นามสกุล (ไทย)"
-  - ส่งผลให้ชื่อบัญชี LINE เช่น "test" หรือชื่อเล่น/ฉายา ถูกบันทึกเป็นชื่อ-สกุลไทยของนักเรียนลงในฐานข้อมูล และแสดงผลในหน้าต่างแก้ไขโปรไฟล์
-- **Implementation**:
-  1. **`ProfileSetupForm.js`**:
-     - ยกเลิกการ prefill `liffProfile?.displayName` ใน `fullName` โดยเปลี่ยนเป็นค่าว่าง `''` เพื่อบังคับให้นักเรียนพิมพ์ชื่อ-นามสกุลจริงภาษาไทย
-     - เพิ่ม validation ตรวจสอบว่า `fullName` ต้องไม่ใช่ชื่อเดียวกับ LINE Display Name
-  2. **`EditProfileModal.js` & `EditProfileForm.js`**:
-     - เพิ่มเงื่อนไขตรวจสอบค่าเริ่มต้น หาก `fullName` มีค่าตรงกับ `lineDisplayName` / `liffProfile.displayName` ระบบจะไม่ดึงมาใส่ในช่องกรอก เพื่อให้นักเรียนกรอกชื่อจริงภาษาไทยที่ถูกต้อง
-     - เพิ่ม validation แจ้งเตือนห้ามใช้ชื่อ LINE แทนชื่อ-นามสกุลไทย
-  3. **`evaluation/[activityId]/page.js`**:
-     - ตัด Fallback `liffProfile?.displayName` ออกจากฟิลด์ `fullName`
+
+
+
+
+
+
+

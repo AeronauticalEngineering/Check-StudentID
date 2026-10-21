@@ -416,11 +416,7 @@ export default function SeatAssignmentPage({ params }) {
           const profileData = snap.docs[0].data();
           const profileNameEn = profileData.fullNameEn ? profileData.fullNameEn.trim().toUpperCase() : null;
           
-          // ตรวจสอบความถูกต้องอย่างเข้มงวด: ต้องมีตัวอักษรภาษาอังกฤษ A-Z และต้องไม่ซ้ำกับชื่อภาษาไทย ป้องกันการซิงค์ผิดช่อง
-          const hasEnglishLetters = profileNameEn && /[A-Z]/.test(profileNameEn);
-          const isNotThaiName = profileNameEn && profileNameEn !== (profileData.fullName || '').trim().toUpperCase();
-
-          if (profileNameEn && hasEnglishLetters && isNotThaiName && reg.fullNameEn !== profileNameEn) {
+          if (profileNameEn && reg.fullNameEn !== profileNameEn) {
             updates.push({ regId: reg.id, fullNameEn: profileNameEn });
           }
         }
@@ -850,7 +846,6 @@ export default function SeatAssignmentPage({ params }) {
             raw === 'ชื่อ-สกุล' || raw === 'ชื่อ-นามสกุล' || raw === 'ชื่อ-สกุล (ไทย)' ||
             raw === 'ชื่อ-นามสกุล (ไทย)' || raw === 'ชื่อ - สกุล (ไทย)' || raw === 'ชื่อ - นามสกุล (ไทย)' ||
             clean === 'ชื่อสกุล' || clean === 'ชื่อนามสกุล' || clean === 'ชื่อสกุลไทย' || clean === 'ชื่อนามสกุลไทย' ||
-            clean === 'ชื่อไทย' || clean === 'nameth' || clean === 'fullnameth' || clean === 'namethai' || clean === 'fullnamethai' ||
             clean === 'ชื่อ' || clean === 'ชื่อผู้สมัคร' || clean === 'ชื่อผู้ลงทะเบียน' || clean === 'ชื่อนักเรียน' ||
             clean === 'fullname' || clean === 'name' || clean === 'studentname' || clean === 'applicantname'
           ) {

@@ -4,13 +4,7 @@ import { useState } from 'react';
 import { upsertStudentProfile } from '../../lib/studentService';
 
 export default function EditProfileForm({ currentProfile, liffProfile, onProfileUpdated, onCancel }) {
-  // หากชื่อเดิมตรงกับชื่อใน LINE ให้เคลียร์เป็นค่าว่าง เพื่อบังคับให้กรอกชื่อ-นามสกุลจริงภาษาไทย
-  const lineName = (liffProfile?.displayName || currentProfile?.lineDisplayName || '').trim().toLowerCase();
-  const rawFullName = (currentProfile?.fullName || '').trim();
-  const isLineNameUsed = lineName && rawFullName.toLowerCase() === lineName;
-  const initialFullName = isLineNameUsed ? '' : rawFullName;
-
-  const [fullName, setFullName] = useState(initialFullName);
+  const [fullName, setFullName] = useState(currentProfile?.fullName || '');
   const [fullNameEn, setFullNameEn] = useState(currentProfile?.fullNameEn || '');
   const [studentId, setStudentId] = useState(currentProfile?.studentId || '');
   const [nationalId, setNationalId] = useState(currentProfile?.nationalId || '');
@@ -23,14 +17,6 @@ export default function EditProfileForm({ currentProfile, liffProfile, onProfile
     setError('');
 
     try {
-      const trimmedFullName = fullName.trim();
-      if (!trimmedFullName) {
-        throw new Error('กรุณากรอกชื่อ-นามสกุล (ไทย)');
-      }
-
-      if (lineName && trimmedFullName.toLowerCase() === lineName) {
-        throw new Error('กรุณากรอกชื่อ-นามสกุลจริงภาษาไทย (ไม่สามารถใช้ชื่อ LINE ได้)');
-      }
       const updated = await upsertStudentProfile({
         nationalId: nationalId.trim(),
         fullName: fullName.trim(),
@@ -90,7 +76,7 @@ export default function EditProfileForm({ currentProfile, liffProfile, onProfile
               onChange={(e) => setFullName(e.target.value)}
               required
               className="w-full p-3 bg-white text-slate-900 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#000946]/20 focus:border-[#000946] outline-none transition-all text-sm font-normal placeholder:text-slate-400"
-              placeholder="เช่น นายสมชาย ใจดี (ไม่ใช้ชื่อ LINE)"
+              placeholder="กรุณากรอกชื่อและนามสกุล"
             />
           </div>
 
