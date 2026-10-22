@@ -586,9 +586,19 @@ AERO Student is an end-to-end Student Activity Registration, Seating Allocation,
   - อัปเดตจุดแสดงผลป้ายโควตาใน:
     1. `RegistrationCard` (บัตรกิจกรรมที่กำลังจะมาถึง / กำลังดำเนินการ) ใน `src/app/student/my-registrations/page.js`
     2. `CompletedRegistrationCard` (บัตรกิจกรรมที่เสร็จสิ้นแล้ว) ใน `src/app/student/my-registrations/page.js`
-    3. `StudentDocumentUploadModal.js` (โมดอลแนบเอกสารและหลักฐาน)
-    4. `src/app/admin/registrants/[id]/page.js` (หน้ารายละเอียดผู้สมัครฝั่ง Admin)
-  - ผลลัพธ์: หากผู้สมัครไม่มีโควตา หรือมีค่าเป็น `-` ป้ายโควตาจะไม่ถูกเรนเดอร์ขึ้นมาบนหน้าจอเลย ทำให้การ์ดสะอาด คมชัด ตามมาตรฐาน Aero Student UI
+### 34. Activity Registrations Recovery & Safe Bulk Update Architecture
+- **Incident & Root Cause Analysis**:
+  - ในหน้า `/admin/activity/seats/[id]` เดิม ฟังก์ชัน `handleUpdateAll` ทำการวนลูปอัปเดตเอกสารผู้สมัครทุกคนในตาราง (`registrants.map`) โดยนำค่าจาก State `editStates` (ซึ่งเก็บเฉพาะ 12 ฟิลด์ที่เปิดให้กรอก) ไป `batch.update` ทับลง Firestore ทุกคน
+  - หากฟิลด์ใดใน `editStates` ว่างเปล่า หรือแถวใดที่แอดมินไม่ได้แตะต้อง ค่าว่างเหล่านั้นจะถูกสั่งเขียนทับฟิลด์เดิมใน Firestore ส่งผลให้ข้อมูลนักเรียน (เช่น ชื่ออังกฤษ, โควตา, รหัสนักเรียน หรือสถานะ) สูญหายหรือถูกเขียนทับ
+  - กิจกรรม `rhHpcO7iuwV2118jXYZL` (STAFF 22OCT26) เกิดเหตุข้อมูลการลงทะเบียนหายไปเป็น 0 รายการ
+- **Data Recovery Execution**:
+  - ดำเนินการกู้คืนข้อมูลสำเร็จ 100% จากตารางประเมินผล `evaluations` ที่เชื่อมโยงกับกิจกรรมนี้ ร่วมกับตารางโปรไฟล์หลัก `studentProfiles`
+  - สร้างเอกสารการลงทะเบียน (`registrations`) คืนสู่กิจกรรม `rhHpcO7iuwV2118jXYZL` จำนวน **40 คน** พร้อมข้อมูล `fullName`, `fullNameEn`, `studentId`, `nationalId`, `lineUserId`, `status: 'completed'`, `certificateApproved: true` และ Timestamp ที่ถูกต้อง
+- **Permanent Prevention Architecture (Safe Bulk Update)**:
+  - **Dirty Checking**: ปรับปรุง `handleUpdateAll` ใน `src/app/admin/activity/seats/[id]/page.js` ให้เปรียบเทียบ `editStates[reg.id]` กับ `originalEditStates[reg.id]` เพื่อกรองเฉพาะแถวที่มีการแก้ไขจริง (`dirtyRegistrants`) เท่านั้น หากไม่มีการแก้ไขจะไม่ส่งคำสั่งไปยัง Firestore เลย
+  - **Selective Field Updates**: ในแต่ละแถวที่มีการแก้ไข จะสร้าง Payload เฉพาะฟิลด์ที่ค่าเปลี่ยนไปจริงเท่านั้น (`regUpdatePayload`) ป้องกันการนำค่าสตริงว่างไปเขียนทับฟิลด์อื่นๆ ที่ไม่ได้แก้ไขโดยเด็ดขาด
+  - **Batch Chunking (Safe Limit)**: แบ่งการ Commit ออกเป็น Chunk ละไม่เกิน 200 รายการ เพื่อไม่ให้เกินข้อจำกัด 500 operations ของ Firestore Batch API
+  - ตรวจสอบผ่าน `npm run build` สำเร็จ 100% เรียบร้อย
 
 
 

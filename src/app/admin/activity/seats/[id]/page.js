@@ -254,64 +254,107 @@ export default function SeatAssignmentPage({ params }) {
     }
 
     setIsLoading(true);
-    setMessage('กำลังบันทึกข้อมูลทั้งหมด...');
+    setMessage('กำลังบันทึกข้อมูล...');
     try {
-      const batch = writeBatch(db);
+      // Find only rows that were actually modified (dirty check)
+      const dirtyRegistrants = registrants.filter(reg => {
+        const current = editStates[reg.id];
+        const original = originalEditStates[reg.id];
+        if (!current || !original) return false;
+        return Object.keys(current).some(key => current[key] !== original[key]);
+      });
 
-      const updatePromises = registrants.map(async (reg) => {
-        const updatedData = editStates[reg.id];
-        const originalData = {
-          fullName: reg.fullName,
-          fullNameEn: reg.fullNameEn,
-          studentId: reg.studentId,
-          nationalId: reg.nationalId
-        };
+      if (dirtyRegistrants.length === 0) {
+        setIsEditMode(false);
+        setIsLoading(false);
+        setMessage('ไม่มีข้อมูลที่เปลี่ยนแปลง');
+        setTimeout(() => setMessage(''), 2000);
+        return;
+      }
 
-        const hasIdentityChange =
-          updatedData.fullName !== originalData.fullName ||
-          updatedData.fullNameEn !== originalData.fullNameEn ||
-          updatedData.studentId !== originalData.studentId ||
-          updatedData.nationalId !== originalData.nationalId;
+      // Process in chunks of 200 to safely stay under Firestore batch limit of 500
+      const CHUNK_SIZE = 200;
+      for (let i = 0; i < dirtyRegistrants.length; i += CHUNK_SIZE) {
+        const chunk = dirtyRegistrants.slice(i, i + CHUNK_SIZE);
+        const batch = writeBatch(db);
 
-        if (hasIdentityChange && updatedData.nationalId) {
-          const q = query(collection(db, 'studentProfiles'), where('nationalId', '==', updatedData.nationalId), limit(1));
-          const snapshot = await getDocs(q);
+        for (const reg of chunk) {
+          const current = editStates[reg.id];
+          const original = originalEditStates[reg.id];
+          if (!current) continue;
 
-          if (!snapshot.empty) {
-            const profileDoc = snapshot.docs[0];
-            batch.update(doc(db, 'studentProfiles', profileDoc.id), {
-              fullName: updatedData.fullName,
-              fullNameEn: updatedData.fullNameEn ? updatedData.fullNameEn.trim().toUpperCase() : null,
-              studentId: updatedData.studentId,
-              nationalId: updatedData.nationalId,
-              updatedAt: serverTimestamp()
-            });
-          } else {
-            const newProfileRef = doc(collection(db, 'studentProfiles'));
-            batch.set(newProfileRef, {
-              fullName: updatedData.fullName,
-              fullNameEn: updatedData.fullNameEn ? updatedData.fullNameEn.trim().toUpperCase() : null,
-              studentId: updatedData.studentId || '',
-              nationalId: updatedData.nationalId,
-              lineUserId: '',
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-              importedFrom: 'admin_edit_sync'
-            });
+          // Build selective payload of only modified fields
+          const regUpdatePayload = {};
+          if (current.fullName !== undefined && current.fullName !== original?.fullName) {
+            regUpdatePayload.fullName = current.fullName.trim();
+          }
+          if (current.fullNameEn !== undefined && current.fullNameEn !== original?.fullNameEn) {
+            regUpdatePayload.fullNameEn = current.fullNameEn ? current.fullNameEn.trim().toUpperCase() : null;
+          }
+          if (current.studentId !== undefined && current.studentId !== original?.studentId) {
+            regUpdatePayload.studentId = current.studentId.trim();
+          }
+          if (current.nationalId !== undefined && current.nationalId !== original?.nationalId) {
+            regUpdatePayload.nationalId = current.nationalId.trim();
+          }
+          if (current.seatNumber !== undefined && current.seatNumber !== original?.seatNumber) {
+            regUpdatePayload.seatNumber = current.seatNumber ? current.seatNumber.trim().toUpperCase() : '';
+          }
+          if (current.course !== undefined && current.course !== original?.course) {
+            regUpdatePayload.course = current.course;
+          }
+          if (current.quota !== undefined && current.quota !== original?.quota) {
+            regUpdatePayload.quota = current.quota.trim();
+          }
+          if (current.timeSlot !== undefined && current.timeSlot !== original?.timeSlot) {
+            regUpdatePayload.timeSlot = current.timeSlot;
+          }
+          if (current.status !== undefined && current.status !== original?.status) {
+            regUpdatePayload.status = current.status;
+          }
+          if (current.displayQueueNumber !== undefined && current.displayQueueNumber !== original?.displayQueueNumber) {
+            regUpdatePayload.displayQueueNumber = current.displayQueueNumber.trim();
+          }
+          if (current.certificateUrl !== undefined && current.certificateUrl !== original?.certificateUrl) {
+            regUpdatePayload.certificateUrl = current.certificateUrl.trim();
+          }
+          if (current.certificateApproved !== undefined && current.certificateApproved !== original?.certificateApproved) {
+            regUpdatePayload.certificateApproved = Boolean(current.certificateApproved);
+          }
+
+          // Identity sync to studentProfiles if identity fields changed
+          const hasIdentityChange =
+            (regUpdatePayload.fullName !== undefined) ||
+            (regUpdatePayload.fullNameEn !== undefined) ||
+            (regUpdatePayload.studentId !== undefined) ||
+            (regUpdatePayload.nationalId !== undefined);
+
+          const targetNationalId = current.nationalId || reg.nationalId;
+          if (hasIdentityChange && targetNationalId) {
+            const q = query(collection(db, 'studentProfiles'), where('nationalId', '==', targetNationalId), limit(1));
+            const snapshot = await getDocs(q);
+
+            if (!snapshot.empty) {
+              const profileDoc = snapshot.docs[0];
+              const profileUpdates = { updatedAt: serverTimestamp() };
+              if (regUpdatePayload.fullName !== undefined) profileUpdates.fullName = regUpdatePayload.fullName;
+              if (regUpdatePayload.fullNameEn !== undefined) profileUpdates.fullNameEn = regUpdatePayload.fullNameEn;
+              if (regUpdatePayload.studentId !== undefined) profileUpdates.studentId = regUpdatePayload.studentId;
+              if (regUpdatePayload.nationalId !== undefined) profileUpdates.nationalId = regUpdatePayload.nationalId;
+              batch.update(doc(db, 'studentProfiles', profileDoc.id), profileUpdates);
+            }
+          }
+
+          if (Object.keys(regUpdatePayload).length > 0) {
+            regUpdatePayload.updatedAt = serverTimestamp();
+            batch.update(doc(db, 'registrations', reg.id), regUpdatePayload);
           }
         }
 
-        const registrantDocRef = doc(db, 'registrations', reg.id);
-        batch.update(registrantDocRef, {
-          ...updatedData,
-          fullNameEn: updatedData.fullNameEn ? updatedData.fullNameEn.trim().toUpperCase() : null
-        });
-      });
+        await batch.commit();
+      }
 
-      await Promise.all(updatePromises);
-      await batch.commit();
-
-      setMessage('✅ บันทึกข้อมูลทั้งหมดสำเร็จ!');
+      setMessage(`✅ บันทึกข้อมูลสำเร็จ (${dirtyRegistrants.length} รายการ)!`);
       setIsEditMode(false);
       fetchData();
       setTimeout(() => setMessage(''), 3000);
