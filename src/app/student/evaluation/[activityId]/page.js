@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { db } from '../../../../lib/firebase';
-import { collection, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, getDoc, query, where, getDocs, writeBatch } from 'firebase/firestore';
 import { useParams, useRouter } from 'next/navigation';
 import useLiff from '../../../../hooks/useLiff';
 
@@ -282,6 +282,41 @@ export default function EvaluationPage() {
             }
 
             await addDoc(collection(db, 'evaluations'), evaluationData);
+
+            // อัปเดตสถานะ hasEvaluated ใน registrations ทันที เพื่อให้ระบบสแกนออกและระบบสถานะทราบทันที
+            try {
+                const regBatch = writeBatch(db);
+                let needCommit = false;
+                if (studentDbProfile?.nationalId) {
+                    const qRegNat = query(
+                        collection(db, 'registrations'),
+                        where('activityId', '==', activityId),
+                        where('nationalId', '==', studentDbProfile.nationalId.trim())
+                    );
+                    const snapNat = await getDocs(qRegNat);
+                    snapNat.forEach(d => {
+                        regBatch.update(d.ref, { hasEvaluated: true, evaluatedAt: serverTimestamp() });
+                        needCommit = true;
+                    });
+                }
+                if (liffProfile?.userId) {
+                    const qRegLine = query(
+                        collection(db, 'registrations'),
+                        where('activityId', '==', activityId),
+                        where('lineUserId', '==', liffProfile.userId)
+                    );
+                    const snapLine = await getDocs(qRegLine);
+                    snapLine.forEach(d => {
+                        regBatch.update(d.ref, { hasEvaluated: true, evaluatedAt: serverTimestamp() });
+                        needCommit = true;
+                    });
+                }
+                if (needCommit) {
+                    await regBatch.commit();
+                }
+            } catch (errReg) {
+                console.warn('Could not auto-flag hasEvaluated on registration:', errReg);
+            }
 
             router.push('/student/my-registrations');
         } catch (error) {

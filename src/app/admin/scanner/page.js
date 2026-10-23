@@ -5,7 +5,7 @@ import { Html5Qrcode } from 'html5-qrcode';
 import { db } from '../../../lib/firebase';
 import {
   doc, getDoc, updateDoc, collection,
-  serverTimestamp, query, where, getDocs, runTransaction, Timestamp, limit, addDoc
+  serverTimestamp, query, where, getDocs, runTransaction, Timestamp, limit, addDoc, onSnapshot
 } from 'firebase/firestore';
 import { createCheckInSuccessFlex, createActivityCompleteFlex, createQueueCheckInSuccessFlex } from '../../../lib/flexMessageTemplates';
 
@@ -61,6 +61,8 @@ export default function UniversalScannerPage() {
   const [foundData, setFoundData] = useState(null);
   const [seatNumberInput, setSeatNumberInput] = useState('');
   const [message, setMessage] = useState('');
+  const [activityStats, setActivityStats] = useState({ total: 0, checkedIn: 0, checkedOut: 0 });
+  const [failedEvalCandidate, setFailedEvalCandidate] = useState(null);
   const qrScannerRef = useRef(null);
   const isProcessingRef = useRef(false);
 
@@ -116,10 +118,38 @@ export default function UniversalScannerPage() {
     setFoundData(null);
     setSeatNumberInput('');
     setMessage('');
+    setFailedEvalCandidate(null);
     setNationalIdInput('');
     setScannerState('idle');
     isProcessingRef.current = false;
   };
+
+  // Realtime subscription to registrations stats when activity is selected
+  useEffect(() => {
+    if (!selectedActivity?.id) {
+      setActivityStats({ total: 0, checkedIn: 0, checkedOut: 0 });
+      return;
+    }
+
+    const q = query(collection(db, 'registrations'), where('activityId', '==', selectedActivity.id));
+    const unsub = onSnapshot(q, (snap) => {
+      let total = snap.size;
+      let checkedIn = 0;
+      let checkedOut = 0;
+      snap.forEach(d => {
+        const data = d.data();
+        if (data.status === 'checked-in' || data.status === 'completed' || data.status === 'evaluated') {
+          checkedIn++;
+        }
+        if (data.checkedOut || data.checkedOutAt) {
+          checkedOut++;
+        }
+      });
+      setActivityStats({ total, checkedIn, checkedOut });
+    });
+
+    return () => unsub();
+  }, [selectedActivity?.id]);
 
   const handleActivityChange = (e) => {
     const activity = activities.find(a => a.id === e.target.value);
@@ -135,8 +165,11 @@ export default function UniversalScannerPage() {
     });
   };
 
-  const executeAdminCheckOut = async (registration, activity) => {
+  const executeAdminCheckOut = async (registration, activity, skipEvaluation = false) => {
     setScannerState('submitting');
+    if (!skipEvaluation) {
+      setFailedEvalCandidate(null);
+    }
     try {
       const regRef = doc(db, 'registrations', registration.id);
       const regSnap = await getDoc(regRef);
@@ -164,7 +197,7 @@ export default function UniversalScannerPage() {
       const lineUserId = freshData.lineUserId || registration.lineUserId || await findLineUserId(freshData.nationalId || registration.nationalId);
 
       // Robust Evaluation Check
-      if (activity.enableEvaluation !== false) {
+      if (!skipEvaluation && activity.enableEvaluation !== false) {
         let hasEval = false;
         if (freshData.hasEvaluated || freshData.evaluated || freshData.evaluationScore?.isScored || registration.hasEvaluated) {
           hasEval = true;
@@ -215,7 +248,8 @@ export default function UniversalScannerPage() {
         }
 
         if (!hasEval) {
-          setMessage(`❌ ${freshData.fullName || registration.fullName} ยังไม่ได้ทำแบบประเมิน ไม่สามารถจบกิจกรรมได้ กรุณาให้นักเรียนทำแบบประเมินก่อน`);
+          setMessage(`❌ ${freshData.fullName || registration.fullName} ยังไม่ได้ทำแบบประเมิน ไม่สามารถจบกิจกรรมได้`);
+          setFailedEvalCandidate({ registration: { ...registration, ...freshData }, activity });
           setFoundData({ registration: { ...registration, ...freshData }, activity });
           setScannerState('found');
           return false;
@@ -228,10 +262,12 @@ export default function UniversalScannerPage() {
         completedAt: serverTimestamp(),
         checkedOut: true,
         checkedOutAt: serverTimestamp(),
-        checkedOutBy: 'admin'
+        checkedOutBy: skipEvaluation ? 'admin (Force)' : 'admin'
       });
+      setFailedEvalCandidate(null);
 
-      await addDoc(collection(db, 'checkInLogs'), {
+      // Async Log
+      addDoc(collection(db, 'checkInLogs'), {
         activityId: activity.id,
         activityName: activity.name,
         studentName: freshData.fullName || registration.fullName,
@@ -239,20 +275,23 @@ export default function UniversalScannerPage() {
         status: 'check-out',
         timestamp: serverTimestamp(),
         adminId: 'admin'
-      });
+      }).catch(e => console.warn('Failed to add check-out log:', e));
 
+      // Non-blocking notification
       if (settings.onCheckOut && lineUserId) {
-        try {
-          const flexMessage = createActivityCompleteFlex({
-            activityId: freshData.activityId || registration.activityId,
-            activityName: activity.name,
-            requireEvaluation: false,
-            isQueueType: activity.type === 'queue'
-          });
-          await fetch('/api/send-notification', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: lineUserId, flexMessage }) });
-        } catch (flexErr) {
-          console.warn("Failed to send checkout notification:", flexErr);
-        }
+        (async () => {
+          try {
+            const flexMessage = createActivityCompleteFlex({
+              activityId: freshData.activityId || registration.activityId,
+              activityName: activity.name,
+              requireEvaluation: false,
+              isQueueType: activity.type === 'queue'
+            });
+            await fetch('/api/send-notification', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: lineUserId, flexMessage }) });
+          } catch (flexErr) {
+            console.warn("Failed to send checkout notification:", flexErr);
+          }
+        })();
       }
 
       setMessage(`🏁 ${freshData.fullName || registration.fullName} จบกิจกรรมและสแกนออกเรียบร้อยแล้ว`);
@@ -682,6 +721,25 @@ export default function UniversalScannerPage() {
 
         {selectedActivity ? (
           <div className="p-5 space-y-4">
+            {/* Realtime Activity Stats Bar */}
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between gap-2 flex-wrap">
+              <div className="text-xs text-slate-600 font-medium">
+                ยอดผู้เข้าร่วม: <span className="font-bold text-slate-900">{activityStats.total}</span> คน
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  เช็คอินแล้ว: {activityStats.checkedIn}
+                </span>
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200">
+                  จบกิจกรรม (ออก): {activityStats.checkedOut}
+                </span>
+                {activityStats.checkedIn > activityStats.checkedOut && (
+                  <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                    ค้าง: {activityStats.checkedIn - activityStats.checkedOut}
+                  </span>
+                )}
+              </div>
+            </div>
             {/* Mode Selector Segmented Tabs */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {/* Operation Mode */}
@@ -744,23 +802,38 @@ export default function UniversalScannerPage() {
               </div>
             </div>
 
-            {/* Feedback Alert Message */}
+            {/* Feedback Alert Message with Force Checkout */}
             {message && (
-              <div className={`p-3 rounded-lg text-sm font-normal border flex items-center gap-2 ${
-                message.includes('✅') || message.includes('สำเร็จ')
+              <div className={`p-3 rounded-lg text-sm font-normal border space-y-2.5 ${
+                message.includes('✅') || message.includes('สำเร็จ') || message.includes('🏁')
                   ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
                   : 'bg-red-50 border-red-200 text-red-800'
               }`}>
-                {message.includes('✅') || message.includes('สำเร็จ') ? (
-                  <svg className="w-5 h-5 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                ) : (
-                  <svg className="w-5 h-5 text-red-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
+                <div className="flex items-center gap-2">
+                  {message.includes('✅') || message.includes('สำเร็จ') || message.includes('🏁') ? (
+                    <svg className="w-5 h-5 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : (
+                    <svg className="w-5 h-5 text-red-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  )}
+                  <span>{message.replace(/^[✅❌⚠️🏁]\s*/, '')}</span>
+                </div>
+
+                {failedEvalCandidate && (
+                  <div className="pt-2 border-t border-red-200/60 flex items-center justify-between gap-2 flex-wrap">
+                    <span className="text-xs text-red-700">ต้องการอนุมัติให้จบกิจกรรมทันทีหรือไม่?</span>
+                    <button
+                      type="button"
+                      onClick={() => executeAdminCheckOut(failedEvalCandidate.registration, failedEvalCandidate.activity, true)}
+                      className="px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white text-xs font-semibold rounded-lg shadow-xs flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer ml-auto"
+                    >
+                      <span>⚡ ยืนยันจบกิจกรรมทันที (ข้ามการตรวจแบบประเมิน)</span>
+                    </button>
+                  </div>
                 )}
-                <span>{message.replace(/^[✅❌⚠️]\s*/, '')}</span>
               </div>
             )}
 

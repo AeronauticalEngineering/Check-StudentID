@@ -3,12 +3,29 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { db } from '../../../lib/firebase';
-import { collection, doc, updateDoc, deleteDoc, getDocs, query, orderBy, writeBatch } from 'firebase/firestore';
+import { collection, doc, updateDoc, deleteDoc, getDocs, query, orderBy, writeBatch, serverTimestamp } from 'firebase/firestore';
 import Papa from 'papaparse';
-import { upsertStudentProfile, resetStudentLineBinding, deleteStudentProfile, checkDuplicateNationalId } from '../../../lib/studentService';
+import { 
+  upsertStudentProfile, 
+  updateStudentNationalId,
+  resetStudentLineBinding, 
+  deleteStudentProfile, 
+  checkDuplicateNationalId 
+} from '../../../lib/studentService';
 import { useModal } from '../../../context/ModalContext';
 
-const getThaiStatus = (status) => {
+const getThaiStatus = (status, reg = null) => {
+  const isCheckedOut = reg ? (reg.checkedOut || reg.checkedOutAt || status === 'completed') : status === 'completed';
+  const hasEvaluated = reg ? (reg.hasEvaluated || reg.evaluated || reg.evaluationScore?.isScored) : false;
+
+  if (isCheckedOut) {
+    return { label: 'จบกิจกรรมแล้ว (เช็คเอาต์)', className: 'bg-purple-50 text-purple-700 border-purple-200 font-semibold' };
+  }
+
+  if (hasEvaluated && status === 'checked-in') {
+    return { label: 'ประเมินแล้ว (รอเช็คเอาต์)', className: 'bg-blue-50 text-blue-700 border-blue-200 font-semibold' };
+  }
+
   switch (status) {
     case 'checked-in':
       return { label: 'เช็คอินแล้ว', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
@@ -58,6 +75,7 @@ export default function AllRegistrantsPage() {
   // Multi-Selection State for Bulk Actions
   const [selectedIds, setSelectedIds] = useState([]);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
   const headerCheckboxRef = useRef(null);
 
   // Pagination
@@ -369,6 +387,78 @@ export default function AllRegistrantsPage() {
     }
   };
 
+  // Bulk Checkout Handler (for completed registrations)
+  const handleBulkCheckOut = async () => {
+    if (selectedIds.length === 0 || viewMode !== 'registrations') return;
+
+    const count = selectedIds.length;
+    const confirmed = await showConfirm({
+      title: `ยืนยันจบกิจกรรม (เช็คเอาต์) ${count.toLocaleString()} รายการ`,
+      message: `คุณต้องการอัปเดตสถานะของรายการลงทะเบียนที่เลือกจำนวน ${count.toLocaleString()} รายการ เป็น "จบกิจกรรมแล้ว (เช็คเอาต์แล้ว)" ทันทีหรือไม่?\n\n(ระบบจะบันทึกสถานะ completed และ checkedOut: true ในฐานข้อมูล)`,
+      type: 'info',
+      confirmText: `ยืนยันเช็คเอาต์ (${count})`,
+      cancelText: 'ยกเลิก'
+    });
+
+    if (!confirmed) return;
+
+    setIsBulkUpdating(true);
+    try {
+      const CHUNK_SIZE = 450;
+      for (let i = 0; i < selectedIds.length; i += CHUNK_SIZE) {
+        const chunk = selectedIds.slice(i, i + CHUNK_SIZE);
+        const batch = writeBatch(db);
+        chunk.forEach(id => {
+          batch.update(doc(db, 'registrations', id), {
+            status: 'completed',
+            queueStatus: 'completed',
+            completedAt: serverTimestamp(),
+            checkedOut: true,
+            checkedOutAt: serverTimestamp(),
+            checkedOutBy: 'admin_bulk'
+          });
+        });
+        await batch.commit();
+      }
+      showToast({ message: `อัปเดตสถานะจบกิจกรรม (เช็คเอาต์) จำนวน ${count.toLocaleString()} รายการสำเร็จ`, type: 'success' });
+      setSelectedIds([]);
+      await fetchData();
+    } catch (error) {
+      console.error('Bulk checkout error:', error);
+      showAlert({ title: 'เกิดข้อผิดพลาด', message: `ไม่สามารถอัปเดตสถานะได้: ${error.message}`, type: 'error' });
+    } finally {
+      setIsBulkUpdating(false);
+    }
+  };
+
+  // Single Checkout Handler
+  const handleSingleCheckOut = async (reg) => {
+    const confirmed = await showConfirm({
+      title: 'ยืนยันจบกิจกรรม (เช็คเอาต์)',
+      message: `ต้องการเปลี่ยนสถานะของ ${reg.fullName || 'ผู้เข้าร่วม'} เป็น "จบกิจกรรมแล้ว (เช็คเอาต์แล้ว)" ทันทีหรือไม่?`,
+      type: 'info',
+      confirmText: 'ยืนยันจบกิจกรรม',
+      cancelText: 'ยกเลิก'
+    });
+
+    if (!confirmed) return;
+
+    try {
+      await updateDoc(doc(db, 'registrations', reg.id), {
+        status: 'completed',
+        queueStatus: 'completed',
+        completedAt: serverTimestamp(),
+        checkedOut: true,
+        checkedOutAt: serverTimestamp(),
+        checkedOutBy: 'admin_manual'
+      });
+      showToast({ message: `อัปเดตสถานะเป็นจบกิจกรรม (เช็คเอาต์) เรียบร้อยแล้ว`, type: 'success' });
+      await fetchData();
+    } catch (error) {
+      showAlert({ title: 'เกิดข้อผิดพลาด', message: error.message, type: 'error' });
+    }
+  };
+
   const handleInputChange = (id, field, value) => {
     let finalValue = value;
     if (field === 'fullNameEn') {
@@ -383,10 +473,13 @@ export default function AllRegistrantsPage() {
   // Update Activity Registration item
   const handleUpdateRegistrant = async (registrantId) => {
     const dataToUpdate = editStates[registrantId];
-    const trimmedNat = dataToUpdate.nationalId.trim();
+    const originalReg = allRegistrations.find(r => r.id === registrantId);
+    const oldNat = originalReg?.nationalId?.trim() || null;
+    const trimmedNat = dataToUpdate.nationalId.trim().replace(/\D/g, '');
     const trimmedName = dataToUpdate.fullName.trim();
     const trimmedNameEn = dataToUpdate.fullNameEn ? dataToUpdate.fullNameEn.trim().toUpperCase() : null;
     const trimmedStd = dataToUpdate.studentId.trim() || null;
+    const lineUserId = dataToUpdate.lineUserId || originalReg?.lineUserId || null;
 
     if (!trimmedName) {
       showAlert({ title: 'ข้อมูลไม่ครบถ้วน', message: 'กรุณากรอกชื่อ-นามสกุล', type: 'warning' });
@@ -399,8 +492,8 @@ export default function AllRegistrantsPage() {
     }
 
     try {
-      // ตรวจสอบเลขบัตรประชาชนซ้ำซ้อน
-      const isDuplicate = await checkDuplicateNationalId(trimmedNat, dataToUpdate.lineUserId || registrantId);
+      // ตรวจสอบเลขบัตรประชาชนซ้ำซ้อนกับผู้ใช้อื่น
+      const isDuplicate = await checkDuplicateNationalId(trimmedNat, lineUserId || oldNat || registrantId);
       if (isDuplicate) {
         showAlert({
           title: 'เลขบัตรประชาชนซ้ำซ้อน',
@@ -410,26 +503,20 @@ export default function AllRegistrantsPage() {
         return;
       }
 
-      await updateDoc(doc(db, 'registrations', registrantId), {
-        fullName: trimmedName,
-        fullNameEn: trimmedNameEn,
-        studentId: trimmedStd,
-        nationalId: trimmedNat,
-        lineUserId: dataToUpdate.lineUserId || null
-      });
-
-      if (trimmedNat) {
-        await upsertStudentProfile({
-          nationalId: trimmedNat,
+      // ทำการ Cascade อัปเดตทั้ง registrations และ studentProfiles
+      await updateStudentNationalId({
+        oldNationalId: oldNat,
+        newNationalId: trimmedNat,
+        lineUserId,
+        profileData: {
           fullName: trimmedName,
           fullNameEn: trimmedNameEn,
           studentId: trimmedStd,
-          lineUserId: dataToUpdate.lineUserId || null,
           source: 'admin_edit'
-        });
-      }
+        }
+      });
 
-      showToast({ message: 'อัปเดตข้อมูลการลงทะเบียนสำเร็จ', type: 'success' });
+      showToast({ message: 'อัปเดตข้อมูลและเชื่อมโยงเลขบัตรประชาชนสำเร็จ', type: 'success' });
       setEditingId(null);
       fetchData();
     } catch (error) {
@@ -440,10 +527,13 @@ export default function AllRegistrantsPage() {
   // Update Student Profile item
   const handleUpdateProfile = async (profileId) => {
     const dataToUpdate = editStates[profileId];
-    const trimmedNat = dataToUpdate.nationalId.trim();
+    const originalProfile = allProfiles.find(p => p.id === profileId);
+    const oldNat = originalProfile?.nationalId?.trim() || null;
+    const trimmedNat = dataToUpdate.nationalId.trim().replace(/\D/g, '');
     const trimmedName = dataToUpdate.fullName.trim();
     const trimmedNameEn = dataToUpdate.fullNameEn ? dataToUpdate.fullNameEn.trim().toUpperCase() : null;
     const trimmedStd = dataToUpdate.studentId.trim() || null;
+    const lineUserId = dataToUpdate.lineUserId || originalProfile?.lineUserId || (profileId.startsWith('U') ? profileId : null);
 
     if (!trimmedName) {
       showAlert({ title: 'ข้อมูลไม่ครบถ้วน', message: 'กรุณากรอกชื่อ-นามสกุล', type: 'warning' });
@@ -457,7 +547,7 @@ export default function AllRegistrantsPage() {
 
     try {
       // ตรวจสอบความซ้ำซ้อน
-      const isDuplicate = await checkDuplicateNationalId(trimmedNat, profileId);
+      const isDuplicate = await checkDuplicateNationalId(trimmedNat, lineUserId || oldNat || profileId);
       if (isDuplicate) {
         showAlert({
           title: 'เลขบัตรประชาชนซ้ำซ้อน',
@@ -467,16 +557,22 @@ export default function AllRegistrantsPage() {
         return;
       }
 
-      await upsertStudentProfile({
-        nationalId: trimmedNat,
-        fullName: trimmedName,
-        fullNameEn: trimmedNameEn,
-        studentId: trimmedStd,
-        lineUserId: dataToUpdate.lineUserId || (profileId.startsWith('U') ? profileId : null),
-        source: 'admin_edit'
+      // ทำการ Cascade อัปเดตโปรไฟล์และทุก registrations ที่ผูกกับนักเรียนคนนี้
+      await updateStudentNationalId({
+        oldNationalId: oldNat,
+        newNationalId: trimmedNat,
+        lineUserId,
+        profileData: {
+          fullName: trimmedName,
+          fullNameEn: trimmedNameEn,
+          studentId: trimmedStd,
+          lineDisplayName: originalProfile?.lineDisplayName || null,
+          linePictureUrl: originalProfile?.linePictureUrl || null,
+          source: 'admin_edit'
+        }
       });
 
-      showToast({ message: 'อัปเดตโปรไฟล์นักเรียนสำเร็จ', type: 'success' });
+      showToast({ message: 'อัปเดตโปรไฟล์นักเรียนและข้อมูลการลงทะเบียนทั้งหมดสำเร็จ', type: 'success' });
       setEditingId(null);
       fetchData();
     } catch (error) {
@@ -762,6 +858,27 @@ export default function AllRegistrantsPage() {
               ยกเลิกการเลือก
             </button>
 
+            {viewMode === 'registrations' && (
+              <button
+                type="button"
+                onClick={handleBulkCheckOut}
+                disabled={isBulkUpdating || isBulkDeleting}
+                className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-700 active:scale-98 text-white text-xs font-semibold rounded shadow-xs flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
+                title="เปลี่ยนสถานะรายการที่เลือกเป็น จบกิจกรรมแล้ว (เช็คเอาต์แล้ว)"
+              >
+                {isBulkUpdating ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    <span>กำลังอัปเดต...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>🏁 จบกิจกรรม/เช็คเอาต์ ({selectedIds.length.toLocaleString()})</span>
+                  </>
+                )}
+              </button>
+            )}
+
             <button
               type="button"
               onClick={handleBulkDelete}
@@ -956,7 +1073,7 @@ export default function AllRegistrantsPage() {
                         </td>
                         <td className="px-3 py-2 text-center border-r border-slate-100 whitespace-nowrap">
                           {(() => {
-                            const statusObj = getThaiStatus(reg.status);
+                            const statusObj = getThaiStatus(reg.status, reg);
                             return (
                               <span className={`inline-block px-2.5 py-0.5 rounded text-xs font-semibold whitespace-nowrap border ${statusObj.className}`}>
                                 {statusObj.label}
@@ -1004,6 +1121,15 @@ export default function AllRegistrantsPage() {
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
                                 </svg>
                               </Link>
+                              {!(reg.checkedOut || reg.checkedOutAt || reg.status === 'completed') && (
+                                <button
+                                  onClick={() => handleSingleCheckOut(reg)}
+                                  className="p-1 text-purple-600 hover:bg-purple-50 rounded border border-transparent hover:border-purple-200 cursor-pointer"
+                                  title="จบกิจกรรม / เช็คเอาต์คนนี้ทันที"
+                                >
+                                  🏁
+                                </button>
+                              )}
                               <button
                                 onClick={() => setEditingId(reg.id)}
                                 className="p-1 text-blue-600 hover:bg-blue-50 rounded border border-transparent hover:border-blue-200 cursor-pointer"

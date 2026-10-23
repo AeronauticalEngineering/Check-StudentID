@@ -473,24 +473,39 @@ const CompletedRegistrationCard = ({ reg, activities, courses, hasEvaluated, onS
 
   const needsEvaluation = !hasEvaluated && (activity.enableEvaluation === true || activity.enableEvaluation === undefined);
   const isCheckedOut = reg.checkedOut || reg.checkedOutAt;
+  const isCheckedIn = reg.status === 'checked-in' || reg.checkedIn || reg.checkedInAt;
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs hover:border-slate-300 transition-colors font-sans">
       {/* Top Header Bar */}
-      <div className="bg-slate-50 px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className={`text-sm font-semibold ${isCheckedOut ? 'text-slate-700' : 'text-blue-700'}`}>
-            {isCheckedOut ? 'จบกิจกรรมแล้ว (เช็คเอาต์แล้ว)' : 'สัมภาษณ์เสร็จสิ้น (รอเช็คเอาต์)'}
-          </span>
+      <div className="bg-slate-50 px-3.5 py-2.5 border-b border-slate-100 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+          {isCheckedOut ? (
+            <span className="text-xs font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-200 whitespace-nowrap">
+              ✓ จบกิจกรรมแล้ว
+            </span>
+          ) : hasEvaluated ? (
+            <span className="text-xs font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200 whitespace-nowrap">
+              ประเมินแล้ว (รอสแกนออก)
+            </span>
+          ) : isCheckedIn ? (
+            <span className="text-xs font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200 whitespace-nowrap">
+              เช็คอินแล้ว (รอสแกนออก)
+            </span>
+          ) : (
+            <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200 whitespace-nowrap">
+              กิจกรรมสิ้นสุดแล้ว
+            </span>
+          )}
           {activityDate && (
-            <span className="text-sm text-slate-500 font-normal">
+            <span className="text-xs text-slate-500 font-normal whitespace-nowrap">
               • {activityDate.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })}
             </span>
           )}
         </div>
 
         {queueOrSeat && (
-          <span className="font-semibold text-sm px-3 py-0.5 rounded-full bg-orange-50 text-[#c24f04] border border-[#ff741f]/30">
+          <span className="font-semibold text-xs px-2.5 py-0.5 rounded-full bg-orange-50 text-[#c24f04] border border-[#ff741f]/30 whitespace-nowrap shrink-0">
             {queueOrSeat}
           </span>
         )}

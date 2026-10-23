@@ -66,6 +66,7 @@ export default function StationScannerPage({ params }) {
   const [scannerState, setScannerState] = useState('idle'); // idle, scanning, processing, success, error
   const [scanResult, setScanResult] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
+  const [failedEvalCandidate, setFailedEvalCandidate] = useState(null); // { id, data, studentDisplay }
 
   const [stats, setStats] = useState({ total: 0, checkedIn: 0, checkedOut: 0 });
   const [courseOptions, setCourseOptions] = useState([]);
@@ -203,10 +204,13 @@ export default function StationScannerPage({ params }) {
     };
   }, [activeTab, isSettingStaff, activity]);
 
-  // Helper to execute Checkout
-  const executeDirectCheckOut = async (regDocOrData) => {
+  // Helper to execute Checkout (supports skipEvaluation override)
+  const executeDirectCheckOut = async (regDocOrData, skipEvaluation = false) => {
     setScannerState('processing');
     setErrorMessage('');
+    if (!skipEvaluation) {
+      setFailedEvalCandidate(null);
+    }
     try {
       const regId = regDocOrData.id;
       const regRef = doc(db, 'registrations', regId);
@@ -225,8 +229,8 @@ export default function StationScannerPage({ params }) {
         return;
       }
 
-      // Check evaluation if required
-      if (activity?.enableEvaluation !== false) {
+      // Check evaluation if required (and not overridden)
+      if (!skipEvaluation && activity?.enableEvaluation !== false) {
         let hasEval = false;
         if (regData.hasEvaluated || regData.evaluated || regData.evaluationScore?.isScored) {
           hasEval = true;
@@ -276,7 +280,8 @@ export default function StationScannerPage({ params }) {
         if (!hasEval) {
           playBeep('error');
           const studentDisplay = `${regData.title || ''} ${regData.firstName || ''} ${regData.lastName || ''}`.trim() || regData.fullName || 'ผู้เข้าร่วม';
-          setErrorMessage(`❌ ${studentDisplay} ยังไม่ได้ทำแบบประเมิน ไม่สามารถจบกิจกรรมได้ กรุณาให้นักเรียนทำแบบประเมินก่อน`);
+          setErrorMessage(`❌ ${studentDisplay} ยังไม่ได้ทำแบบประเมิน ไม่สามารถจบกิจกรรมได้`);
+          setFailedEvalCandidate({ id: regId, data: regData, studentDisplay });
           setScannerState('error');
           return;
         }
@@ -289,12 +294,14 @@ export default function StationScannerPage({ params }) {
         completedAt: serverTimestamp(),
         checkedOut: true,
         checkedOutAt: serverTimestamp(),
-        checkedOutBy: staffName || 'Station Staff'
+        checkedOutBy: staffName ? `${staffName}${skipEvaluation ? ' (Force)' : ''}` : (skipEvaluation ? 'Station Staff (Force)' : 'Station Staff')
       };
 
       await updateDoc(regRef, updatePayload);
+      setFailedEvalCandidate(null);
 
-      await addDoc(collection(db, 'checkInLogs'), {
+      // Add Check-out Log (Asynchronous Fire-and-Forget)
+      addDoc(collection(db, 'checkInLogs'), {
         activityId: activityId,
         activityName: activity?.name || '-',
         studentName: `${regData.title || ''} ${regData.firstName || ''} ${regData.lastName || ''}`.trim() || regData.fullName || '-',
@@ -302,30 +309,32 @@ export default function StationScannerPage({ params }) {
         status: 'check-out',
         timestamp: serverTimestamp(),
         adminId: staffName || 'Station Staff'
-      });
+      }).catch(e => console.warn('Failed to add checkout log:', e));
 
-      // Send checkout notification if enabled
-      try {
-        const settingsRef = doc(db, 'systemSettings', 'notifications');
-        const settingsSnap = await getDoc(settingsRef);
-        const settings = settingsSnap.exists() ? settingsSnap.data() : { onCheckOut: true };
-        const lineUserId = regData.lineUserId || regData.userId;
-        if (settings.onCheckOut && lineUserId) {
-          const flexMsg = createActivityCompleteFlex({
-            activityId: activityId,
-            activityName: activity?.name || '-',
-            requireEvaluation: false,
-            isQueueType: activity?.type === 'queue' || activity?.isQueueType
-          });
-          fetch('/api/send-notification', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: lineUserId, flexMessage: flexMsg })
-          }).catch(e => console.error('Station checkout notification error:', e));
+      // Send checkout notification in background (Non-blocking Fire-and-Forget)
+      (async () => {
+        try {
+          const settingsRef = doc(db, 'systemSettings', 'notifications');
+          const settingsSnap = await getDoc(settingsRef);
+          const settings = settingsSnap.exists() ? settingsSnap.data() : { onCheckOut: true };
+          const lineUserId = regData.lineUserId || regData.userId;
+          if (settings.onCheckOut && lineUserId) {
+            const flexMsg = createActivityCompleteFlex({
+              activityId: activityId,
+              activityName: activity?.name || '-',
+              requireEvaluation: false,
+              isQueueType: activity?.type === 'queue' || activity?.isQueueType
+            });
+            fetch('/api/send-notification', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ userId: lineUserId, flexMessage: flexMsg })
+            }).catch(e => console.error('Station checkout notification error:', e));
+          }
+        } catch (notifErr) {
+          console.warn('Failed to send station checkout notification:', notifErr);
         }
-      } catch (notifErr) {
-        console.warn('Failed to send station checkout notification:', notifErr);
-      }
+      })();
 
       playBeep('success');
       setScanResult({
@@ -621,13 +630,22 @@ export default function StationScannerPage({ params }) {
         </div>
 
         {/* Live Counters */}
-        <div className="flex items-center gap-2">
-          <div className="text-right px-3.5 py-1.5 bg-slate-50 rounded-xl border border-slate-200">
-            <div className="text-sm font-normal text-slate-500">เช็คอิน / ออก</div>
-            <div className="text-sm text-slate-800">
-              <span className="font-bold text-[#000946]">{stats.checkedIn}</span>
-              <span className="font-normal text-slate-400"> / {stats.total}</span>
-              <span className="font-normal text-emerald-600 ml-1.5">({stats.checkedOut} ออก)</span>
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          <div className="px-2.5 sm:px-3 py-1 bg-slate-50 rounded-xl border border-slate-200 text-right">
+            <div className="text-[11px] font-normal text-slate-500">เช็คอินแล้ว</div>
+            <div className="text-xs sm:text-sm font-bold text-[#000946]">
+              {stats.checkedIn} <span className="text-slate-400 font-normal">/ {stats.total}</span>
+            </div>
+          </div>
+          <div className="px-2.5 sm:px-3 py-1 bg-purple-50 rounded-xl border border-purple-200 text-right">
+            <div className="text-[11px] font-normal text-purple-700">จบกิจกรรม (ออก)</div>
+            <div className="text-xs sm:text-sm font-bold text-purple-700">
+              {stats.checkedOut}
+              {stats.checkedIn > stats.checkedOut && (
+                <span className="text-[11px] font-normal text-amber-700 ml-1">
+                  (ค้าง {stats.checkedIn - stats.checkedOut})
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -758,18 +776,35 @@ export default function StationScannerPage({ params }) {
 
       {/* Main Content Area */}
       <div className="flex-1 p-4 max-w-xl mx-auto w-full flex flex-col justify-center">
-        {/* Error Alert */}
+        {/* Error Alert with Force Checkout option */}
         {errorMessage && (
-          <div className="mb-4 p-3.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm font-normal flex items-center justify-between animate-in fade-in">
-            <div className="flex items-center gap-2">
-              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span>{errorMessage}</span>
+          <div className="mb-4 p-3.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm font-normal space-y-2.5 animate-in fade-in">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>{errorMessage}</span>
+              </div>
+              <button onClick={() => { setErrorMessage(''); setFailedEvalCandidate(null); }} className="text-slate-400 hover:text-slate-700 p-1 cursor-pointer">
+                ✕
+              </button>
             </div>
-            <button onClick={() => setErrorMessage('')} className="text-slate-400 hover:text-slate-700 p-1 cursor-pointer">
-              ✕
-            </button>
+
+            {failedEvalCandidate && (
+              <div className="pt-2 border-t border-red-200/60 flex items-center justify-between gap-2 flex-wrap">
+                <span className="text-xs text-red-600">
+                  ต้องการอนุมัติให้จบกิจกรรมทันทีหรือไม่?
+                </span>
+                <button
+                  type="button"
+                  onClick={() => executeDirectCheckOut(failedEvalCandidate, true)}
+                  className="px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white text-xs font-semibold rounded-lg shadow-xs flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer ml-auto"
+                >
+                  <span>⚡ ยืนยันจบกิจกรรมทันที (ข้ามการตรวจแบบประเมิน)</span>
+                </button>
+              </div>
+            )}
           </div>
         )}
 

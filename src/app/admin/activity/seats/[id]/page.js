@@ -31,7 +31,8 @@ function formatSeatLabel(zoneName, runningNumber, labelFormat) {
 import { useModal } from '../../../../../context/ModalContext';
 
 // Helper function to translate status to Thai
-const translateStatus = (status) => {
+const translateStatus = (status, checkedOut = false) => {
+  if (checkedOut) return 'จบกิจกรรมแล้ว (เช็คเอาต์)';
   switch (status) {
     case 'checked-in': return 'เช็คอินแล้ว';
     case 'registered': return 'ลงทะเบียนแล้ว';
@@ -39,7 +40,7 @@ const translateStatus = (status) => {
     case 'called': return 'เรียกคิวแล้ว';
     case 'interviewing':
     case 'serving': return 'สอบสัมภาษณ์';
-    case 'completed': return 'สำเร็จแล้ว';
+    case 'completed': return 'จบกิจกรรมแล้ว';
     case 'waitlisted': return 'รอคิว';
     case 'cancelled': return 'ยกเลิกแล้ว';
     case 'absent': return 'ไม่มารายงานตัว';
@@ -50,7 +51,7 @@ const translateStatus = (status) => {
       if (lower.includes('call')) return 'กำลังเรียก';
       if (lower.includes('interview')) return 'สอบสัมภาษณ์';
       if (lower.includes('check')) return 'เช็คอินแล้ว';
-      if (lower.includes('complete')) return 'สำเร็จแล้ว';
+      if (lower.includes('complete')) return 'จบกิจกรรมแล้ว';
       if (lower.includes('cancel')) return 'ยกเลิกแล้ว';
       if (lower.includes('wait')) return 'รอคิว';
       return status;
@@ -58,29 +59,41 @@ const translateStatus = (status) => {
   }
 };
 
-const StatusBadge = ({ status }) => {
+const StatusBadge = ({ status, checkedOut = false, hasEvaluated = false }) => {
   let colorClass = 'bg-slate-100 text-slate-700 border-slate-200';
-  switch (status) {
-    case 'checked-in': colorClass = 'bg-emerald-50 text-emerald-700 border-emerald-200'; break;
-    case 'registered': colorClass = 'bg-blue-50 text-blue-700 border-blue-200'; break;
-    case 'calling':
-    case 'called': colorClass = 'bg-amber-50 text-amber-700 border-amber-300 font-semibold animate-pulse'; break;
-    case 'interviewing':
-    case 'serving': colorClass = 'bg-indigo-50 text-indigo-700 border-indigo-200 font-semibold'; break;
-    case 'completed': colorClass = 'bg-purple-50 text-purple-700 border-purple-200'; break;
-    case 'waitlisted': colorClass = 'bg-orange-50 text-orange-700 border-orange-200'; break;
-    case 'cancelled':
-    case 'absent':
-    case 'skipped': colorClass = 'bg-red-50 text-red-700 border-red-200'; break;
-    default: {
-      const lower = String(status || '').toLowerCase();
-      if (lower.includes('call')) colorClass = 'bg-amber-50 text-amber-700 border-amber-300 font-semibold animate-pulse';
-      break;
+  if (checkedOut || status === 'completed') {
+    colorClass = 'bg-purple-50 text-purple-700 border-purple-200 font-medium';
+  } else if (hasEvaluated && status === 'checked-in') {
+    colorClass = 'bg-blue-50 text-blue-700 border-blue-200 font-medium';
+  } else {
+    switch (status) {
+      case 'checked-in': colorClass = 'bg-emerald-50 text-emerald-700 border-emerald-200'; break;
+      case 'registered': colorClass = 'bg-blue-50 text-blue-700 border-blue-200'; break;
+      case 'calling':
+      case 'called': colorClass = 'bg-amber-50 text-amber-700 border-amber-300 font-semibold animate-pulse'; break;
+      case 'interviewing':
+      case 'serving': colorClass = 'bg-indigo-50 text-indigo-700 border-indigo-200 font-semibold'; break;
+      case 'waitlisted': colorClass = 'bg-orange-50 text-orange-700 border-orange-200'; break;
+      case 'cancelled':
+      case 'absent':
+      case 'skipped': colorClass = 'bg-red-50 text-red-700 border-red-200'; break;
+      default: {
+        const lower = String(status || '').toLowerCase();
+        if (lower.includes('call')) colorClass = 'bg-amber-50 text-amber-700 border-amber-300 font-semibold animate-pulse';
+        break;
+      }
     }
   }
+
+  const label = checkedOut
+    ? 'จบกิจกรรมแล้ว (เช็คเอาต์)'
+    : (hasEvaluated && status === 'checked-in')
+    ? 'ประเมินแล้ว (รอเช็คเอาต์)'
+    : translateStatus(status, checkedOut);
+
   return (
-    <span className={`inline-block px-2.5 py-0.5 rounded text-xs border font-medium ${colorClass}`}>
-      {translateStatus(status)}
+    <span className={`inline-block px-2.5 py-0.5 rounded text-xs border font-medium whitespace-nowrap ${colorClass}`}>
+      {label}
     </span>
   );
 };
@@ -311,6 +324,14 @@ export default function SeatAssignmentPage({ params }) {
           }
           if (current.status !== undefined && current.status !== original?.status) {
             regUpdatePayload.status = current.status;
+            if (current.status === 'completed') {
+              regUpdatePayload.checkedOut = true;
+              regUpdatePayload.checkedOutAt = serverTimestamp();
+              regUpdatePayload.queueStatus = 'completed';
+            } else if (current.status === 'checked-in') {
+              regUpdatePayload.checkedOut = false;
+              regUpdatePayload.checkedOutAt = null;
+            }
           }
           if (current.displayQueueNumber !== undefined && current.displayQueueNumber !== original?.displayQueueNumber) {
             regUpdatePayload.displayQueueNumber = current.displayQueueNumber.trim();
@@ -1987,11 +2008,15 @@ export default function SeatAssignmentPage({ params }) {
                           <option value="called">เรียกคิวแล้ว</option>
                           <option value="waitlisted">รอคิว</option>
                           <option value="interviewing">สอบสัมภาษณ์</option>
-                          <option value="completed">สำเร็จแล้ว</option>
+                          <option value="completed">จบกิจกรรมแล้ว (เช็คเอาต์)</option>
                           <option value="cancelled">ยกเลิกแล้ว</option>
                         </select>
                       ) : (
-                        <StatusBadge status={reg.status} />
+                        <StatusBadge 
+                          status={reg.status} 
+                          checkedOut={reg.checkedOut || reg.checkedOutAt}
+                          hasEvaluated={reg.hasEvaluated || reg.evaluated || reg.evaluationScore?.isScored}
+                        />
                       )}
                     </td>
                     <td className="px-3 py-2 text-slate-600 border-r border-slate-100">

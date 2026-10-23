@@ -5,7 +5,7 @@ import { registerOrLinkStudentProfile } from '../../lib/studentService';
 import { syncUnlinkedRegistrations } from '../../lib/registrationService';
 
 export default function ProfileSetupForm({ liffProfile, onProfileCreated }) {
-  const [fullName, setFullName] = useState(liffProfile?.displayName || '');
+  const [fullName, setFullName] = useState('');
   const [fullNameEn, setFullNameEn] = useState('');
   const [nationalId, setNationalId] = useState('');
   const [studentId, setStudentId] = useState('');
@@ -106,7 +106,7 @@ export default function ProfileSetupForm({ liffProfile, onProfileCreated }) {
               onChange={(e) => setFullName(e.target.value)}
               required
               className="w-full px-4 py-3 bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#000946]/20 focus:border-[#000946] outline-none transition-all text-sm font-normal"
-              placeholder="เช่น นายสมชาย ใจดี"
+              placeholder="กรุณากรอกชื่อจริง-นามสกุลจริง (ภาษาไทย)"
             />
           </div>
 

@@ -1,10 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { db } from '../../lib/firebase';
-import { doc, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { checkDuplicateNationalId } from '../../lib/studentService';
-import { syncUnlinkedRegistrations } from '../../lib/registrationService';
+import { updateStudentNationalId } from '../../lib/studentService';
 
 export default function EditProfileModal({ currentProfile, liffProfile, onProfileUpdated, onCancel }) {
   const [fullName, setFullName] = useState(currentProfile?.fullName || '');
@@ -21,7 +18,7 @@ export default function EditProfileModal({ currentProfile, liffProfile, onProfil
     
     const trimmedFullName = fullName.trim();
     const trimmedFullNameEn = fullNameEn.trim().toUpperCase();
-    const trimmedNationalId = nationalId.trim();
+    const trimmedNationalId = nationalId.trim().replace(/\D/g, '');
     const trimmedStudentId = studentId.trim() || null;
 
     if (!trimmedFullName) {
@@ -37,42 +34,30 @@ export default function EditProfileModal({ currentProfile, liffProfile, onProfil
     }
 
     try {
-      // ตรวจสอบความซ้ำซ้อนของเลขบัตรประชาชนกับผู้ใช้อื่น
-      const isDuplicate = await checkDuplicateNationalId(trimmedNationalId, liffProfile?.userId);
-      if (isDuplicate) {
-        setError(`เลขประจำตัวประชาชน ${trimmedNationalId} ซ้ำซ้อนกับผู้ใช้อื่นในระบบ`);
-        setIsSubmitting(false);
-        return;
-      }
+      const lineUserId = liffProfile?.userId || currentProfile?.lineUserId || null;
+      const oldNationalId = currentProfile?.nationalId || null;
 
-      const profileData = { 
-        fullName: trimmedFullName, 
+      const profilePayload = {
+        fullName: trimmedFullName,
         fullNameEn: trimmedFullNameEn || null,
-        studentId: trimmedStudentId, 
-        nationalId: trimmedNationalId, 
-        updatedAt: serverTimestamp() 
+        studentId: trimmedStudentId,
+        lineDisplayName: liffProfile?.displayName || currentProfile?.lineDisplayName || null,
+        linePictureUrl: liffProfile?.pictureUrl || currentProfile?.linePictureUrl || null
       };
 
-      const studentDocRef = doc(db, 'studentProfiles', liffProfile.userId);
-      
-      if (currentProfile) {
-        // อัปเดตโปรไฟล์ที่มีอยู่
-        await updateDoc(studentDocRef, profileData);
-      } else {
-        // สร้างโปรไฟล์ใหม่
-        await setDoc(studentDocRef, {
-          ...profileData,
-          createdAt: serverTimestamp()
-        });
-      }
-      
-      // ซิงค์ชื่อและรหัสนักศึกษาไปยังทุกกิจกรรมที่ลงทะเบียนไว้
-      await syncUnlinkedRegistrations(trimmedNationalId, liffProfile.userId, {
-        fullName: trimmedFullName,
-        fullNameEn: trimmedFullNameEn || null
+      // ทำการอัปเดตโปรไฟล์และ Cascade เลขบัตรประชาชนไปยังทุก registrations ที่ผูกกับนักเรียนคนนี้
+      const updated = await updateStudentNationalId({
+        oldNationalId,
+        newNationalId: trimmedNationalId,
+        lineUserId,
+        profileData: profilePayload
       });
 
-      onProfileUpdated(profileData);
+      onProfileUpdated({
+        ...currentProfile,
+        ...updated,
+        nationalId: trimmedNationalId
+      });
     } catch (err) {
       setError(err.message || "เกิดข้อผิดพลาดในการบันทึกโปรไฟล์");
       console.error("Profile update error:", err);

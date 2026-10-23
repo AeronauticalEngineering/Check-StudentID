@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { upsertStudentProfile } from '../../lib/studentService';
+import { updateStudentNationalId } from '../../lib/studentService';
 
 export default function EditProfileForm({ currentProfile, liffProfile, onProfileUpdated, onCancel }) {
   const [fullName, setFullName] = useState(currentProfile?.fullName || '');
@@ -17,18 +17,25 @@ export default function EditProfileForm({ currentProfile, liffProfile, onProfile
     setError('');
 
     try {
-      const updated = await upsertStudentProfile({
-        nationalId: nationalId.trim(),
-        fullName: fullName.trim(),
-        fullNameEn: fullNameEn.trim().toUpperCase() || null,
-        studentId: studentId.trim() || null,
+      const trimmedNat = nationalId.trim().replace(/\D/g, '');
+      const trimmedName = fullName.trim();
+      const trimmedNameEn = fullNameEn.trim().toUpperCase() || null;
+      const trimmedStd = studentId.trim() || null;
+
+      const updated = await updateStudentNationalId({
+        oldNationalId: currentProfile?.nationalId || null,
+        newNationalId: trimmedNat,
         lineUserId: liffProfile?.userId || currentProfile?.lineUserId || null,
-        lineDisplayName: liffProfile?.displayName || currentProfile?.lineDisplayName || null,
-        linePictureUrl: liffProfile?.pictureUrl || currentProfile?.linePictureUrl || null,
-        source: 'user_edit'
+        profileData: {
+          fullName: trimmedName,
+          fullNameEn: trimmedNameEn,
+          studentId: trimmedStd,
+          lineDisplayName: liffProfile?.displayName || currentProfile?.lineDisplayName || null,
+          linePictureUrl: liffProfile?.pictureUrl || currentProfile?.linePictureUrl || null
+        }
       });
 
-      onProfileUpdated({ ...currentProfile, ...updated });
+      onProfileUpdated({ ...currentProfile, ...updated, nationalId: trimmedNat });
     } catch (err) {
       setError(err.message || 'เกิดข้อผิดพลาดในการอัปเดตโปรไฟล์');
       console.error('Profile update error:', err);

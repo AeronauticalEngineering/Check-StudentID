@@ -4,13 +4,29 @@ import { useState, useEffect, useMemo, use } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { db } from '../../../../lib/firebase';
-import { collection, doc, getDoc, getDocs, updateDoc, deleteDoc, query, where, orderBy } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, updateDoc, deleteDoc, query, where, orderBy, serverTimestamp } from 'firebase/firestore';
 import Papa from 'papaparse';
-import { upsertStudentProfile, resetStudentLineBinding, deleteStudentProfile } from '../../../../lib/studentService';
+import { 
+  upsertStudentProfile, 
+  updateStudentNationalId,
+  resetStudentLineBinding, 
+  deleteStudentProfile 
+} from '../../../../lib/studentService';
 import ExaminerScoringModal from '../../../../components/ExaminerScoringModal';
 import { useModal } from '../../../../context/ModalContext';
 
-const getThaiStatus = (status) => {
+const getThaiStatus = (status, reg = null) => {
+  const isCheckedOut = reg ? (reg.checkedOut || reg.checkedOutAt || status === 'completed') : status === 'completed';
+  const hasEvaluated = reg ? (reg.hasEvaluated || reg.evaluated || reg.evaluationScore?.isScored) : false;
+
+  if (isCheckedOut) {
+    return { label: 'จบกิจกรรมแล้ว (เช็คเอาต์)', className: 'bg-purple-50 text-purple-700 border-purple-200 font-semibold' };
+  }
+
+  if (hasEvaluated && status === 'checked-in') {
+    return { label: 'ประเมินแล้ว (รอเช็คเอาต์)', className: 'bg-blue-50 text-blue-700 border-blue-200 font-semibold' };
+  }
+
   switch (status) {
     case 'checked-in':
       return { label: 'เช็คอินแล้ว', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
@@ -152,38 +168,41 @@ export default function StudentDetailPage({ params }) {
   // Save profile updates
   const handleSaveProfile = async () => {
     try {
-      const updatedNationalId = profileForm.nationalId.trim();
+      const updatedNationalId = profileForm.nationalId.trim().replace(/\D/g, '');
       const updatedFullName = profileForm.fullName.trim();
       const updatedFullNameEn = profileForm.fullNameEn ? profileForm.fullNameEn.trim().toUpperCase() : null;
       const updatedStudentId = profileForm.studentId.trim() || null;
       const updatedLineUserId = profileForm.lineUserId.trim() || null;
+      const oldNationalId = studentInfo?.nationalId?.trim() || null;
 
-      // Update all matched registrations
-      for (const reg of studentRegistrations) {
-        await updateDoc(doc(db, 'registrations', reg.id), {
-          fullName: updatedFullName,
-          fullNameEn: updatedFullNameEn,
-          nationalId: updatedNationalId,
-          studentId: updatedStudentId,
-          lineUserId: updatedLineUserId
-        });
+      if (!updatedFullName) {
+        throw new Error('กรุณากรอกชื่อ-นามสกุล');
       }
 
-      // Upsert student global profile
-      if (updatedNationalId) {
-        await upsertStudentProfile({
-          nationalId: updatedNationalId,
+      if (updatedNationalId.length !== 13 || !/^\d{13}$/.test(updatedNationalId)) {
+        throw new Error('เลขประจำตัวประชาชนต้องเป็นตัวเลข 13 หลัก');
+      }
+
+      await updateStudentNationalId({
+        oldNationalId,
+        newNationalId: updatedNationalId,
+        lineUserId: updatedLineUserId,
+        profileData: {
           fullName: updatedFullName,
           fullNameEn: updatedFullNameEn,
           studentId: updatedStudentId,
-          lineUserId: updatedLineUserId,
           source: 'admin_edit_page'
-        });
-      }
+        }
+      });
 
-      setMessage('✅ บันทึกข้อมูลโปรไฟล์นักเรียนสำเร็จ');
+      setMessage('✅ บันทึกข้อมูลและเชื่อมโยงเลขบัตรประชาชนสำเร็จ');
       setIsEditingProfile(false);
-      fetchStudentData();
+
+      if (oldNationalId && oldNationalId !== updatedNationalId && paramId === oldNationalId) {
+        router.replace(`/admin/registrants/${encodeURIComponent(updatedNationalId)}`);
+      } else {
+        fetchStudentData();
+      }
       setTimeout(() => setMessage(''), 3000);
     } catch (error) {
       setMessage(`❌ เกิดข้อผิดพลาด: ${error.message}`);
@@ -561,7 +580,7 @@ export default function StudentDetailPage({ params }) {
               ) : (
                 studentRegistrations.map((reg, index) => {
                   const activity = activitiesMap[reg.activityId];
-                  const statusObj = getThaiStatus(reg.status);
+                  const statusObj = getThaiStatus(reg.status, reg);
                   const evalScore = reg.evaluationScore || {};
                   const attached = reg.attachedDocuments || {};
                   const totalAttachedFiles = Object.values(attached).reduce((acc, arr) => acc + (arr?.length || 0), 0);
@@ -646,6 +665,39 @@ export default function StudentDetailPage({ params }) {
                       </td>
                       <td className="px-3 py-2.5 text-center whitespace-nowrap">
                         <div className="flex items-center justify-center gap-1">
+                          {!(reg.checkedOut || reg.checkedOutAt || reg.status === 'completed') && (
+                            <button
+                              onClick={async () => {
+                                const confirmed = await showConfirm({
+                                  title: 'ยืนยันจบกิจกรรม (เช็คเอาต์)',
+                                  message: `ต้องการเปลี่ยนสถานะกิจกรรม "${activity?.name || 'กิจกรรม'}" เป็น "จบกิจกรรมแล้ว (เช็คเอาต์แล้ว)" ทันทีหรือไม่?`,
+                                  type: 'info',
+                                  confirmText: 'ยืนยันจบกิจกรรม',
+                                  cancelText: 'ยกเลิก'
+                                });
+                                if (confirmed) {
+                                  try {
+                                    await updateDoc(doc(db, 'registrations', reg.id), {
+                                      status: 'completed',
+                                      queueStatus: 'completed',
+                                      completedAt: serverTimestamp(),
+                                      checkedOut: true,
+                                      checkedOutAt: serverTimestamp(),
+                                      checkedOutBy: 'admin_manual'
+                                    });
+                                    showToast({ message: 'อัปเดตสถานะจบกิจกรรมเรียบร้อยแล้ว', type: 'success' });
+                                    fetchStudentData();
+                                  } catch (err) {
+                                    showAlert({ title: 'เกิดข้อผิดพลาด', message: err.message, type: 'error' });
+                                  }
+                                }
+                              }}
+                              className="p-1 text-purple-600 hover:bg-purple-50 rounded border border-transparent hover:border-purple-200 transition-colors cursor-pointer"
+                              title="จบกิจกรรม / เช็คเอาต์คนนี้ทันที"
+                            >
+                              🏁
+                            </button>
+                          )}
                           <button
                             onClick={() => {
                               const newUrl = prompt('ระบุ URL ลิงก์เกียรติบัตรสำหรับกิจกรรมนี้:', reg.certificateUrl || '');

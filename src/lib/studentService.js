@@ -398,3 +398,105 @@ export async function deleteStudentProfile(nationalId, lineUserId) {
 
   await batch.commit();
 }
+
+/**
+ * อัปเดตเลขบัตรประชาชนใหม่ พร้อมทำการ Cascade ไปยังทุก registrations และ profiles ที่เกี่ยวข้อง
+ * รองรับทั้งกรณีเด็กเปลี่ยนเอง และ Admin แก้ไขให้
+ * @param {object} params
+ * @param {string} params.oldNationalId - เลขบัตรประชาชนเดิม (ถ้ามี)
+ * @param {string} params.newNationalId - เลขบัตรประชาชนใหม่ 13 หลัก
+ * @param {string} [params.lineUserId] - LINE User ID
+ * @param {object} [params.profileData] - ข้อมูลโปรไฟล์อื่นๆ ที่ต้องการอัปเดตร่วมด้วย
+ */
+export async function updateStudentNationalId({
+  oldNationalId,
+  newNationalId,
+  lineUserId = null,
+  profileData = {}
+}) {
+  const trimmedNewNat = newNationalId?.trim();
+  const trimmedOldNat = oldNationalId?.trim();
+
+  if (!trimmedNewNat || trimmedNewNat.length !== 13 || !/^\d{13}$/.test(trimmedNewNat)) {
+    throw new Error('เลขประจำตัวประชาชนต้องเป็นตัวเลข 13 หลัก');
+  }
+
+  // 1. ตรวจสอบความซ้ำซ้อนกับผู้อื่น (ยกเว้น lineUserId และเอกสารที่เป็นของบัตรเก่า)
+  const isDuplicate = await checkDuplicateNationalId(trimmedNewNat, lineUserId || trimmedOldNat);
+  if (isDuplicate) {
+    throw new Error(`เลขประจำตัวประชาชน ${trimmedNewNat} ซ้ำซ้อนกับผู้ใช้อื่นในระบบ`);
+  }
+
+  const batch = writeBatch(db);
+
+  // 2. อัปเดต/ย้ายข้อมูลใน studentProfiles
+  const targetDocId = lineUserId || trimmedNewNat;
+  const targetDocRef = doc(db, COLLECTION_NAME, targetDocId);
+
+  const updatedProfile = {
+    ...profileData,
+    nationalId: trimmedNewNat,
+    updatedAt: serverTimestamp()
+  };
+  if (lineUserId) updatedProfile.lineUserId = lineUserId;
+
+  batch.set(targetDocRef, updatedProfile, { merge: true });
+
+  // หาก doc ID เดิมเป็นเลขบัตรเก่า และไม่ใช่ targetDocId ให้ลบ doc เก่าออกเพื่อไม่ให้เป็น duplicate
+  if (trimmedOldNat && trimmedOldNat !== targetDocId) {
+    const oldDocRef = doc(db, COLLECTION_NAME, trimmedOldNat);
+    batch.delete(oldDocRef);
+  }
+
+  // ลบเอกสาร studentProfiles อื่นๆ ที่มี nationalId == trimmedOldNat (ถ้าไม่ใช่ doc ปัจจุบัน)
+  if (trimmedOldNat && trimmedOldNat !== trimmedNewNat) {
+    const oldSnap = await getDocs(query(collection(db, COLLECTION_NAME), where('nationalId', '==', trimmedOldNat)));
+    oldSnap.forEach(d => {
+      if (d.id !== targetDocId) {
+        batch.delete(d.ref);
+      }
+    });
+  }
+
+  // 3. Cascade อัปเดต registrations ทั้งหมด
+  // ค้นหา registrations ที่ตรงกับ lineUserId หรือตรงกับ oldNationalId หรือ newNationalId
+  const regDocMap = new Map();
+
+  if (lineUserId) {
+    const snapLine = await getDocs(query(collection(db, 'registrations'), where('lineUserId', '==', lineUserId)));
+    snapLine.forEach(d => regDocMap.set(d.id, d));
+  }
+
+  if (trimmedOldNat) {
+    const snapOld = await getDocs(query(collection(db, 'registrations'), where('nationalId', '==', trimmedOldNat)));
+    snapOld.forEach(d => regDocMap.set(d.id, d));
+  }
+
+  if (trimmedNewNat) {
+    const snapNew = await getDocs(query(collection(db, 'registrations'), where('nationalId', '==', trimmedNewNat)));
+    snapNew.forEach(d => regDocMap.set(d.id, d));
+  }
+
+  // ทำการอัปเดต nationalId ใหม่ลงในทุก registration ที่พบ
+  regDocMap.forEach((docSnap) => {
+    const regUpdates = {
+      nationalId: trimmedNewNat,
+      updatedAt: serverTimestamp()
+    };
+    if (lineUserId) regUpdates.lineUserId = lineUserId;
+    if (profileData.fullName) regUpdates.fullName = profileData.fullName;
+    if (profileData.fullNameEn) regUpdates.fullNameEn = profileData.fullNameEn;
+    if (profileData.studentId !== undefined) regUpdates.studentId = profileData.studentId;
+
+    batch.update(docSnap.ref, regUpdates);
+  });
+
+  await batch.commit();
+
+  return {
+    ...profileData,
+    nationalId: trimmedNewNat,
+    lineUserId: lineUserId || null
+  };
+}
+
