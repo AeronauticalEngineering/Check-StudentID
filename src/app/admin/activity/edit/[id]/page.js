@@ -501,7 +501,7 @@ export default function EditActivityPage({ params }) {
         } : null,
         isRegistrationOpen,
         enablePostActivity,
-        enableCertificate: enablePostActivity ? enableCertificate : false,
+        enableCertificate: enablePostActivity ? Boolean(enableCertificate) : false,
         certificateButtonLabel: certificateButtonLabel.trim() || 'Certificate',
         certificateMode: certificateMode || 'template',
         certificateProjectName: certificateProjectName.trim(),

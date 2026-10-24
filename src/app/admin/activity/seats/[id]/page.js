@@ -11,6 +11,7 @@ import Papa from 'papaparse';
 import { CSVLink } from 'react-csv';
 import ExaminerScoringModal from '../../../../../components/ExaminerScoringModal';
 import { downloadCertificatePNG, downloadCertificatePDF, getCertificatePreviewDataUrl } from '../../../../../lib/certificateGenerator';
+import { StationSvgIcon } from '../../../../../components/StationIcons';
 
 function formatSeatLabel(zoneName, runningNumber, labelFormat) {
   const numStr = runningNumber.toString().padStart(3, '0');
@@ -118,6 +119,7 @@ export default function SeatAssignmentPage({ params }) {
     url: ''
   });
   const [certPreview, setCertPreview] = useState({ isOpen: false, data: null, previewUrl: '', isGenerating: false });
+  const [stationModalReg, setStationModalReg] = useState(null);
 
   const [editStates, setEditStates] = useState({});
   const [originalEditStates, setOriginalEditStates] = useState({});
@@ -229,6 +231,14 @@ export default function SeatAssignmentPage({ params }) {
       if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
       if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
       return 0;
+    }
+
+    if (sortConfig.key === 'passedStations') {
+      const stationsList = activity?.stations || [];
+      const getPassedCount = (r) => stationsList.filter(s => r.passedStations?.[s.id]?.passed).length;
+      const valA = getPassedCount(a);
+      const valB = getPassedCount(b);
+      return sortConfig.direction === 'asc' ? valA - valB : valB - valA;
     }
 
     const valA = (a[sortConfig.key] || '').toString().toLowerCase();
@@ -460,6 +470,96 @@ export default function SeatAssignmentPage({ params }) {
       showAlert({ title: 'เกิดข้อผิดพลาด', message: err.message, type: 'error' });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleToggleStationForReg = async (reg, station) => {
+    if (!reg || !station) return;
+    try {
+      const regRef = doc(db, 'registrations', reg.id);
+      const passedStations = { ...(reg.passedStations || {}) };
+      const wasPassed = Boolean(passedStations[station.id]?.passed);
+
+      if (wasPassed) {
+        delete passedStations[station.id];
+      } else {
+        passedStations[station.id] = {
+          passed: true,
+          timestamp: new Date().toISOString(),
+          stationName: station.name,
+          by: 'Admin'
+        };
+      }
+
+      const allStations = activity?.stations || [];
+      const totalCount = allStations.length;
+      const completedCount = allStations.filter(s => passedStations[s.id]?.passed).length;
+      const completedAllStations = totalCount > 0 && completedCount === totalCount;
+
+      const updatePayload = {
+        passedStations,
+        completedAllStations
+      };
+
+      await updateDoc(regRef, updatePayload);
+
+      setRegistrants(prev => prev.map(r => r.id === reg.id ? {
+        ...r,
+        passedStations,
+        completedAllStations
+      } : r));
+
+      setStationModalReg(prev => prev && prev.id === reg.id ? {
+        ...prev,
+        passedStations,
+        completedAllStations
+      } : prev);
+    } catch (err) {
+      console.error('Error toggling station status:', err);
+      showAlert({ title: 'เกิดข้อผิดพลาด', message: 'ไม่สามารถบันทึกสถานะฐานกิจกรรมได้: ' + err.message, type: 'error' });
+    }
+  };
+
+  const handleBatchSetAllStations = async (reg, markPassed) => {
+    if (!reg) return;
+    try {
+      const regRef = doc(db, 'registrations', reg.id);
+      const allStations = activity?.stations || [];
+      let passedStations = {};
+
+      if (markPassed) {
+        allStations.forEach(s => {
+          passedStations[s.id] = {
+            passed: true,
+            timestamp: new Date().toISOString(),
+            stationName: s.name,
+            by: 'Admin'
+          };
+        });
+      }
+
+      const completedAllStations = markPassed && allStations.length > 0;
+      const updatePayload = {
+        passedStations,
+        completedAllStations
+      };
+
+      await updateDoc(regRef, updatePayload);
+
+      setRegistrants(prev => prev.map(r => r.id === reg.id ? {
+        ...r,
+        passedStations,
+        completedAllStations
+      } : r));
+
+      setStationModalReg(prev => prev && prev.id === reg.id ? {
+        ...prev,
+        passedStations,
+        completedAllStations
+      } : prev);
+    } catch (err) {
+      console.error('Error batch setting stations:', err);
+      showAlert({ title: 'เกิดข้อผิดพลาด', message: 'ไม่สามารถบันทึกสถานะฐานกิจกรรมได้: ' + err.message, type: 'error' });
     }
   };
 
@@ -1212,6 +1312,19 @@ export default function SeatAssignmentPage({ params }) {
   const isGeneralEvent = !isQueueType && !isSeatType;
   const quotaOptions = activity?.scoringConfig?.quotaCriteriaList || [];
 
+  const hasStations = Boolean(activity?.enableStations && (activity?.stations?.length || 0) > 0);
+  const hasCertificate = activity?.enableCertificate !== undefined
+    ? Boolean(activity.enableCertificate && activity?.enablePostActivity !== false)
+    : Boolean(activity?.enablePostActivity !== false && (activity?.certificateTemplateUrl || activity?.certificateMode === 'individual_link'));
+
+  const visibleColumnsCount = 9
+    + (isQueueType ? 2 : 0)
+    + (isSeatType ? 1 : 0)
+    + (activity?.enableScoring ? 1 : 0)
+    + (hasStations ? 1 : 0)
+    + (hasCertificate ? 1 : 0)
+    + 1; // จัดการ
+
   const csvExportHeaders = [
     { label: "ลำดับ", key: "index" },
     { label: "ชื่อ-สกุล (ไทย)", key: "fullName" },
@@ -1221,8 +1334,15 @@ export default function SeatAssignmentPage({ params }) {
     { label: "ประเภทโควตา", key: "quota" },
     { label: "สถานะ", key: "status" },
     { label: "หลักสูตร", key: "course" },
-    { label: "สิทธิ์เกียรติบัตร", key: "certificateApproved" },
-    { label: "ลิงก์เกียรติบัตร", key: "certificateUrl" },
+    ...(hasStations ? [
+      { label: "ผ่านฐาน (จำนวน)", key: "passedStationsCount" },
+      { label: "กิจกรรมฐานทั้งหมด", key: "totalStationsCount" },
+      { label: "สถานะผ่านทุกฐาน", key: "completedAllStations" }
+    ] : []),
+    ...(hasCertificate ? [
+      { label: "สิทธิ์เกียรติบัตร", key: "certificateApproved" },
+      { label: "ลิงก์เกียรติบัตร", key: "certificateUrl" }
+    ] : []),
     ...(isSeatType ? [{ label: "เลขที่นั่ง", key: "seatNumber" }] : []),
     ...(isQueueType ? [
       { label: "ช่วงเวลา", key: "timeSlot" },
@@ -1248,6 +1368,10 @@ export default function SeatAssignmentPage({ params }) {
   const csvExportData = registrants.map((reg, idx) => {
     const evalScore = reg.evaluationScore || {};
     const attached = reg.attachedDocuments || {};
+    const allStations = activity?.stations || [];
+    const passedStations = reg.passedStations || {};
+    const passedCount = allStations.filter(s => passedStations[s.id]?.passed).length;
+
     const row = {
       index: idx + 1,
       fullName: reg.fullName || '',
@@ -1257,8 +1381,17 @@ export default function SeatAssignmentPage({ params }) {
       quota: reg.quota || evalScore.quota || '-',
       status: translateStatus(reg.status),
       course: reg.course || '',
-      certificateApproved: reg.certificateApproved ? 'อนุมัติ' : 'ยังไม่อนุมัติ',
-      certificateUrl: reg.certificateUrl || '',
+      ...(hasStations ? {
+        passedStationsCount: passedCount,
+        totalStationsCount: allStations.length,
+        completedAllStations: (allStations.length > 0 && passedCount === allStations.length)
+          ? 'ผ่านครบทุกฐาน'
+          : (passedCount > 0 ? `ผ่าน ${passedCount}/${allStations.length}` : 'ยังไม่ผ่าน')
+      } : {}),
+      ...(hasCertificate ? {
+        certificateApproved: reg.certificateApproved ? 'อนุมัติ' : 'ยังไม่อนุมัติ',
+        certificateUrl: reg.certificateUrl || ''
+      } : {}),
       seatNumber: reg.seatNumber || '',
       timeSlot: reg.timeSlot || '',
       displayQueueNumber: reg.displayQueueNumber || '',
@@ -1484,7 +1617,7 @@ export default function SeatAssignmentPage({ params }) {
                 className="w-full text-xs text-slate-600 file:mr-2 file:py-1 file:px-2.5 file:rounded file:border file:border-slate-200 file:text-xs file:bg-slate-50 file:text-slate-700 hover:file:bg-slate-100 cursor-pointer border border-slate-200 rounded p-1 bg-white"
               />
               <span className="text-[10px] text-slate-400 block mt-1">
-                Header: fullName (ไทย), fullNameEn (อังกฤษ), studentId, nationalId, course, quota{isSeatType ? ', seatNumber' : ''}{isQueueType ? ', timeSlot, displayQueueNumber' : ''}, certificateApproved (สิทธิ์เกียรติบัตร), certificateUrl, status
+                Header: fullName (ไทย), fullNameEn (อังกฤษ), studentId, nationalId, course, quota{isSeatType ? ', seatNumber' : ''}{isQueueType ? ', timeSlot, displayQueueNumber' : ''}{hasCertificate ? ', certificateApproved (สิทธิ์เกียรติบัตร), certificateUrl' : ''}, status
               </span>
             </div>
           </div>
@@ -1643,15 +1776,17 @@ export default function SeatAssignmentPage({ params }) {
               </div>
             )}
 
-            <div>
-              <input
-                type="url"
-                value={form.certificateUrl}
-                onChange={e => setForm({ ...form, certificateUrl: e.target.value })}
-                placeholder="ลิงก์เกียรติบัตรรายบุคคล (เว้นว่างได้)"
-                className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-800 outline-none focus:border-slate-400"
-              />
-            </div>
+            {hasCertificate && (
+              <div>
+                <input
+                  type="url"
+                  value={form.certificateUrl}
+                  onChange={e => setForm({ ...form, certificateUrl: e.target.value })}
+                  placeholder="ลิงก์เกียรติบัตรรายบุคคล (เว้นว่างได้)"
+                  className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-800 outline-none focus:border-slate-400"
+                />
+              </div>
+            )}
 
             <button
               type="submit"
@@ -1774,25 +1909,29 @@ export default function SeatAssignmentPage({ params }) {
                 <span className="text-xs font-semibold text-rose-800">
                   เลือกอยู่ {selectedIds.length} รายการ:
                 </span>
-                <button
-                  type="button"
-                  onClick={() => handleBatchToggleCertificate(true)}
-                  disabled={isLoading}
-                  className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded transition-colors shadow-xs flex items-center gap-1 cursor-pointer"
-                  title="อนุมัติเกียรติบัตรให้นักเรียนที่เลือกทั้งหมด"
-                >
-                  <span>✓</span>
-                  <span>อนุมัติ ({selectedIds.length})</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleBatchToggleCertificate(false)}
-                  disabled={isLoading}
-                  className="px-2 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-medium rounded transition-colors cursor-pointer"
-                  title="ปิดสิทธิ์เกียรติบัตรของนักเรียนที่เลือก"
-                >
-                  ปิดสิทธิ์ ({selectedIds.length})
-                </button>
+                {hasCertificate && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleBatchToggleCertificate(true)}
+                      disabled={isLoading}
+                      className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded transition-colors shadow-xs flex items-center gap-1 cursor-pointer"
+                      title="อนุมัติเกียรติบัตรให้นักเรียนที่เลือกทั้งหมด"
+                    >
+                      <span>✓</span>
+                      <span>อนุมัติ ({selectedIds.length})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleBatchToggleCertificate(false)}
+                      disabled={isLoading}
+                      className="px-2 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-medium rounded transition-colors cursor-pointer"
+                      title="ปิดสิทธิ์เกียรติบัตรของนักเรียนที่เลือก"
+                    >
+                      ปิดสิทธิ์ ({selectedIds.length})
+                    </button>
+                  </>
+                )}
                 <button
                   onClick={handleDeleteSelected}
                   disabled={isLoading}
@@ -1911,12 +2050,23 @@ export default function SeatAssignmentPage({ params }) {
                   </th>
                 )}
 
-                <th className="px-2.5 py-2.5 w-28 text-center border-r border-slate-200 cursor-pointer hover:text-slate-900" onClick={() => handleSort('certificateApproved')}>
-                  <div className="flex items-center justify-between">
-                    <span>เกียรติบัตร</span>
-                    <SortIcon columnKey="certificateApproved" />
-                  </div>
-                </th>
+                {hasStations && (
+                  <th className="px-2.5 py-2.5 w-32 text-center border-r border-slate-200 cursor-pointer hover:text-slate-900" onClick={() => handleSort('passedStations')}>
+                    <div className="flex items-center justify-between">
+                      <span>กิจกรรมฐาน</span>
+                      <SortIcon columnKey="passedStations" />
+                    </div>
+                  </th>
+                )}
+
+                {hasCertificate && (
+                  <th className="px-2.5 py-2.5 w-28 text-center border-r border-slate-200 cursor-pointer hover:text-slate-900" onClick={() => handleSort('certificateApproved')}>
+                    <div className="flex items-center justify-between">
+                      <span>เกียรติบัตร</span>
+                      <SortIcon columnKey="certificateApproved" />
+                    </div>
+                  </th>
+                )}
 
                 <th className="px-3 py-2.5 w-16 text-center">จัดการ</th>
               </tr>
@@ -2143,125 +2293,192 @@ export default function SeatAssignmentPage({ params }) {
                       </td>
                     )}
 
-                    <td className="px-3 py-2 text-center border-r border-slate-100 whitespace-nowrap">
-                      {isEditing ? (
-                        <div className="flex items-center gap-2">
-                          <label className="inline-flex items-center gap-1 cursor-pointer text-xs">
-                            <input
-                              type="checkbox"
-                              checked={editStates[reg.id]?.certificateApproved || false}
-                              onChange={(e) => handleInputChange(reg.id, 'certificateApproved', e.target.checked)}
-                              className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
-                            />
-                            <span className="text-[11px] text-slate-600">อนุมัติ</span>
-                          </label>
-                          <input
-                            type="url"
-                            value={editStates[reg.id]?.certificateUrl || ''}
-                            onChange={(e) => handleInputChange(reg.id, 'certificateUrl', e.target.value)}
-                            placeholder="https://..."
-                            className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs"
-                          />
-                        </div>
-                      ) : (
-                        <div className="flex items-center justify-center gap-1.5">
-                          {/* Checklist Mini Toggle Switch */}
-                          <button
-                            type="button"
-                            onClick={() => handleToggleCertificateApproved(reg.id, reg.certificateApproved)}
-                            className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                              reg.certificateApproved ? 'bg-emerald-500' : 'bg-slate-300'
-                            }`}
-                            title={reg.certificateApproved ? 'อนุมัติเกียรติบัตรแล้ว (คลิกเพื่อปิดสิทธิ์)' : 'คลิกเพื่ออนุมัติเกียรติบัตร'}
-                          >
-                            <span
-                              aria-hidden="true"
-                              className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow-xs transition duration-200 ease-in-out ${
-                                reg.certificateApproved ? 'translate-x-3' : 'translate-x-0.5'
-                              }`}
-                            />
-                          </button>
+                    {hasStations && (
+                      <td className="px-2.5 py-2 text-center border-r border-slate-100 whitespace-nowrap">
+                        {(() => {
+                          const allStations = activity?.stations || [];
+                          const totalCount = allStations.length;
+                          const passedStations = reg.passedStations || {};
+                          const passedCount = allStations.filter(s => passedStations[s.id]?.passed).length;
+                          const isComplete = totalCount > 0 && passedCount === totalCount;
 
-                          {/* Template Certificate Preview Button (Available when mode is template AND template uploaded) */}
-                          {activity?.certificateMode !== 'individual_link' && activity?.certificateTemplateUrl && (
+                          return (
+                            <div className="inline-flex items-center justify-center gap-1.5">
+                              {allStations.map((st, idx) => {
+                                const isPassed = Boolean(passedStations[st.id]?.passed);
+                                const passedInfo = passedStations[st.id];
+                                const timeStr = passedInfo?.timestamp
+                                  ? new Date(passedInfo.timestamp).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' น.'
+                                  : '';
+
+                                return (
+                                  <button
+                                    key={st.id || idx}
+                                    type="button"
+                                    onClick={() => handleToggleStationForReg(reg, st)}
+                                    className={`relative w-7 h-7 rounded-full flex items-center justify-center transition-all cursor-pointer border ${
+                                      isPassed
+                                        ? 'bg-emerald-500 text-white border-emerald-600 shadow-2xs hover:bg-emerald-600 hover:scale-105 active:scale-95'
+                                        : 'bg-slate-100 text-slate-400 border-slate-200 hover:bg-slate-200 hover:text-slate-600 hover:scale-105 active:scale-95'
+                                    }`}
+                                    title={`ฐานที่ ${idx + 1}: ${st.name} • ${isPassed ? `เข้าแล้ว (${timeStr})` : 'ยังไม่เข้า'} (คลิกเพื่อเปลี่ยนสถานะ)`}
+                                  >
+                                    <StationSvgIcon
+                                      iconId={st.icon}
+                                      className="w-3.5 h-3.5"
+                                      strokeWidth={2}
+                                    />
+                                    {isPassed && (
+                                      <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-white text-emerald-600 rounded-full flex items-center justify-center text-[9px] font-black shadow-xs leading-none">
+                                        ✓
+                                      </span>
+                                    )}
+                                  </button>
+                                );
+                              })}
+
+                              {/* Quick Counter / Modal Opener */}
+                              <button
+                                type="button"
+                                onClick={() => setStationModalReg(reg)}
+                                className={`ml-0.5 px-1.5 py-0.5 rounded text-[11px] font-semibold transition-colors cursor-pointer ${
+                                  isComplete
+                                    ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200'
+                                    : passedCount > 0
+                                    ? 'text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200'
+                                    : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
+                                }`}
+                                title={`คลิกเพื่อดูรายละเอียดและเวลาเข้าฐานทั้งหมด (${passedCount}/${totalCount} ฐาน)`}
+                              >
+                                {passedCount}/{totalCount}
+                              </button>
+                            </div>
+                          );
+                        })()}
+                      </td>
+                    )}
+
+                    {hasCertificate && (
+                      <td className="px-3 py-2 text-center border-r border-slate-100 whitespace-nowrap">
+                        {isEditing ? (
+                          <div className="flex items-center gap-2">
+                            <label className="inline-flex items-center gap-1 cursor-pointer text-xs">
+                              <input
+                                type="checkbox"
+                                checked={editStates[reg.id]?.certificateApproved || false}
+                                onChange={(e) => handleInputChange(reg.id, 'certificateApproved', e.target.checked)}
+                                className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                              />
+                              <span className="text-[11px] text-slate-600">อนุมัติ</span>
+                            </label>
+                            <input
+                              type="url"
+                              value={editStates[reg.id]?.certificateUrl || ''}
+                              onChange={(e) => handleInputChange(reg.id, 'certificateUrl', e.target.value)}
+                              placeholder="https://..."
+                              className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs"
+                            />
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center gap-1.5">
+                            {/* Checklist Mini Toggle Switch */}
                             <button
                               type="button"
-                              onClick={async () => {
-                                const certData = {
-                                  templateUrl: activity.certificateTemplateUrl,
-                                  fullName: reg.fullName,
-                                  fullNameEn: reg.fullNameEn,
-                                  projectName: activity.certificateProjectName || activity.name,
-                                  dateText: activity.certificateDateText || '',
-                                  certificateLayout: activity.certificateLayout || null
-                                };
-                                setCertPreview({ isOpen: true, data: certData, previewUrl: '', isGenerating: true });
-                                try {
-                                  const url = await getCertificatePreviewDataUrl(certData);
-                                  setCertPreview({ isOpen: true, data: certData, previewUrl: url, isGenerating: false });
-                                } catch (e) {
-                                  console.error('Cert preview error:', e);
-                                  setCertPreview(p => ({ ...p, isGenerating: false }));
-                                }
-                              }}
-                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] transition-colors cursor-pointer ${
-                                reg.certificateApproved
-                                  ? 'font-medium bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200'
-                                  : 'font-normal bg-slate-50 hover:bg-slate-100 text-slate-500 border border-slate-200'
+                              onClick={() => handleToggleCertificateApproved(reg.id, reg.certificateApproved)}
+                              className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                                reg.certificateApproved ? 'bg-emerald-500' : 'bg-slate-300'
                               }`}
-                              title={reg.certificateApproved ? 'ดูตัวอย่าง / ดาวน์โหลดใบประกาศ' : 'ดูตัวอย่างใบประกาศ (ยังไม่อนุมัติ)'}
+                              title={reg.certificateApproved ? 'อนุมัติเกียรติบัตรแล้ว (คลิกเพื่อปิดสิทธิ์)' : 'คลิกเพื่ออนุมัติเกียรติบัตร'}
                             >
-                              <span>📜</span>
-                              <span>ใบประกาศ</span>
+                              <span
+                                aria-hidden="true"
+                                className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow-xs transition duration-200 ease-in-out ${
+                                  reg.certificateApproved ? 'translate-x-3' : 'translate-x-0.5'
+                                }`}
+                              />
                             </button>
-                          )}
 
-                          {reg.certificateUrl ? (
-                            <>
-                              <a
-                                href={reg.certificateUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition-colors"
-                                title={reg.certificateUrl}
-                              >
-                                <span>🔗</span>
-                                <span>เปิดดู</span>
-                              </a>
+                            {/* Template Certificate Preview Button (Available when mode is template AND template uploaded) */}
+                            {activity?.certificateMode !== 'individual_link' && activity?.certificateTemplateUrl && (
                               <button
                                 type="button"
-                                onClick={() => setCertModal({
-                                  isOpen: true,
-                                  regId: reg.id,
-                                  studentName: reg.fullName,
-                                  url: reg.certificateUrl || ''
-                                })}
-                                className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded transition-colors text-xs cursor-pointer"
-                                title="แก้ไขลิงก์เกียรติบัตร"
+                                onClick={async () => {
+                                  const certData = {
+                                    templateUrl: activity.certificateTemplateUrl,
+                                    fullName: reg.fullName,
+                                    fullNameEn: reg.fullNameEn,
+                                    projectName: activity.certificateProjectName || activity.name,
+                                    dateText: activity.certificateDateText || '',
+                                    certificateLayout: activity.certificateLayout || null
+                                  };
+                                  setCertPreview({ isOpen: true, data: certData, previewUrl: '', isGenerating: true });
+                                  try {
+                                    const url = await getCertificatePreviewDataUrl(certData);
+                                    setCertPreview({ isOpen: true, data: certData, previewUrl: url, isGenerating: false });
+                                  } catch (e) {
+                                    console.error('Cert preview error:', e);
+                                    setCertPreview(p => ({ ...p, isGenerating: false }));
+                                  }
+                                }}
+                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] transition-colors cursor-pointer ${
+                                  reg.certificateApproved
+                                    ? 'font-medium bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200'
+                                    : 'font-normal bg-slate-50 hover:bg-slate-100 text-slate-500 border border-slate-200'
+                                }`}
+                                title={reg.certificateApproved ? 'ดูตัวอย่าง / ดาวน์โหลดใบประกาศ' : 'ดูตัวอย่างใบประกาศ (ยังไม่อนุมัติ)'}
                               >
-                                ✏️
+                                <span>📜</span>
+                                <span>ใบประกาศ</span>
                               </button>
-                            </>
-                          ) : (
-                            (activity?.certificateMode === 'individual_link' || !activity?.certificateTemplateUrl) && (
-                              <button
-                                type="button"
-                                onClick={() => setCertModal({
-                                  isOpen: true,
-                                  regId: reg.id,
-                                  studentName: reg.fullName,
-                                  url: ''
-                                })}
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs text-slate-500 hover:text-[#000946] bg-slate-50 hover:bg-slate-100 border border-slate-200 transition-colors cursor-pointer"
-                              >
-                                <span>+</span>
-                                <span>แนบลิงก์</span>
-                              </button>
-                            )
-                          )}
-                        </div>
-                      )}
-                    </td>
+                            )}
+
+                            {reg.certificateUrl ? (
+                              <>
+                                <a
+                                  href={reg.certificateUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition-colors"
+                                  title={reg.certificateUrl}
+                                >
+                                  <span>🔗</span>
+                                  <span>เปิดดู</span>
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={() => setCertModal({
+                                    isOpen: true,
+                                    regId: reg.id,
+                                    studentName: reg.fullName,
+                                    url: reg.certificateUrl || ''
+                                  })}
+                                  className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded transition-colors text-xs cursor-pointer"
+                                  title="แก้ไขลิงก์เกียรติบัตร"
+                                >
+                                  ✏️
+                                </button>
+                              </>
+                            ) : (
+                              (activity?.certificateMode === 'individual_link' || !activity?.certificateTemplateUrl) && (
+                                <button
+                                  type="button"
+                                  onClick={() => setCertModal({
+                                    isOpen: true,
+                                    regId: reg.id,
+                                    studentName: reg.fullName,
+                                    url: ''
+                                  })}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs text-slate-500 hover:text-[#000946] bg-slate-50 hover:bg-slate-100 border border-slate-200 transition-colors cursor-pointer"
+                                >
+                                  <span>+</span>
+                                  <span>แนบลิงก์</span>
+                                </button>
+                              )
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    )}
 
                     <td className="px-3 py-2 text-center whitespace-nowrap">
                       <button
@@ -2278,7 +2495,7 @@ export default function SeatAssignmentPage({ params }) {
 
               {sortedRegistrants.length === 0 && (
                 <tr>
-                  <td colSpan={activity?.type === 'queue' ? (activity?.enableScoring ? 11 : 10) : (activity?.enableScoring ? 10 : 9)} className="p-8 text-center text-slate-400 text-xs">
+                  <td colSpan={visibleColumnsCount} className="p-8 text-center text-slate-400 text-xs">
                     ยังไม่มีผู้ลงทะเบียนในกิจกรรมนี้
                   </td>
                 </tr>
@@ -2544,6 +2761,172 @@ export default function SeatAssignmentPage({ params }) {
                   ดาวน์โหลด PDF
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Station Progress & Stamp Management Modal */}
+      {stationModalReg && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-xs flex justify-center items-center z-50 p-4 animate-in fade-in"
+          onClick={() => setStationModalReg(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-lg w-full p-5 space-y-4 font-sans"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-md bg-[#000946] text-white flex items-center justify-center text-xs">
+                    ⚡
+                  </span>
+                  <span>บันทึกสถานะฐานกิจกรรม</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  ผู้เข้าร่วม: <strong className="text-slate-800">{stationModalReg.fullName}</strong>
+                  {stationModalReg.studentId ? ` (${stationModalReg.studentId})` : ''}
+                  {stationModalReg.course ? ` • ${stationModalReg.course}` : ''}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStationModalReg(null)}
+                className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full text-sm font-bold cursor-pointer transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Progress Bar & Quick Actions */}
+            {(() => {
+              const allStations = activity?.stations || [];
+              const totalCount = allStations.length;
+              const passedStations = stationModalReg.passedStations || {};
+              const passedCount = allStations.filter(s => passedStations[s.id]?.passed).length;
+              const percent = totalCount > 0 ? Math.round((passedCount / totalCount) * 100) : 0;
+              const isAllPassed = totalCount > 0 && passedCount === totalCount;
+
+              return (
+                <div className="space-y-3">
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-600 font-medium">
+                        ความคืบหน้า: <strong className={isAllPassed ? 'text-emerald-700' : 'text-slate-900'}>{passedCount} / {totalCount} ฐาน</strong>
+                      </span>
+                      <span className={`font-semibold ${isAllPassed ? 'text-emerald-600' : 'text-slate-700'}`}>
+                        {percent}%
+                      </span>
+                    </div>
+                    {/* Progress Track */}
+                    <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                      <div
+                        className={`h-full transition-all duration-300 rounded-full ${
+                          isAllPassed ? 'bg-emerald-500' : 'bg-[#FF741F]'
+                        }`}
+                        style={{ width: `${percent}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Batch Actions for Quick Stamp/Reset */}
+                  <div className="flex items-center justify-between gap-2 px-1">
+                    <span className="text-[11px] text-slate-500">คลิกที่แต่ละฐานเพื่อบันทึกผ่านหรือยกเลิก:</span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleBatchSetAllStations(stationModalReg, true)}
+                        className="px-2 py-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-[11px] font-medium rounded transition-colors cursor-pointer"
+                        title="ทำเครื่องหมายผ่านทุกฐานทันที"
+                      >
+                        ✓ ผ่านทุกฐาน
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleBatchSetAllStations(stationModalReg, false)}
+                        className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200 text-[11px] font-medium rounded transition-colors cursor-pointer"
+                        title="รีเซ็ตสถานะทุกฐาน"
+                      >
+                        รีเซ็ต
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Station List */}
+                  <div className="space-y-1.5 max-h-[300px] overflow-y-auto pr-1">
+                    {allStations.map((st, idx) => {
+                      const isPassed = Boolean(passedStations[st.id]?.passed);
+                      const passedInfo = passedStations[st.id];
+
+                      return (
+                        <div
+                          key={st.id || idx}
+                          onClick={() => handleToggleStationForReg(stationModalReg, st)}
+                          className={`flex items-center justify-between p-2.5 rounded-xl border transition-all cursor-pointer ${
+                            isPassed
+                              ? 'bg-emerald-50/70 border-emerald-200 hover:bg-emerald-100/70'
+                              : 'bg-white border-slate-200 hover:bg-slate-50 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div
+                              className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${
+                                isPassed
+                                  ? 'bg-emerald-500 text-white border-emerald-600 shadow-xs'
+                                  : 'bg-slate-100 text-slate-500 border-slate-200'
+                              }`}
+                            >
+                              <StationSvgIcon iconId={st.icon} className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs font-semibold text-slate-800">
+                                  {idx + 1}. {st.name}
+                                </span>
+                              </div>
+                              {st.description && (
+                                <p className="text-[11px] text-slate-500 line-clamp-1">{st.description}</p>
+                              )}
+                              {isPassed && passedInfo?.timestamp && (
+                                <span className="text-[10px] text-emerald-600">
+                                  ผ่านเมื่อ: {new Date(passedInfo.timestamp).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {isPassed ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-full text-xs font-semibold border border-emerald-300">
+                                <span>✓</span>
+                                <span>ผ่านแล้ว</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 text-slate-500 rounded-full text-xs border border-slate-200">
+                                <span>○</span>
+                                <span>ยังไม่ผ่าน</span>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Modal Footer */}
+            <div className="flex justify-end pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setStationModalReg(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded-lg transition-colors cursor-pointer"
+              >
+                ปิดหน้าต่าง
+              </button>
             </div>
           </div>
         </div>
