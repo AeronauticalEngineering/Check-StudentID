@@ -20,6 +20,7 @@ import {
   createQueueCheckInSuccessFlex,
   createActivityCompleteFlex
 } from '../../../../lib/flexMessageTemplates';
+import { StationSvgIcon } from '../../../../components/StationIcons';
 
 // Synthesize pleasant success audio beep using Web Audio API
 const playBeep = (type = 'success') => {
@@ -62,7 +63,8 @@ export default function StationScannerPage({ params }) {
   const [isSettingStaff, setIsSettingStaff] = useState(false);
   const [tempStaffName, setTempStaffName] = useState('');
 
-  const [scanMode, setScanMode] = useState('check-in'); // 'check-in' | 'check-out'
+  const [scanMode, setScanMode] = useState('check-in'); // 'check-in' | 'station' | 'check-out'
+  const [selectedStationId, setSelectedStationId] = useState(''); // Current station selected for station mode
   const [scannerState, setScannerState] = useState('idle'); // idle, scanning, processing, success, error
   const [scanResult, setScanResult] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
@@ -102,6 +104,9 @@ export default function StationScannerPage({ params }) {
             ...actData,
             isQueueType: actData.type === 'queue' || actData.isQueueType
           });
+          if (actData.enableStations && Array.isArray(actData.stations) && actData.stations.length > 0) {
+            setSelectedStationId(actData.stations[0].id);
+          }
         } else {
           setErrorMessage('ไม่พบข้อมูลกิจกรรมนี้ในระบบ');
         }
@@ -351,6 +356,109 @@ export default function StationScannerPage({ params }) {
     }
   };
 
+  // Helper to execute Station Check-in
+  const executeStationCheckIn = async (regDocOrData, targetStationId = null) => {
+    setScannerState('processing');
+    setErrorMessage('');
+    const stId = targetStationId || selectedStationId;
+    if (!stId) {
+      playBeep('error');
+      setErrorMessage('กรุณาเลือกฐานกิจกรรมที่ต้องการสแกนก่อน');
+      setScannerState('error');
+      return;
+    }
+
+    const currentStation = (activity?.stations || []).find(s => s.id === stId);
+    const stationName = currentStation?.name || 'ฐานกิจกรรม';
+
+    try {
+      const regId = regDocOrData.id;
+      const regRef = doc(db, 'registrations', regId);
+      const regSnap = await getDoc(regRef);
+      if (!regSnap.exists()) throw new Error('ไม่พบข้อมูลผู้ลงทะเบียน');
+      const regData = regSnap.data();
+
+      // Check if student has checked in to the main event first
+      const hasPassedAnyStation = Object.keys(regData.passedStations || {}).length > 0;
+      const hasCheckedIn = regData.status === 'checked-in' || regData.status === 'completed' || regData.status === 'interviewing' || regData.checkedIn || regData.checkedInAt || hasPassedAnyStation;
+      if (!hasCheckedIn) {
+        playBeep('error');
+        const studentDisplay = `${regData.title || ''} ${regData.firstName || ''} ${regData.lastName || ''}`.trim() || regData.fullName || 'ผู้เข้าร่วม';
+        setErrorMessage(`⚠️ ${studentDisplay} ยังไม่ได้เช็คอินเข้างาน กรุณาเช็คอินที่จุดลงทะเบียนก่อนเข้าฐานกิจกรรม`);
+        setScannerState('error');
+        return;
+      }
+
+      // Check if student already passed this specific station
+      const passedStations = regData.passedStations || {};
+      if (passedStations[stId]?.passed) {
+        playBeep('error');
+        setScanResult({
+          ...regData,
+          id: regId,
+          alreadyPassedStation: true,
+          stationName
+        });
+        setScannerState('success');
+        return;
+      }
+
+      // Record station check-in
+      const updatedPassedStations = {
+        ...passedStations,
+        [stId]: {
+          passed: true,
+          timestamp: new Date().toISOString(),
+          stationName,
+          by: staffName || 'Station Staff'
+        }
+      };
+
+      // Check if student has completed all stations in activity
+      const allStations = activity?.stations || [];
+      const totalStationsCount = allStations.length;
+      const completedStationsCount = allStations.filter(s => updatedPassedStations[s.id]?.passed).length;
+      const completedAllStations = totalStationsCount > 0 && completedStationsCount === totalStationsCount;
+
+      const updatePayload = {
+        passedStations: updatedPassedStations,
+        completedAllStations,
+        updatedAt: serverTimestamp()
+      };
+
+      await updateDoc(regRef, updatePayload);
+
+      // Async Log
+      addDoc(collection(db, 'checkInLogs'), {
+        activityId,
+        activityName: activity?.name || '-',
+        studentName: `${regData.title || ''} ${regData.firstName || ''} ${regData.lastName || ''}`.trim() || regData.fullName || '-',
+        nationalId: regData.nationalId || '-',
+        status: `station-${stId}`,
+        stationName,
+        timestamp: serverTimestamp(),
+        adminId: staffName || 'Station Staff'
+      }).catch(e => console.warn('Failed to add station log:', e));
+
+      playBeep('success');
+      setScanResult({
+        ...regData,
+        ...updatePayload,
+        id: regId,
+        isStationSuccess: true,
+        stationName,
+        completedStationsCount,
+        totalStationsCount,
+        completedAllStations
+      });
+      setScannerState('success');
+    } catch (err) {
+      playBeep('error');
+      setErrorMessage(`เกิดข้อผิดพลาด: ${err.message}`);
+      setScannerState('error');
+    }
+  };
+
   // Execute Check-in Logic
   const processCheckIn = async (qrPayload) => {
     setScannerState('processing');
@@ -408,6 +516,12 @@ export default function StationScannerPage({ params }) {
       }
 
       const regData = regDoc.data();
+
+      // MODE: Station Activity Check-in
+      if (scanMode === 'station') {
+        await executeStationCheckIn({ id: regDoc.id, ...regData });
+        return;
+      }
 
       // AUTO-DETECT CHECK-OUT:
       // If QR code is an Exit QR (explicitAction === 'check-out') OR scanner mode is 'check-out'
@@ -651,9 +765,9 @@ export default function StationScannerPage({ params }) {
         </div>
       </header>
 
-      {/* Mode Selector: Check-in vs Check-out */}
-      <div className="bg-white border-b border-slate-200 px-4 py-2.5 flex items-center justify-center">
-        <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200 w-full max-w-md">
+      {/* Mode Selector: Check-in vs Station vs Check-out (ตรงตามรูปภาพที่คุณส่งมา) */}
+      <div className="bg-white border-b border-slate-200 px-4 py-2.5 flex flex-col items-center justify-center gap-2">
+        <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200 w-full max-w-lg">
           <button
             type="button"
             onClick={() => {
@@ -661,17 +775,39 @@ export default function StationScannerPage({ params }) {
               setErrorMessage('');
               setScanResult(null);
             }}
-            className={`flex-1 py-2.5 rounded-lg text-sm font-normal transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+            className={`flex-1 py-2 rounded-lg text-xs sm:text-sm font-normal transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
               scanMode === 'check-in'
-                ? 'bg-[#000946] text-white shadow-xs font-semibold'
+                ? 'bg-emerald-600 text-white shadow-xs font-semibold'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
             </svg>
-            <span>เช็คอินเข้างาน</span>
+            <span>เช็คอิน</span>
           </button>
+
+          {activity?.enableStations && (
+            <button
+              type="button"
+              onClick={() => {
+                setScanMode('station');
+                setErrorMessage('');
+                setScanResult(null);
+              }}
+              className={`flex-1 py-2 rounded-lg text-xs sm:text-sm font-normal transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                scanMode === 'station'
+                  ? 'bg-[#ff741f] text-white shadow-xs font-semibold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+              </svg>
+              <span>ฐานกิจกรรม</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => {
@@ -679,18 +815,47 @@ export default function StationScannerPage({ params }) {
               setErrorMessage('');
               setScanResult(null);
             }}
-            className={`flex-1 py-2.5 rounded-lg text-sm font-normal transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+            className={`flex-1 py-2 rounded-lg text-xs sm:text-sm font-normal transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
               scanMode === 'check-out'
-                ? 'bg-rose-600 text-white shadow-xs font-semibold'
+                ? 'bg-red-600 text-white shadow-xs font-semibold'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9" />
             </svg>
-            <span>สแกนออก (จบกิจกรรม)</span>
+            <span>จบกิจกรรม</span>
           </button>
         </div>
+
+        {/* Station Picker (แสดงเมื่ออยู่ในโหมดฐานกิจกรรม) */}
+        {scanMode === 'station' && activity?.enableStations && (
+          <div className="w-full max-w-lg bg-orange-50/70 border border-[#ff741f]/30 rounded-xl p-2.5 flex items-center justify-between gap-2 animate-in fade-in">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-7 h-7 rounded-full bg-white border border-[#ff741f] text-[#ff741f] flex items-center justify-center shrink-0 shadow-2xs">
+                {(() => {
+                  const curr = (activity.stations || []).find(s => s.id === selectedStationId);
+                  return <StationSvgIcon iconId={curr?.icon || 'wrench'} className="w-4 h-4" />;
+                })()}
+              </div>
+              <span className="text-xs font-semibold text-slate-800 shrink-0">กำลังสแกนให้:</span>
+              <select
+                value={selectedStationId}
+                onChange={(e) => setSelectedStationId(e.target.value)}
+                className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 outline-none focus:border-[#ff741f] cursor-pointer truncate"
+              >
+                {(activity.stations || []).map((st, idx) => (
+                  <option key={st.id} value={st.id}>
+                    {idx + 1}. {st.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <span className="text-[11px] text-slate-500 hidden sm:inline">
+              สแกน QR เด็กเพื่อเช็คผ่านฐานนี้
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Staff Name Modal */}
@@ -834,6 +999,10 @@ export default function StationScannerPage({ params }) {
                     ? 'bg-rose-50 text-rose-800 border border-rose-200'
                     : scanResult.alreadyCheckedOut
                     ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                    : scanResult.isStationSuccess
+                    ? 'bg-orange-50 text-[#c24f04] border border-[#ff741f]/30 font-semibold'
+                    : scanResult.alreadyPassedStation
+                    ? 'bg-amber-50 text-amber-800 border border-amber-200'
                     : scanResult.alreadyCheckedIn
                     ? 'bg-amber-50 text-amber-800 border border-amber-200'
                     : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
@@ -842,6 +1011,10 @@ export default function StationScannerPage({ params }) {
                     ? 'สแกนจบกิจกรรมสำเร็จ'
                     : scanResult.alreadyCheckedOut
                     ? 'ได้สแกนจบกิจกรรมไปแล้ว'
+                    : scanResult.isStationSuccess
+                    ? `✓ ผ่านฐาน: ${scanResult.stationName}`
+                    : scanResult.alreadyPassedStation
+                    ? `เคยผ่านฐาน ${scanResult.stationName} แล้ว`
                     : scanResult.alreadyCheckedIn
                     ? 'เคยเช็คอินแล้ว'
                     : 'เช็คอินสำเร็จ'}
@@ -853,7 +1026,30 @@ export default function StationScannerPage({ params }) {
                 <p className="text-sm font-normal text-[#000946]">{scanResult.course || '-'}</p>
               </div>
 
-              {scanResult.isCheckOutSuccess ? (
+              {scanResult.isStationSuccess || scanResult.alreadyPassedStation ? (
+                <div className="p-4 rounded-2xl bg-orange-50/70 border border-[#ff741f]/30 space-y-2 text-center">
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="w-8 h-8 rounded-full bg-[#ff741f] text-white flex items-center justify-center font-bold text-sm shadow-xs">
+                      ✓
+                    </span>
+                    <div className="text-sm font-bold text-slate-900">
+                      {scanResult.alreadyPassedStation
+                        ? `เคยผ่านฐาน "${scanResult.stationName}" เรียบร้อยแล้ว`
+                        : `บันทึกผ่านฐาน "${scanResult.stationName}" สำเร็จ!`}
+                    </div>
+                  </div>
+                  {scanResult.totalStationsCount > 0 && (
+                    <div className="text-xs text-slate-600 pt-1 border-t border-[#ff741f]/20">
+                      สะสมฐานกิจกรรมแล้ว: <span className="font-bold text-[#ff741f] text-sm">{scanResult.completedStationsCount}</span> / {scanResult.totalStationsCount} ฐาน
+                      {scanResult.completedAllStations && (
+                        <div className="mt-1 font-semibold text-emerald-700 bg-emerald-50 py-1 px-2 rounded-lg border border-emerald-200">
+                          🎉 ผ่านครบทุกฐานแล้ว! ปลดล็อคปุ่มประเมินกิจกรรมและรับใบประกาศนียบัตร
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : scanResult.isCheckOutSuccess ? (
                 <div className="p-4 rounded-2xl bg-rose-50/60 border border-rose-200 space-y-1 text-center">
                   <div className="text-sm font-bold text-rose-900">บันทึกการจบกิจกรรมเรียบร้อยแล้ว</div>
                   <div className="text-sm font-normal text-rose-700">ผู้เข้าร่วมทำแบบประเมินและสแกนเช็คเอาท์ออกจากพื้นที่กิจกรรมแล้ว</div>

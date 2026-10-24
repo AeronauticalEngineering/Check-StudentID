@@ -96,11 +96,25 @@ export default function AllRegistrantsPage() {
       activitiesSnap.forEach(d => { actMap[d.id] = d.data().name; });
       setActivitiesMap(actMap);
 
-      const regList = registrationsSnap.docs.map(d => ({
-        id: d.id,
-        ...d.data(),
-        registeredAtDate: d.data().registeredAt ? d.data().registeredAt.toDate() : null
-      }));
+      // Build profile maps for quick lookup of LINE binding status
+      const profileByNatMap = new Map();
+      profilesSnap.forEach(d => {
+        const p = d.data();
+        if (p.nationalId && p.lineUserId) {
+          profileByNatMap.set(p.nationalId.trim(), p.lineUserId);
+        }
+      });
+
+      const regList = registrationsSnap.docs.map(d => {
+        const data = d.data();
+        const fallbackLine = data.nationalId ? profileByNatMap.get(data.nationalId.trim()) : null;
+        return {
+          id: d.id,
+          ...data,
+          lineUserId: data.lineUserId || fallbackLine || '',
+          registeredAtDate: data.registeredAt ? data.registeredAt.toDate() : null
+        };
+      });
       setAllRegistrations(regList);
 
       const profileList = profilesSnap.docs.map(d => ({
@@ -492,15 +506,21 @@ export default function AllRegistrantsPage() {
     }
 
     try {
-      // ตรวจสอบเลขบัตรประชาชนซ้ำซ้อนกับผู้ใช้อื่น
-      const isDuplicate = await checkDuplicateNationalId(trimmedNat, lineUserId || oldNat || registrantId);
-      if (isDuplicate) {
-        showAlert({
-          title: 'เลขบัตรประชาชนซ้ำซ้อน',
-          message: `เลขประจำตัวประชาชน ${trimmedNat} มีอยู่ในระบบแล้วและเป็นของผู้ใช้อื่น`,
-          type: 'error'
+      // ตรวจสอบเลขบัตรประชาชนซ้ำซ้อนกับผู้ใช้อื่น (เฉพาะเมื่อมีการเปลี่ยนเลขบัตร)
+      if (oldNat !== trimmedNat) {
+        const isDuplicate = await checkDuplicateNationalId(trimmedNat, {
+          excludeDocId: registrantId,
+          currentLineUserId: lineUserId,
+          oldNationalId: oldNat
         });
-        return;
+        if (isDuplicate) {
+          showAlert({
+            title: 'เลขบัตรประชาชนซ้ำซ้อน',
+            message: `เลขประจำตัวประชาชน ${trimmedNat} มีอยู่ในระบบแล้วและเป็นของผู้ใช้อื่น`,
+            type: 'error'
+          });
+          return;
+        }
       }
 
       // ทำการ Cascade อัปเดตทั้ง registrations และ studentProfiles
@@ -546,15 +566,21 @@ export default function AllRegistrantsPage() {
     }
 
     try {
-      // ตรวจสอบความซ้ำซ้อน
-      const isDuplicate = await checkDuplicateNationalId(trimmedNat, lineUserId || oldNat || profileId);
-      if (isDuplicate) {
-        showAlert({
-          title: 'เลขบัตรประชาชนซ้ำซ้อน',
-          message: `เลขประจำตัวประชาชน ${trimmedNat} ซ้ำซ้อนกับผู้ใช้อื่นในระบบ`,
-          type: 'error'
+      // ตรวจสอบความซ้ำซ้อน (เฉพาะเมื่อมีการเปลี่ยนเลขบัตร)
+      if (oldNat !== trimmedNat) {
+        const isDuplicate = await checkDuplicateNationalId(trimmedNat, {
+          excludeDocId: profileId,
+          currentLineUserId: lineUserId,
+          oldNationalId: oldNat
         });
-        return;
+        if (isDuplicate) {
+          showAlert({
+            title: 'เลขบัตรประชาชนซ้ำซ้อน',
+            message: `เลขประจำตัวประชาชน ${trimmedNat} ซ้ำซ้อนกับผู้ใช้อื่นในระบบ`,
+            type: 'error'
+          });
+          return;
+        }
       }
 
       // ทำการ Cascade อัปเดตโปรไฟล์และทุก registrations ที่ผูกกับนักเรียนคนนี้

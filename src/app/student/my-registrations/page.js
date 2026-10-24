@@ -9,6 +9,7 @@ import ProfileSetupForm from '../../../components/student/ProfileSetupForm';
 import Link from 'next/link';
 import { useModal } from '../../../context/ModalContext';
 import { downloadCertificatePNG, downloadCertificatePDF, getCertificatePreviewDataUrl } from '../../../lib/certificateGenerator';
+import { StationStampCircle, StationSvgIcon } from '../../../components/StationIcons';
 
 const CertificatePreviewModal = ({ isOpen, onClose, certData }) => {
   const { showAlert, showToast } = useModal();
@@ -179,7 +180,7 @@ const CertificatePreviewModal = ({ isOpen, onClose, certData }) => {
 const QRModal = ({ qrData, onClose }) => {
   if (!qrData) return null;
   const payload = typeof qrData === 'string' ? { registrationId: qrData, isCheckOut: false } : qrData;
-  const { registrationId, title, isCheckOut, hasEvaluated, activityId, enableEvaluation } = payload;
+  const { registrationId, title, isCheckOut, isStation, stationName, stationIcon, hasEvaluated, activityId, enableEvaluation } = payload;
   const needsEval = !hasEvaluated && enableEvaluation !== false;
   const qrValue = isCheckOut
     ? JSON.stringify({ registrationId, action: 'check-out', activityId })
@@ -191,9 +192,13 @@ const QRModal = ({ qrData, onClose }) => {
         <div className="space-y-1">
           <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-slate-100 text-[#000946] mb-1">
             {isCheckOut ? (
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-6 h-6 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
               </svg>
+            ) : isStation ? (
+              <div className="w-10 h-10 rounded-full bg-orange-50 border border-[#ff741f] text-[#ff741f] flex items-center justify-center">
+                <StationSvgIcon iconId={stationIcon || 'wrench'} className="w-5 h-5" />
+              </div>
             ) : (
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
@@ -201,11 +206,13 @@ const QRModal = ({ qrData, onClose }) => {
             )}
           </div>
           <h3 className="font-bold text-slate-900 text-base">
-            {title || (isCheckOut ? 'QR Code สแกนจบกิจกรรม (ทางออก)' : 'QR Code เช็คอินเข้างาน')}
+            {title || (isCheckOut ? 'QR Code สแกนจบกิจกรรม (ทางออก)' : isStation ? (stationName ? `QR Code: ${stationName}` : 'QR Code สแกนเข้าฐานกิจกรรม') : 'QR Code เช็คอินเข้างาน')}
           </h3>
           <p className="text-sm font-normal text-slate-500 leading-relaxed">
             {isCheckOut
               ? 'แสดง QR Code นี้กับเจ้าหน้าที่จุดทางออกเพื่อสแกนจบกิจกรรม'
+              : isStation
+              ? `แสดง QR Code นี้กับเจ้าหน้าที่ประจำฐาน${stationName ? ` "${stationName}"` : ''} เพื่อสแกนบันทึกผ่านฐาน`
               : 'แสดง QR Code นี้กับเจ้าหน้าที่จุดลงทะเบียนเพื่อเช็คอิน'}
           </p>
         </div>
@@ -284,7 +291,12 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
   const isSeatType = activity.type === 'exam' || activity.type === 'graduation';
   const isGeneralEvent = !isQueueType && !isSeatType;
 
-  const isExaminerDone = reg.queueStatus === 'completed' || reg.interviewedAt || (reg.status === 'completed' && !reg.checkedOut && !reg.checkedOutAt);
+  // Station Completion Gate
+  const hasStationFeature = Boolean(activity.enableStations && (activity.stations?.length || 0) > 0);
+  const passedCount = hasStationFeature ? (activity.stations || []).filter(s => reg.passedStations?.[s.id]?.passed).length : 0;
+  const isStationsComplete = !hasStationFeature || Boolean(reg.completedAllStations) || (passedCount >= (activity.stations?.length || 0));
+
+  const isExaminerDone = isQueueType && (reg.queueStatus === 'completed' || reg.interviewedAt || (reg.status === 'completed' && !reg.checkedOut && !reg.checkedOutAt));
   const isCheckedOut = reg.checkedOut || reg.checkedOutAt;
 
   const getStatusDisplay = () => {
@@ -302,13 +314,23 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
       return <><CheckmarkIcon className="text-indigo-600 shrink-0" /> <span className="text-indigo-600 font-normal text-sm">{isQueueType ? 'เข้าสอบสัมภาษณ์' : 'เข้าร่วมกิจกรรม'}</span></>;
     }
     if (rawStatus === 'completed' || rawStatus === 'สำเร็จแล้ว' || rawStatus === 'จบกิจกรรมแล้ว') {
-      return <><CheckmarkIcon className="text-blue-600 shrink-0" /> <span className="text-blue-600 font-normal text-sm">จบกิจกรรมแล้ว</span></>;
+      return <><CheckmarkIcon className="text-emerald-600 shrink-0" /> <span className="text-emerald-600 font-normal text-sm">{hasStationFeature ? 'เช็คอินแล้ว' : 'จบกิจกรรมแล้ว'}</span></>;
     }
     return <><CheckmarkIcon className="text-amber-600 shrink-0" /> <span className="text-amber-600 font-normal text-sm">ลงทะเบียนแล้ว</span></>;
   };
 
   const isRegisteredStatus = !reg.status || reg.status === 'registered' || reg.status === 'ลงทะเบียนแล้ว';
-  const isCheckedInStatus = reg.status === 'checked-in' || reg.status === 'เช็คอินแล้ว';
+  const hasPassedAnyStation = Object.values(reg.passedStations || {}).some(st => st?.passed);
+  const isCheckedInStatus = !isRegisteredStatus && (
+    reg.status === 'checked-in' ||
+    reg.status === 'เช็คอินแล้ว' ||
+    reg.status === 'interviewing' ||
+    reg.status === 'สอบสัมภาษณ์' ||
+    reg.status === 'completed' ||
+    Boolean(reg.checkedIn) ||
+    Boolean(reg.checkedInAt) ||
+    hasPassedAnyStation
+  );
   const isInterviewingStatus = reg.status === 'interviewing' || reg.status === 'สอบสัมภาษณ์';
 
   return (
@@ -373,9 +395,9 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
       )}
       <div className="flex flex-col flex-grow min-w-0">
         <div className="p-4 sm:p-5 flex-grow relative">
-          <div className="flex justify-between items-start gap-2">
+          <div className="flex justify-between items-center gap-2">
             <div className="flex items-center gap-1.5 text-sm min-w-0">{getStatusDisplay()}</div>
-            <div className="flex flex-col items-end gap-1.5 shrink-0">
+            <div className="flex items-center gap-2 shrink-0">
               {/* ปุ่ม QR เช็คอิน - แสดงเฉพาะสถานะ registered หรือ ลงทะเบียนแล้ว */}
               {isRegisteredStatus && (
                 <button
@@ -385,7 +407,7 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
                     title: 'QR Code เช็คอินเข้างาน',
                     isCheckOut: false
                   })}
-                  className="px-3.5 py-1.5 bg-[#000946] text-white text-sm font-normal rounded-full hover:bg-[#00125e] transition-all active:scale-95 whitespace-nowrap shadow-xs cursor-pointer"
+                  className="px-3.5 py-1.5 bg-[#000946] text-white text-xs font-medium rounded-full hover:bg-[#00125e] transition-all active:scale-95 whitespace-nowrap shadow-xs cursor-pointer"
                 >
                   QR เช็คอิน
                 </button>
@@ -393,49 +415,50 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
 
               {/* ข้อความ รอเรียกคิว - แสดงเมื่อ checked-in + กิจกรรมคิว และยังไม่ถูกเรียก */}
               {isCheckedInStatus && isQueueType && !isExaminerDone && (
-                <span className="px-3.5 py-1.5 bg-amber-50 text-amber-800 border border-amber-200 text-sm font-normal rounded-full whitespace-nowrap">
+                <span className="px-3 py-1 bg-amber-50 text-amber-800 border border-amber-200 text-xs font-medium rounded-full whitespace-nowrap">
                   รอเรียกคิว
                 </span>
               )}
 
-              {/* สำหรับผู้ที่พร้อมจบกิจกรรม (สัมภาษณ์เสร็จ / กิจกรรมทั่วไป) */}
-              {(isExaminerDone || isInterviewingStatus || (isCheckedInStatus && !isQueueType)) && !isCheckedOut && (
-                <>
-                  {/* หากยังไม่ได้ประเมิน: แสดงเฉพาะปุ่มประเมินกิจกรรมก่อน */}
+              {/* ป้ายสถานะฐานกิจกรรม - แสดงเมื่อยังผ่านไม่ครบ */}
+              {hasStationFeature && isCheckedInStatus && !isStationsComplete && !isCheckedOut && (
+                <span className="px-2.5 py-1 bg-orange-50 text-[#c24f04] border border-[#ff741f]/30 text-xs font-semibold rounded-full whitespace-nowrap">
+                  ฐานกิจกรรม ({passedCount}/{activity.stations.length})
+                </span>
+              )}
+
+              {/* สำหรับผู้ที่พร้อมจบกิจกรรม (ต้องผ่านทุกฐานหากเป็นกิจกรรมฐาน) */}
+              {(isExaminerDone || isInterviewingStatus || (isCheckedInStatus && !isQueueType)) && isStationsComplete && !isCheckedOut && (
+                <div className="flex items-center gap-1.5">
+                  {/* หากยังไม่ได้ประเมิน: แสดงปุ่มประเมินกิจกรรม */}
                   {!hasEvaluated && (activity.enableEvaluation === true || activity.enableEvaluation === undefined) ? (
                     <Link
                       href={`/student/evaluation/${reg.activityId}`}
-                      className="px-3.5 py-1.5 bg-[#ff741f] hover:bg-[#e55e0b] text-white text-sm font-normal rounded-full transition-all active:scale-98 whitespace-nowrap shadow-xs flex items-center gap-1"
+                      className="px-3.5 py-1.5 bg-[#ff741f] hover:bg-[#e55e0b] text-white text-xs font-medium rounded-full transition-all active:scale-98 whitespace-nowrap shadow-xs flex items-center gap-1"
                     >
                       <span>ประเมินกิจกรรม</span>
                     </Link>
                   ) : (
-                    /* เมื่อประเมินเรียบร้อยแล้ว (หรือกิจกรรมไม่ต้องประเมิน): จึงแสดงปุ่ม QR code ออก */
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => onShowQr({
-                          registrationId: reg.id,
-                          title: 'QR Code สแกนจบกิจกรรม (ทางออก)',
-                          isCheckOut: true,
-                          hasEvaluated,
-                          activityId: reg.activityId,
-                          enableEvaluation: activity.enableEvaluation !== false
-                        })}
-                        className="px-3.5 py-1.5 bg-[#000946] text-white text-sm font-normal rounded-full hover:bg-[#00125e] transition-all active:scale-95 whitespace-nowrap shadow-xs cursor-pointer"
-                      >
-                        QR code ออก
-                      </button>
-
-                      {hasEvaluated && (activity.enableEvaluation === true || activity.enableEvaluation === undefined) && (
-                        <span className="text-sm text-emerald-700 font-normal flex items-center gap-1">
-                          <span>✓</span>
-                          <span>ประเมินแล้ว</span>
-                        </span>
-                      )}
-                    </>
+                    /* เมื่อประเมินเรียบร้อยแล้ว: แสดงปุ่ม QR code ออก */
+                    <button
+                      type="button"
+                      onClick={() => onShowQr({
+                        registrationId: reg.id,
+                        title: 'QR Code สแกนจบกิจกรรม (ทางออก)',
+                        isCheckOut: true,
+                        hasEvaluated,
+                        activityId: reg.activityId,
+                        enableEvaluation: activity.enableEvaluation !== false
+                      })}
+                      className="px-3.5 py-1.5 bg-[#000946] text-white text-xs font-medium rounded-full hover:bg-[#00125e] transition-all active:scale-95 whitespace-nowrap shadow-xs cursor-pointer flex items-center gap-1.5"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                      </svg>
+                      <span>QR code ออก</span>
+                    </button>
                   )}
-                </>
+                </div>
               )}
             </div>
           </div>
@@ -448,6 +471,61 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
               </span>
             )}
           </div>
+
+          {/* Activity Stations Block (แสดงเฉพาะเมื่อเปิดระบบฐาน และนักเรียนเช็คอินเข้างานแล้วเท่านั้น) */}
+          {hasStationFeature && isCheckedInStatus && (
+            <div className="mt-4 pt-3.5 border-t border-slate-100">
+              <div className="flex items-center justify-center mb-3">
+                <div className="flex items-center justify-center gap-1.5 text-xs font-medium text-center">
+                  {isStationsComplete ? (
+                    <span className="text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200 flex items-center gap-1.5">
+                      <span>✓</span> ผ่านครบทุกฐานแล้ว
+                    </span>
+                  ) : (
+                    <span className="text-amber-700 bg-amber-50/80 px-3 py-1 rounded-full border border-amber-200/80 flex items-center gap-1.5">
+                      <svg className="w-3.5 h-3.5 text-[#ff741f] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
+                      </svg>
+                      <span>แตะที่รูปกิจกรรมเพื่อเปิด QR</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Station Stamp Circles Row (Pure SVG Icons, No Emoji) */}
+              <div className="flex items-center gap-3 overflow-x-auto py-1.5 px-0.5 custom-scrollbar">
+                {activity.stations.map((st, idx) => {
+                  const isPassed = Boolean(reg.passedStations?.[st.id]?.passed);
+                  return (
+                    <button
+                      key={st.id || idx}
+                      type="button"
+                      onClick={() => onShowQr({
+                        registrationId: reg.id,
+                        title: `QR Code: ${st.name}`,
+                        stationName: st.name,
+                        stationIcon: st.icon,
+                        isStation: true,
+                        isCheckOut: false
+                      })}
+                      className="flex flex-col items-center gap-1.5 shrink-0 group cursor-pointer transition-transform active:scale-95 focus:outline-none"
+                    >
+                      <StationStampCircle
+                        iconId={st.icon || 'wrench'}
+                        isPassed={isPassed}
+                        size="md"
+                      />
+                      <span className={`text-[11px] font-medium max-w-[68px] text-center truncate ${
+                        isPassed ? 'text-emerald-700 font-semibold' : 'text-slate-600 group-hover:text-[#ff741f]'
+                      }`} title={st.name}>
+                        {st.name}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -526,6 +604,29 @@ const CompletedRegistrationCard = ({ reg, activities, courses, hasEvaluated, onS
               </span>
             )}
           </div>
+
+          {/* Activity Stations Summary for Completed Card */}
+          {activity.enableStations && (activity.stations?.length || 0) > 0 && (
+            <div className="mt-3 pt-3 border-t border-slate-100">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-slate-800">ฐานกิจกรรมที่ผ่าน</span>
+                <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                  {activity.stations.filter(s => reg.passedStations?.[s.id]?.passed).length} / {activity.stations.length} ฐาน
+                </span>
+              </div>
+              <div className="flex items-center gap-2.5 overflow-x-auto py-1 custom-scrollbar">
+                {activity.stations.map((st, idx) => {
+                  const isPassed = Boolean(reg.passedStations?.[st.id]?.passed);
+                  return (
+                    <div key={st.id || idx} className="flex flex-col items-center gap-1 shrink-0">
+                      <StationStampCircle iconId={st.icon || 'wrench'} isPassed={isPassed} size="sm" />
+                      <span className="text-[10px] text-slate-600 max-w-[56px] truncate text-center">{st.name}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Complete Details Grid (สถานที่, เวลา, ผังที่นั่ง) */}

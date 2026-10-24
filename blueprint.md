@@ -5,6 +5,30 @@ AERO Student is an end-to-end Student Activity Registration, Seating Allocation,
 
 ---
 
+## 🎯 ระบบฐานกิจกรรม (Activity Stations System)
+
+### วัตถุประสงค์และการทำงาน (Workflow)
+1. **เช็คอินเข้าร่วมกิจกรรมครั้งเดียว (Single Check-in)**:
+   - ผู้เข้าร่วมสแกน QR Code เช็คอินเข้างานที่จุดลงทะเบียนเพียงครั้งเดียว
+2. **ระบบเดินเวียนเข้าฐาน (Station-by-Station Scanning)**:
+   - กิจกรรมสามารถเปิดใช้งาน `enableStations: true` และกำหนดฐานกิจกรรมได้ไม่จำกัด เช่น ฐานเครื่องบิน, ฐานช่างยนต์, ฐานหมวกนักบิน ฯลฯ
+   - **ใช้ไอคอน Pure SVG Vector (ห้ามใช้ Emoji โดยเด็ดขาด)**: ไอคอนคมชัด 12 ชนิด (`wrench`, `airplane`, `pilot-hat`, `paper-plane`, `gear`, `radar`, `compass`, `rocket`, `satellite`, `drone`, `certificate`, `flag`)
+   - จุดสแกนเนอร์ (`/station/scanner/[activityId]` และ `/admin/scanner`) มีโหมด **[ ฐานกิจกรรม ]** ให้เจ้าหน้าที่เลือกฐานประจำจุด และสแกน QR Code ของเด็กเพื่อบันทึกผ่านฐาน
+   - **การจัดวางปุ่มใน Scanner (`/admin/scanner`)**: ออกแบบให้กระชับและสบายตา (Compact & Eye-Friendly) โดยตัดหัวข้อและกรอบซ้ำซ้อนออก, รวมแถบโหมดสั้นกระชับ (`[ ✓ เช็คอิน ]`, `[ ฐานกิจกรรม ]`, `[ จบกิจกรรม ]`), ยุบตัวเลือกฐานเป็นแถบ inline แถวเดียวเมื่อเปิดโหมดฐาน, และรวมแถบสลับวิธีตรวจ (`สแกนกล้อง QR` / `ค้นหาด้วยเลขบัตร`) เป็นหัวแท็บของกล่องสแกนเนอร์โดยตรง พร้อมฟอร์มค้นหาแบบแถวเดียวจบ (Inline Search)
+3. **การแสดงผลบนการ์ดของนักเรียน (`/student/my-registrations`)**:
+   - **สถานะลงทะเบียนแล้ว (ก่อนเช็คอิน)**: แสดงเฉพาะปุ่ม "QR เช็คอิน" เพื่อใช้เช็คอินเข้างาน **ยังไม่แสดงกล่องฐานกิจกรรม** เพื่อป้องกันความสับสน
+   - **เมื่อเช็คอินแล้ว (`checked-in`)**: กล่อง **"ฐานกิจกรรม"** จะปรากฏขึ้น พร้อมคำอธิบาย "แตะที่รูปกิจกรรมเพื่อเปิด QR" และแสดงวงกลมสแตมป์ตามสเก็ตช์ดีไซน์
+   - ฐานที่ยังไม่ผ่าน: วงกลมสีส้ม พร้อมไอคอนฐาน เมื่อแตะจะเปิด QR Code สำหรับให้เจ้าหน้าที่ประจำฐานสแกน
+   - ฐานที่ผ่านแล้ว: วงกลมสีเขียวสดใส มีเครื่องหมายถูก `✓` ทับบนไอคอน
+5. **ปุ่มกดหลังจบกิจกรรม (Certificate & Photo Toggle Card)**:
+   - ในหน้าสร้างและแก้ไขกิจกรรม (`/admin/activity/add` และ `/admin/activity/edit/[id]`): เพิ่ม Toggle Card **"ปุ่มหลังจบกิจกรรม"** (*Certificate & Photo*) ในตารางการตั้งค่าระบบ โดยใช้สไตล์การ์ดโทนสว่างมาตรฐาน (`bg-slate-50 border-slate-200`) และปุ่ม Toggle สี Amber สอดคล้องกับปุ่มอื่นๆ
+   - **เริ่มต้นปิดไว้ (Collapsed by default)** เพื่อลดพื้นที่หน้าจอและทำให้ฟอร์มกะทัดรัด
+   - เมื่อกด **"เปิดใช้งาน"**: จัดวางเลย์เอาต์แนวตั้งแบบลำดับชั้น (Stacked Horizontal Cards) เพื่อประสิทธิภาพการใช้พื้นที่:
+     - **ด้านบน (Photo)**: การ์ดแนวนอนขนาดกะทัดรัด วางช่องกรอก "ชื่อปุ่ม" (1 ส่วน) และ "ลิงก์อัลบั้มรูปภาพกิจกรรม" (2 ส่วน) ในแถวเดียวกัน
+     - **ด้านล่าง (Certificate)**: ขยายเต็มความกว้าง (Full Width) เพื่อให้พื้นที่สำหรับ Live Preview ขนาดใหญ่ และแผงปรับแต่งตำแหน่ง/ฟอนต์ 3 คอลัมน์ (ชื่อ-สกุล, ชื่อโครงการ, วันที่) มองเห็นและปรับได้กว้างขวาง สบายตา ไม่เบียดเสียด
+
+---
+
 ## 🎨 Admin UI Standard Design Pattern (รูปแบบมาตรฐานงาน Admin & ตารางข้อมูล)
 
 ทุกหน้าในส่วนของ Admin ที่มีตารางข้อมูล การค้นหา หรือการจัดการรายการ ต้องยึดรูปแบบมาตรฐานดังนี้เสมอ:
@@ -74,8 +98,11 @@ AERO Student is an end-to-end Student Activity Registration, Seating Allocation,
 
 ### 1. Single Source of Truth for Identity (`students` / `studentProfiles`)
 - **Primary Anchor**: 13-digit National ID (`nationalId`).
-- **LINE Binding**: Maps `lineUserId` to `nationalId` automatically upon first LIFF session.
-- **No Orphan Docs**: Admin pre-registered students are keyed by `nationalId`. When students log in via LINE, their `lineUserId` is attached directly.
+- **LINE Binding & Unclaimed Profile Claiming**: 
+  - นักเรียนที่ถูกนำเข้าผ่าน CSV หรือเพิ่มด้วยมือโดย Admin จะถูกจัดเก็บใน `studentProfiles` ในสถานะ Unclaimed (`lineUserId: ''` หรือ `null`)
+  - **กฎการตรวจสอบความซ้ำซ้อน (`checkDuplicateNationalId`)**: โปรไฟล์ที่ยังไม่ได้ผูก LINE (`!lineUserId`) จะ**ไม่ถูกนับเป็นความซ้ำซ้อนกับผู้ใช้อื่น** โดยจะถือเป็นโปรไฟล์รอเชื่อมต่อ (Unclaimed Profile) และจะถือว่าซ้ำซ้อนก็ต่อเมื่อเลขบัตรประชาชนนั้นถูกผูกไว้กับบัญชี LINE อื่นแล้วเท่านั้น (`doc.lineUserId && doc.lineUserId !== currentLineUserId`)
+  - **การรวมข้อมูลอัตโนมัติ (Identity Merge)**: เมื่อนักเรียนเข้าใช้งานผ่าน LINE และทำการบันทึกเลขบัตรประชาชน ระบบจะทำการรวมข้อมูลจากโปรไฟล์เดิมที่แอดมินนำเข้าเข้ากับ Document ของ `lineUserId` ปัจจุบัน พร้อมลบเอกสาร Orphan ID เดิมทิ้งโดยอัตโนมัติ
+  - **Registration LineUserId Cascade**: ทุกครั้งที่มีการผูกหรืออัปเดต LINE ID ระบบจะทำการ Cascade อัปเดตฟิลด์ `lineUserId` ไปยังทุกเรคอร์ดการลงทะเบียน (`registrations`) ที่ตรงกับเลขบัตรประชาชนนั้นทันที ทำให้ตาราง Admin แสดงสถานะ **"ผูกแล้ว"** สีเขียวอย่างถูกต้องและตรงกันแบบ Real-time
 
 ### 2. Service Layer Architecture (`src/lib/` & `src/context/`)
 - `src/context/ModalContext.js`: Global modal & toast state management.

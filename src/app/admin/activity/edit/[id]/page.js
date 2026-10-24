@@ -8,6 +8,7 @@ import { doc, getDoc, updateDoc, deleteDoc, collection, getDocs, Timestamp } fro
 import { ref, uploadString, getDownloadURL } from 'firebase/storage';
 import { useModal } from '../../../../../context/ModalContext';
 import { getCertificatePreviewDataUrl } from '../../../../../lib/certificateGenerator';
+import { STATION_ICONS, StationSvgIcon } from '../../../../../components/StationIcons';
 
 const DEFAULT_CERT_LAYOUT = {
   nameY: 385,
@@ -58,6 +59,15 @@ export default function EditActivityPage({ params }) {
   const [enableEvaluation, setEnableEvaluation] = useState(false);
   const [evaluationQuestions, setEvaluationQuestions] = useState([]);
 
+  // Stations System State
+  const [enableStations, setEnableStations] = useState(false);
+  const [stations, setStations] = useState([
+    { id: 'st_1', name: 'กิจกรรมที่ 1', icon: 'wrench' },
+    { id: 'st_2', name: 'กิจกรรมที่ 2', icon: 'airplane' },
+    { id: 'st_3', name: 'กิจกรรมที่ 3', icon: 'pilot-hat' },
+    { id: 'st_4', name: 'กิจกรรมที่ 4', icon: 'paper-plane' }
+  ]);
+
   // Scoring & Required Documents State
   const [enableScoring, setEnableScoring] = useState(false);
   const [generalCriteria, setGeneralCriteria] = useState([
@@ -88,6 +98,7 @@ export default function EditActivityPage({ params }) {
   const [isRegistrationOpen, setIsRegistrationOpen] = useState(true);
 
   // Post-Activity Actions (Certificate & Photo) State
+  const [enablePostActivity, setEnablePostActivity] = useState(false);
   const [enableCertificate, setEnableCertificate] = useState(true);
   const [certificateButtonLabel, setCertificateButtonLabel] = useState('Certificate');
   const [certificateMode, setCertificateMode] = useState('template'); // 'template' | 'individual_link'
@@ -195,6 +206,38 @@ export default function EditActivityPage({ params }) {
         };
       }
       return q;
+    }));
+  };
+
+  // Stations Helpers
+  const handleAddStation = () => {
+    const nextNum = stations.length + 1;
+    const defaultIcons = ['wrench', 'airplane', 'pilot-hat', 'paper-plane', 'gear', 'radar', 'compass', 'rocket'];
+    const chosenIcon = defaultIcons[(nextNum - 1) % defaultIcons.length];
+    setStations([
+      ...stations,
+      {
+        id: `st_${Date.now()}`,
+        name: `กิจกรรมที่ ${nextNum}`,
+        icon: chosenIcon
+      }
+    ]);
+  };
+
+  const handleRemoveStation = (id) => {
+    if (stations.length <= 1) {
+      showAlert({ title: 'แจ้งเตือน', message: 'ต้องมีฐานกิจกรรมอย่างน้อย 1 ฐาน', type: 'warning' });
+      return;
+    }
+    setStations(stations.filter(s => s.id !== id));
+  };
+
+  const handleStationChange = (id, field, value) => {
+    setStations(stations.map(s => {
+      if (s.id === id) {
+        return { ...s, [field]: value };
+      }
+      return s;
     }));
   };
 
@@ -337,6 +380,13 @@ export default function EditActivityPage({ params }) {
             setEnableEvaluation(data.enableEvaluation);
           }
 
+          if (data.enableStations !== undefined) {
+            setEnableStations(data.enableStations);
+          }
+          if (Array.isArray(data.stations) && data.stations.length > 0) {
+            setStations(data.stations);
+          }
+
           if (data.enableCertificate !== undefined) {
             setEnableCertificate(data.enableCertificate);
           }
@@ -370,6 +420,10 @@ export default function EditActivityPage({ params }) {
           if (data.photoUrl !== undefined) {
             setPhotoUrl(data.photoUrl);
           }
+          const isPostActivityEnabled = data.enablePostActivity !== undefined
+            ? Boolean(data.enablePostActivity)
+            : Boolean(data.enableCertificate || data.enablePhoto);
+          setEnablePostActivity(isPostActivityEnabled);
           if (data.evaluationQuestions) {
             const sanitizedQuestions = data.evaluationQuestions.map(q => {
               if ((q.type === 'radio' || q.type === 'checkbox') && (!Array.isArray(q.options) || q.options.length === 0)) {
@@ -433,6 +487,12 @@ export default function EditActivityPage({ params }) {
           }
           return q;
         }) : [],
+        enableStations,
+        stations: enableStations ? stations.map((s, idx) => ({
+          id: s.id || `st_${idx + 1}`,
+          name: s.name.trim() || `กิจกรรมที่ ${idx + 1}`,
+          icon: s.icon || 'wrench'
+        })) : [],
         enableScoring,
         scoringConfig: enableScoring ? {
           generalCriteria,
@@ -440,14 +500,15 @@ export default function EditActivityPage({ params }) {
           requiredDocuments
         } : null,
         isRegistrationOpen,
-        enableCertificate,
+        enablePostActivity,
+        enableCertificate: enablePostActivity ? enableCertificate : false,
         certificateButtonLabel: certificateButtonLabel.trim() || 'Certificate',
         certificateMode: certificateMode || 'template',
         certificateProjectName: certificateProjectName.trim(),
         certificateDateText: certificateDateText.trim(),
         certificateTemplateUrl: certificateMode === 'individual_link' ? '' : (certificateTemplateUrl ? certificateTemplateUrl.trim() : ''),
         certificateLayout: certificateLayout || DEFAULT_CERT_LAYOUT,
-        enablePhoto,
+        enablePhoto: enablePostActivity ? enablePhoto : false,
         photoButtonLabel: photoButtonLabel.trim() || 'Photo',
         photoUrl: photoUrl.trim() || ''
       });
@@ -693,7 +754,143 @@ export default function EditActivityPage({ params }) {
                   {enableEvaluation ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}
                 </button>
               </div>
+
+              {/* Station System Toggle Card */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <span className="text-xs font-semibold text-slate-800 block truncate">
+                    ระบบฐานกิจกรรม
+                  </span>
+                  <span className="text-xs text-slate-500 font-normal block truncate">
+                    สแกนเช็คผ่านแต่ละฐาน
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEnableStations(!enableStations)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-normal border transition-colors shrink-0 whitespace-nowrap cursor-pointer ${
+                    enableStations
+                      ? 'bg-orange-50 text-orange-700 border-orange-300'
+                      : 'bg-white text-slate-600 border-slate-300'
+                  }`}
+                >
+                  {enableStations ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}
+                </button>
+              </div>
+
+              {/* Post-Activity Buttons (Certificate & Photo) Toggle Card */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <span className="text-xs font-semibold text-slate-800 block truncate">
+                    ปุ่มหลังจบกิจกรรม
+                  </span>
+                  <span className="text-xs text-slate-500 font-normal block truncate">
+                    Certificate & Photo
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !enablePostActivity;
+                    setEnablePostActivity(next);
+                    if (next && !enableCertificate && !enablePhoto) {
+                      setEnableCertificate(true);
+                    }
+                  }}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-normal border transition-colors shrink-0 whitespace-nowrap cursor-pointer ${
+                    enablePostActivity
+                      ? 'bg-amber-50 text-amber-700 border-amber-300'
+                      : 'bg-white text-slate-600 border-slate-300'
+                  }`}
+                >
+                  {enablePostActivity ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}
+                </button>
+              </div>
             </div>
+
+            {/* STATIONS BUILDER */}
+            {enableStations && (
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-4 animate-in fade-in">
+                <div className="flex items-center justify-between border-b border-slate-200/80 pb-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                      <span>ระบบฐานกิจกรรม</span>
+                      <span className="px-2 py-0.5 rounded-full text-xs font-normal bg-orange-50 text-[#ff741f] border border-[#ff741f]/30">
+                        {stations.length} ฐาน
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-500 font-normal mt-0.5">
+                      กำหนดชื่อฐานและเลือกสัญลักษณ์ไอคอน (SVG) สำหรับสะสมการเข้าฐานของนักเรียน
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddStation}
+                    className="px-3 py-1.5 bg-[#000946] hover:bg-[#00125e] text-white text-xs font-medium rounded-lg shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <span>+ เพิ่มฐานกิจกรรม</span>
+                  </button>
+                </div>
+
+                {/* Stations List Table/Grid */}
+                <div className="space-y-2.5">
+                  <div className="grid grid-cols-12 gap-2 text-xs font-semibold text-slate-600 px-3 py-1 bg-slate-100/70 rounded-lg">
+                    <div className="col-span-1 text-center">ลำดับ</div>
+                    <div className="col-span-6 sm:col-span-7">ชื่อฐานกิจกรรม</div>
+                    <div className="col-span-4 sm:col-span-3 text-center">สัญลักษณ์ไอคอน</div>
+                    <div className="col-span-1 text-center">ลบ</div>
+                  </div>
+
+                  {stations.map((st, idx) => (
+                    <div
+                      key={st.id || idx}
+                      className="grid grid-cols-12 gap-2 items-center bg-white p-2.5 rounded-xl border border-slate-200 hover:border-slate-300 shadow-2xs transition-colors"
+                    >
+                      <div className="col-span-1 text-center font-bold text-slate-400 text-xs">
+                        {idx + 1}
+                      </div>
+
+                      <div className="col-span-6 sm:col-span-7">
+                        <input
+                          type="text"
+                          value={st.name}
+                          onChange={(e) => handleStationChange(st.id, 'name', e.target.value)}
+                          placeholder={`กิจกรรมที่ ${idx + 1}`}
+                          className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 outline-none focus:border-slate-400 focus:bg-white transition-colors"
+                        />
+                      </div>
+
+                      {/* Icon Selector with Preview */}
+                      <div className="col-span-4 sm:col-span-3 flex items-center justify-center gap-2">
+                        <div className="w-9 h-9 rounded-full border-2 border-slate-200 flex items-center justify-center bg-slate-50 text-slate-700 shrink-0">
+                          <StationSvgIcon iconId={st.icon} className="w-5 h-5 text-slate-800" />
+                        </div>
+                        <select
+                          value={st.icon || 'wrench'}
+                          onChange={(e) => handleStationChange(st.id, 'icon', e.target.value)}
+                          className="px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 outline-none focus:border-slate-400 cursor-pointer"
+                        >
+                          {STATION_ICONS.map(ic => (
+                            <option key={ic.id} value={ic.id}>{ic.label}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="col-span-1 text-center">
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveStation(st.id)}
+                          className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                          title="ลบฐานนี้"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* SCORING & DOCUMENTS BUILDER */}
             {enableScoring && (
@@ -973,24 +1170,70 @@ export default function EditActivityPage({ params }) {
             )}
 
             {/* POST-ACTIVITY BUTTONS BUILDER (Certificate & Photo) */}
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-              <div className="border-b border-slate-200 pb-2">
-                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+            {enablePostActivity && (
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3 animate-in fade-in">
+              <div className="border-b border-slate-200 pb-2 flex items-center justify-between">
+                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
                   <span>🎖️</span>
                   <span>ปุ่มกดหลังจบกิจกรรม (Certificate & Photo)</span>
                 </h3>
-                <p className="text-sm text-slate-500 font-normal mt-0.5">
-                  แสดงปุ่มหลังจบกิจกรรมและทำแบบประเมินเรียบร้อยแล้ว สามารถเปลี่ยนชื่อปุ่มตามชื่องานได้
-                </p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-                {/* 1. Certificate Button Configuration */}
-                <div className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-2.5">
+              <div className="space-y-3 pt-1">
+                {/* 1. Photo Button Configuration (อยู่ด้านบน กะทัดรัด แนวนอน) */}
+                <div className="bg-white p-3 rounded-xl border border-slate-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
+                      <span>📷</span>
+                      <span>Photo (รูปภาพกิจกรรม)</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setEnablePhoto(!enablePhoto)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-normal border transition-colors shrink-0 whitespace-nowrap cursor-pointer ${
+                        enablePhoto
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                          : 'bg-white text-slate-600 border-slate-300'
+                      }`}
+                    >
+                      {enablePhoto ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-0.5">
+                    <div className="sm:col-span-1">
+                      <label className="block text-xs text-slate-600 font-normal mb-1">
+                        ชื่อปุ่ม
+                      </label>
+                      <input
+                        type="text"
+                        value={photoButtonLabel}
+                        onChange={(e) => setPhotoButtonLabel(e.target.value)}
+                        placeholder="Photo"
+                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-normal text-slate-800 outline-none focus:border-[#000946]"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs text-slate-600 font-normal mb-1">
+                        ลิงก์อัลบั้มรูปภาพกิจกรรม
+                      </label>
+                      <input
+                        type="url"
+                        value={photoUrl}
+                        onChange={(e) => setPhotoUrl(e.target.value)}
+                        placeholder="https://drive.google.com/... หรือ Google Photos"
+                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-normal text-slate-800 outline-none focus:border-[#000946]"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Certificate Button Configuration (อยู่ด้านล่าง พื้นที่เต็มความกว้าง) */}
+                <div className="bg-white p-3 rounded-xl border border-slate-200 space-y-2.5">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
                       <span>📜</span>
-                      <span>ปุ่ม Certificate (เกียรติบัตร)</span>
+                      <span>Certificate (เกียรติบัตร)</span>
                     </span>
                     <button
                       type="button"
@@ -1005,83 +1248,86 @@ export default function EditActivityPage({ params }) {
                     </button>
                   </div>
 
-                  <div>
-                    <label className="block text-xs text-slate-600 font-normal mb-1">
-                      ชื่อปุ่ม (เปลี่ยนได้ตามต้องการ)
-                    </label>
-                    <input
-                      type="text"
-                      value={certificateButtonLabel}
-                      onChange={(e) => setCertificateButtonLabel(e.target.value)}
-                      placeholder="Certificate (เช่น วุฒิบัตร, ใบประกาศ)"
-                      className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-normal text-slate-800 outline-none focus:border-[#000946]"
-                    />
-                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div>
+                      <label className="block text-xs text-slate-600 font-normal mb-1">
+                        ชื่อปุ่ม
+                      </label>
+                      <input
+                        type="text"
+                        value={certificateButtonLabel}
+                        onChange={(e) => setCertificateButtonLabel(e.target.value)}
+                        placeholder="Certificate"
+                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-normal text-slate-800 outline-none focus:border-[#000946]"
+                      />
+                    </div>
 
-                  {/* Template vs Individual Link Selector */}
-                  <div className="pt-1 border-t border-slate-100">
-                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                      รูปแบบการออกเกียรติบัตร
-                    </label>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      <button
-                        type="button"
-                        onClick={() => setCertificateMode('template')}
-                        className={`p-2 rounded-lg border text-left cursor-pointer transition-colors ${
-                          certificateMode === 'template'
-                            ? 'bg-emerald-50/70 border-emerald-400 text-emerald-900 font-medium ring-1 ring-emerald-300'
-                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        <span className="block font-semibold">🎨 ใช้ Template อัตโนมัติ</span>
-                        <span className="text-[11px] text-slate-500 font-normal">กรอกชื่อโครงการ/วันที่ ระบบสร้างให้ทันที</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setCertificateMode('individual_link')}
-                        className={`p-2 rounded-lg border text-left cursor-pointer transition-colors ${
-                          certificateMode === 'individual_link'
-                            ? 'bg-emerald-50/70 border-emerald-400 text-emerald-900 font-medium ring-1 ring-emerald-300'
-                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        <span className="block font-semibold">🔗 แนบลิงก์รายบุคคล</span>
-                        <span className="text-[11px] text-slate-500 font-normal">นำเข้าลิงก์รายคนจากไฟล์ CSV หรือใส่เอง</span>
-                      </button>
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        รูปแบบเกียรติบัตร
+                      </label>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setCertificateMode('template')}
+                          className={`p-1.5 px-2.5 rounded-lg border text-left cursor-pointer transition-colors flex items-center justify-between ${
+                            certificateMode === 'template'
+                              ? 'bg-emerald-50/70 border-emerald-400 text-emerald-900 font-medium ring-1 ring-emerald-300'
+                              : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                          }`}
+                        >
+                          <span className="font-semibold">🎨 Template อัตโนมัติ</span>
+                          <span className="text-[10px] text-slate-500 font-normal">ระบบสร้างให้</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCertificateMode('individual_link')}
+                          className={`p-1.5 px-2.5 rounded-lg border text-left cursor-pointer transition-colors flex items-center justify-between ${
+                            certificateMode === 'individual_link'
+                              ? 'bg-emerald-50/70 border-emerald-400 text-emerald-900 font-medium ring-1 ring-emerald-300'
+                              : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                          }`}
+                        >
+                          <span className="font-semibold">🔗 แนบลิงก์รายบุคคล</span>
+                          <span className="text-[10px] text-slate-500 font-normal">CSV/ใส่เอง</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
 
                   {certificateMode === 'template' ? (
                     <div className="space-y-2.5 pt-1 bg-amber-50/40 p-3 rounded-xl border border-amber-200">
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-800 mb-1">
-                          PROJECT NAME (ชื่อโครงการ/กิจกรรมบนเกียรติบัตร)
-                        </label>
-                        <input
-                          type="text"
-                          value={certificateProjectName}
-                          onChange={(e) => setCertificateProjectName(e.target.value)}
-                          placeholder="เช่น CIVIL AVIATION WORKSHOP 2026 หรือปล่อยว่างเพื่อใช้ชื่อกิจกรรม"
-                          className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-800 outline-none focus:border-[#000946]"
-                        />
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-800 mb-0.5">
+                            ชื่อโครงการบนเกียรติบัตร
+                          </label>
+                          <input
+                            type="text"
+                            value={certificateProjectName}
+                            onChange={(e) => setCertificateProjectName(e.target.value)}
+                            placeholder="เช่น CIVIL AVIATION WORKSHOP 2026 (เว้นว่าง = ใช้ชื่อกิจกรรม)"
+                            className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-800 outline-none focus:border-[#000946]"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-800 mb-0.5">
+                            วันที่ระบุบนเกียรติบัตร
+                          </label>
+                          <input
+                            type="text"
+                            value={certificateDateText}
+                            onChange={(e) => setCertificateDateText(e.target.value)}
+                            placeholder="เช่น 21 ตุลาคม 2569 หรือ 21 October 2026"
+                            className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-800 outline-none focus:border-[#000946]"
+                          />
+                        </div>
                       </div>
 
                       <div>
-                        <label className="block text-xs font-semibold text-slate-800 mb-1">
-                          DATE MONTH YEAR (วันที่ระบุบนเกียรติบัตร)
-                        </label>
-                        <input
-                          type="text"
-                          value={certificateDateText}
-                          onChange={(e) => setCertificateDateText(e.target.value)}
-                          placeholder="เช่น 21 October 2026 หรือ 21 ตุลาคม 2569"
-                          className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-800 outline-none focus:border-[#000946]"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-800 mb-1">
-                          แนบ template (รูปภาพพื้นหลังเกียรติบัตร) <span className="text-red-500">* อัปโหลดเท่านั้น</span>
+                        <label className="block text-xs font-semibold text-slate-800 mb-0.5">
+                          ไฟล์ Template (รูปพื้นหลังเกียรติบัตร) <span className="text-red-500">*</span>
                         </label>
                         <div className="flex items-center gap-2">
                           <input
@@ -1226,12 +1472,12 @@ export default function EditActivityPage({ params }) {
                             </div>
 
                             {/* Canvas Live Preview Container */}
-                            <div className="relative rounded-xl overflow-hidden border border-slate-300 bg-slate-950 flex items-center justify-center min-h-[170px] max-h-[300px]">
+                            <div className="relative rounded-xl overflow-hidden border border-slate-300 bg-slate-950 flex items-center justify-center min-h-[200px] max-h-[380px]">
                               {livePreviewUrl ? (
                                 <img
                                   src={livePreviewUrl}
                                   alt="Certificate Live Preview"
-                                  className="max-h-[280px] w-auto object-contain"
+                                  className="max-h-[360px] w-auto object-contain"
                                 />
                               ) : (
                                 <div className="text-xs text-slate-400 py-6">กำลังประมวลผลตัวอย่าง...</div>
@@ -1257,253 +1503,249 @@ export default function EditActivityPage({ params }) {
                                 <span className="text-[10px] text-slate-500 font-normal">เลื่อนแถบเพื่อขยับข้อความ</span>
                               </div>
 
-                              {/* Section 1: NAME SURNAME */}
-                              <div className="bg-white p-2.5 rounded-lg border border-emerald-200/80 space-y-2">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-xs font-semibold text-emerald-900 flex items-center gap-1.5">
-                                    <span
-                                      className="w-2.5 h-2.5 rounded-full inline-block border border-black/20"
-                                      style={{ backgroundColor: certificateLayout.nameColor || '#063826' }}
-                                    ></span>
-                                    <span>1. ชื่อ-สกุล (NAME SURNAME)</span>
-                                  </span>
-                                  <span className="text-[11px] font-mono text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
-                                    Y: {certificateLayout.nameY}px | ขนาด: {certificateLayout.nameFontSize}px
-                                  </span>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-2 text-xs">
-                                  <div>
-                                    <div className="flex justify-between text-[11px] text-slate-600 mb-0.5">
-                                      <span>ตำแหน่งขึ้น-ลง (Y)</span>
-                                      <span className="font-mono text-slate-700">{certificateLayout.nameY}</span>
-                                    </div>
-                                    <input
-                                      type="range"
-                                      min="150"
-                                      max="600"
-                                      step="1"
-                                      value={certificateLayout.nameY}
-                                      onChange={(e) => setCertificateLayout(p => ({ ...p, nameY: Number(e.target.value) }))}
-                                      className="w-full accent-emerald-600 cursor-pointer"
-                                    />
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+                                {/* Section 1: NAME SURNAME */}
+                                <div className="bg-white p-2.5 rounded-lg border border-emerald-200/80 space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs font-semibold text-emerald-900 flex items-center gap-1.5">
+                                      <span
+                                        className="w-2.5 h-2.5 rounded-full inline-block border border-black/20"
+                                        style={{ backgroundColor: certificateLayout.nameColor || '#063826' }}
+                                      ></span>
+                                      <span>1. ชื่อ-สกุล (NAME)</span>
+                                    </span>
+                                    <span className="text-[10px] font-mono text-emerald-800 bg-emerald-50 px-1 py-0.5 rounded border border-emerald-200">
+                                      Y:{certificateLayout.nameY} | {certificateLayout.nameFontSize}px
+                                    </span>
                                   </div>
-                                  <div>
-                                    <div className="flex justify-between text-[11px] text-slate-600 mb-0.5">
-                                      <span>ขนาดฟอนต์ (Size)</span>
-                                      <span className="font-mono text-slate-700">{certificateLayout.nameFontSize}px</span>
-                                    </div>
-                                    <input
-                                      type="range"
-                                      min="16"
-                                      max="60"
-                                      step="1"
-                                      value={certificateLayout.nameFontSize}
-                                      onChange={(e) => setCertificateLayout(p => ({ ...p, nameFontSize: Number(e.target.value) }))}
-                                      className="w-full accent-emerald-600 cursor-pointer"
-                                    />
-                                  </div>
-                                </div>
 
-                                {/* Color Swatch Box + HEX Text Input */}
-                                <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between text-xs">
-                                  <span className="text-[11px] text-slate-600 font-medium">สีตัวอักษร:</span>
-                                  <div className="flex items-center gap-1.5">
-                                    <label
-                                      className="relative w-6 h-6 rounded-md border border-slate-300 hover:border-slate-400 shadow-2xs cursor-pointer overflow-hidden flex items-center justify-center shrink-0 transition-transform active:scale-95"
-                                      style={{ backgroundColor: certificateLayout.nameColor || '#063826' }}
-                                      title="คลิกเพื่อเลือกสี (Color Picker)"
-                                    >
+                                  <div className="space-y-1.5 text-xs">
+                                    <div>
+                                      <div className="flex justify-between text-[11px] text-slate-600 mb-0.5">
+                                        <span>ตำแหน่ง (Y)</span>
+                                        <span className="font-mono text-slate-700">{certificateLayout.nameY}</span>
+                                      </div>
                                       <input
-                                        type="color"
-                                        value={isValidHex(certificateLayout.nameColor) ? certificateLayout.nameColor : '#063826'}
-                                        onChange={(e) => setCertificateLayout(p => ({ ...p, nameColor: e.target.value }))}
-                                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                                        type="range"
+                                        min="150"
+                                        max="600"
+                                        step="1"
+                                        value={certificateLayout.nameY}
+                                        onChange={(e) => setCertificateLayout(p => ({ ...p, nameY: Number(e.target.value) }))}
+                                        className="w-full accent-emerald-600 cursor-pointer"
                                       />
-                                    </label>
-
-                                    <div className="flex items-center bg-white border border-slate-200 rounded-md overflow-hidden focus-within:border-emerald-600 focus-within:ring-1 focus-within:ring-emerald-600 h-6">
-                                      <span className="px-1 text-[11px] text-slate-400 font-mono select-none">#</span>
+                                    </div>
+                                    <div>
+                                      <div className="flex justify-between text-[11px] text-slate-600 mb-0.5">
+                                        <span>ขนาดฟอนต์</span>
+                                        <span className="font-mono text-slate-700">{certificateLayout.nameFontSize}px</span>
+                                      </div>
                                       <input
-                                        type="text"
-                                        maxLength={6}
-                                        value={(certificateLayout.nameColor || '#063826').replace(/^#/, '')}
-                                        onChange={(e) => {
-                                          const hex = e.target.value.replace(/[^0-9A-Fa-f]/g, '');
-                                          setCertificateLayout(p => ({ ...p, nameColor: '#' + hex }));
-                                        }}
-                                        placeholder="063826"
-                                        className="w-16 py-0.5 pr-1 text-[11px] font-mono uppercase text-slate-800 outline-none"
-                                        title="พิมพ์หรือวางรหัสสี HEX"
+                                        type="range"
+                                        min="16"
+                                        max="60"
+                                        step="1"
+                                        value={certificateLayout.nameFontSize}
+                                        onChange={(e) => setCertificateLayout(p => ({ ...p, nameFontSize: Number(e.target.value) }))}
+                                        className="w-full accent-emerald-600 cursor-pointer"
                                       />
                                     </div>
                                   </div>
-                                </div>
-                              </div>
 
-                              {/* Section 2: PROJECT NAME */}
-                              <div className="bg-white p-2.5 rounded-lg border border-blue-200/80 space-y-2">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-xs font-semibold text-blue-900 flex items-center gap-1.5">
-                                    <span
-                                      className="w-2.5 h-2.5 rounded-full inline-block border border-black/20"
-                                      style={{ backgroundColor: certificateLayout.projectColor || '#1e293b' }}
-                                    ></span>
-                                    <span>2. ชื่อโครงการ (PROJECT NAME)</span>
-                                  </span>
-                                  <span className="text-[11px] font-mono text-blue-800 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
-                                    Y: {certificateLayout.projectY}px | ขนาด: {certificateLayout.projectFontSize}px
-                                  </span>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-2 text-xs">
-                                  <div>
-                                    <div className="flex justify-between text-[11px] text-slate-600 mb-0.5">
-                                      <span>ตำแหน่งขึ้น-ลง (Y)</span>
-                                      <span className="font-mono text-slate-700">{certificateLayout.projectY}</span>
+                                  {/* Color Swatch Box + HEX Text Input */}
+                                  <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between text-xs">
+                                    <span className="text-[11px] text-slate-600 font-medium">สี:</span>
+                                    <div className="flex items-center gap-1.5">
+                                      <label
+                                        className="relative w-5 h-5 rounded-md border border-slate-300 hover:border-slate-400 cursor-pointer overflow-hidden flex items-center justify-center shrink-0"
+                                        style={{ backgroundColor: certificateLayout.nameColor || '#063826' }}
+                                        title="คลิกเพื่อเลือกสี"
+                                      >
+                                        <input
+                                          type="color"
+                                          value={isValidHex(certificateLayout.nameColor) ? certificateLayout.nameColor : '#063826'}
+                                          onChange={(e) => setCertificateLayout(p => ({ ...p, nameColor: e.target.value }))}
+                                          className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                                        />
+                                      </label>
+                                      <div className="flex items-center bg-white border border-slate-200 rounded overflow-hidden h-5">
+                                        <span className="px-0.5 text-[10px] text-slate-400 font-mono">#</span>
+                                        <input
+                                          type="text"
+                                          maxLength={6}
+                                          value={(certificateLayout.nameColor || '#063826').replace(/^#/, '')}
+                                          onChange={(e) => {
+                                            const hex = e.target.value.replace(/[^0-9A-Fa-f]/g, '');
+                                            setCertificateLayout(p => ({ ...p, nameColor: '#' + hex }));
+                                          }}
+                                          placeholder="063826"
+                                          className="w-14 text-[10px] font-mono uppercase text-slate-800 outline-none"
+                                        />
+                                      </div>
                                     </div>
-                                    <input
-                                      type="range"
-                                      min="200"
-                                      max="680"
-                                      step="1"
-                                      value={certificateLayout.projectY}
-                                      onChange={(e) => setCertificateLayout(p => ({ ...p, projectY: Number(e.target.value) }))}
-                                      className="w-full accent-blue-600 cursor-pointer"
-                                    />
-                                  </div>
-                                  <div>
-                                    <div className="flex justify-between text-[11px] text-slate-600 mb-0.5">
-                                      <span>ขนาดฟอนต์ (Size)</span>
-                                      <span className="font-mono text-slate-700">{certificateLayout.projectFontSize}px</span>
-                                    </div>
-                                    <input
-                                      type="range"
-                                      min="12"
-                                      max="44"
-                                      step="1"
-                                      value={certificateLayout.projectFontSize}
-                                      onChange={(e) => setCertificateLayout(p => ({ ...p, projectFontSize: Number(e.target.value) }))}
-                                      className="w-full accent-blue-600 cursor-pointer"
-                                    />
                                   </div>
                                 </div>
 
-                                {/* Color Swatch Box + HEX Text Input */}
-                                <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between text-xs">
-                                  <span className="text-[11px] text-slate-600 font-medium">สีตัวอักษร:</span>
-                                  <div className="flex items-center gap-1.5">
-                                    <label
-                                      className="relative w-6 h-6 rounded-md border border-slate-300 hover:border-slate-400 shadow-2xs cursor-pointer overflow-hidden flex items-center justify-center shrink-0 transition-transform active:scale-95"
-                                      style={{ backgroundColor: certificateLayout.projectColor || '#1e293b' }}
-                                      title="คลิกเพื่อเลือกสี (Color Picker)"
-                                    >
+                                {/* Section 2: PROJECT NAME */}
+                                <div className="bg-white p-2.5 rounded-lg border border-blue-200/80 space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs font-semibold text-blue-900 flex items-center gap-1.5">
+                                      <span
+                                        className="w-2.5 h-2.5 rounded-full inline-block border border-black/20"
+                                        style={{ backgroundColor: certificateLayout.projectColor || '#1e293b' }}
+                                      ></span>
+                                      <span>2. โครงการ (PROJECT)</span>
+                                    </span>
+                                    <span className="text-[10px] font-mono text-blue-800 bg-blue-50 px-1 py-0.5 rounded border border-blue-200">
+                                      Y:{certificateLayout.projectY} | {certificateLayout.projectFontSize}px
+                                    </span>
+                                  </div>
+
+                                  <div className="space-y-1.5 text-xs">
+                                    <div>
+                                      <div className="flex justify-between text-[11px] text-slate-600 mb-0.5">
+                                        <span>ตำแหน่ง (Y)</span>
+                                        <span className="font-mono text-slate-700">{certificateLayout.projectY}</span>
+                                      </div>
                                       <input
-                                        type="color"
-                                        value={isValidHex(certificateLayout.projectColor) ? certificateLayout.projectColor : '#1e293b'}
-                                        onChange={(e) => setCertificateLayout(p => ({ ...p, projectColor: e.target.value }))}
-                                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                                        type="range"
+                                        min="200"
+                                        max="680"
+                                        step="1"
+                                        value={certificateLayout.projectY}
+                                        onChange={(e) => setCertificateLayout(p => ({ ...p, projectY: Number(e.target.value) }))}
+                                        className="w-full accent-blue-600 cursor-pointer"
                                       />
-                                    </label>
-
-                                    <div className="flex items-center bg-white border border-slate-200 rounded-md overflow-hidden focus-within:border-blue-600 focus-within:ring-1 focus-within:ring-blue-600 h-6">
-                                      <span className="px-1 text-[11px] text-slate-400 font-mono select-none">#</span>
+                                    </div>
+                                    <div>
+                                      <div className="flex justify-between text-[11px] text-slate-600 mb-0.5">
+                                        <span>ขนาดฟอนต์</span>
+                                        <span className="font-mono text-slate-700">{certificateLayout.projectFontSize}px</span>
+                                      </div>
                                       <input
-                                        type="text"
-                                        maxLength={6}
-                                        value={(certificateLayout.projectColor || '#1e293b').replace(/^#/, '')}
-                                        onChange={(e) => {
-                                          const hex = e.target.value.replace(/[^0-9A-Fa-f]/g, '');
-                                          setCertificateLayout(p => ({ ...p, projectColor: '#' + hex }));
-                                        }}
-                                        placeholder="1E293B"
-                                        className="w-16 py-0.5 pr-1 text-[11px] font-mono uppercase text-slate-800 outline-none"
-                                        title="พิมพ์หรือวางรหัสสี HEX"
+                                        type="range"
+                                        min="12"
+                                        max="44"
+                                        step="1"
+                                        value={certificateLayout.projectFontSize}
+                                        onChange={(e) => setCertificateLayout(p => ({ ...p, projectFontSize: Number(e.target.value) }))}
+                                        className="w-full accent-blue-600 cursor-pointer"
                                       />
                                     </div>
                                   </div>
-                                </div>
-                              </div>
 
-                              {/* Section 3: DATE MONTH YEAR */}
-                              <div className="bg-white p-2.5 rounded-lg border border-amber-200/80 space-y-2">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-xs font-semibold text-amber-900 flex items-center gap-1.5">
-                                    <span
-                                      className="w-2.5 h-2.5 rounded-full inline-block border border-black/20"
-                                      style={{ backgroundColor: certificateLayout.dateColor || '#1e293b' }}
-                                    ></span>
-                                    <span>3. วันที่ (DATE MONTH YEAR)</span>
-                                  </span>
-                                  <span className="text-[11px] font-mono text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
-                                    Y: {certificateLayout.dateY}px | ขนาด: {certificateLayout.dateFontSize}px
-                                  </span>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-2 text-xs">
-                                  <div>
-                                    <div className="flex justify-between text-[11px] text-slate-600 mb-0.5">
-                                      <span>ตำแหน่งขึ้น-ลง (Y)</span>
-                                      <span className="font-mono text-slate-700">{certificateLayout.dateY}</span>
+                                  {/* Color Swatch Box + HEX Text Input */}
+                                  <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between text-xs">
+                                    <span className="text-[11px] text-slate-600 font-medium">สี:</span>
+                                    <div className="flex items-center gap-1.5">
+                                      <label
+                                        className="relative w-5 h-5 rounded-md border border-slate-300 hover:border-slate-400 cursor-pointer overflow-hidden flex items-center justify-center shrink-0"
+                                        style={{ backgroundColor: certificateLayout.projectColor || '#1e293b' }}
+                                        title="คลิกเพื่อเลือกสี"
+                                      >
+                                        <input
+                                          type="color"
+                                          value={isValidHex(certificateLayout.projectColor) ? certificateLayout.projectColor : '#1e293b'}
+                                          onChange={(e) => setCertificateLayout(p => ({ ...p, projectColor: e.target.value }))}
+                                          className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                                        />
+                                      </label>
+                                      <div className="flex items-center bg-white border border-slate-200 rounded overflow-hidden h-5">
+                                        <span className="px-0.5 text-[10px] text-slate-400 font-mono">#</span>
+                                        <input
+                                          type="text"
+                                          maxLength={6}
+                                          value={(certificateLayout.projectColor || '#1e293b').replace(/^#/, '')}
+                                          onChange={(e) => {
+                                            const hex = e.target.value.replace(/[^0-9A-Fa-f]/g, '');
+                                            setCertificateLayout(p => ({ ...p, projectColor: '#' + hex }));
+                                          }}
+                                          placeholder="1E293B"
+                                          className="w-14 text-[10px] font-mono uppercase text-slate-800 outline-none"
+                                        />
+                                      </div>
                                     </div>
-                                    <input
-                                      type="range"
-                                      min="250"
-                                      max="710"
-                                      step="1"
-                                      value={certificateLayout.dateY}
-                                      onChange={(e) => setCertificateLayout(p => ({ ...p, dateY: Number(e.target.value) }))}
-                                      className="w-full accent-amber-600 cursor-pointer"
-                                    />
-                                  </div>
-                                  <div>
-                                    <div className="flex justify-between text-[11px] text-slate-600 mb-0.5">
-                                      <span>ขนาดฟอนต์ (Size)</span>
-                                      <span className="font-mono text-slate-700">{certificateLayout.dateFontSize}px</span>
-                                    </div>
-                                    <input
-                                      type="range"
-                                      min="10"
-                                      max="32"
-                                      step="1"
-                                      value={certificateLayout.dateFontSize}
-                                      onChange={(e) => setCertificateLayout(p => ({ ...p, dateFontSize: Number(e.target.value) }))}
-                                      className="w-full accent-amber-600 cursor-pointer"
-                                    />
                                   </div>
                                 </div>
 
-                                {/* Color Swatch Box + HEX Text Input */}
-                                <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between text-xs">
-                                  <span className="text-[11px] text-slate-600 font-medium">สีตัวอักษร:</span>
-                                  <div className="flex items-center gap-1.5">
-                                    <label
-                                      className="relative w-6 h-6 rounded-md border border-slate-300 hover:border-slate-400 shadow-2xs cursor-pointer overflow-hidden flex items-center justify-center shrink-0 transition-transform active:scale-95"
-                                      style={{ backgroundColor: certificateLayout.dateColor || '#1e293b' }}
-                                      title="คลิกเพื่อเลือกสี (Color Picker)"
-                                    >
-                                      <input
-                                        type="color"
-                                        value={isValidHex(certificateLayout.dateColor) ? certificateLayout.dateColor : '#1e293b'}
-                                        onChange={(e) => setCertificateLayout(p => ({ ...p, dateColor: e.target.value }))}
-                                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                                      />
-                                    </label>
+                                {/* Section 3: DATE MONTH YEAR */}
+                                <div className="bg-white p-2.5 rounded-lg border border-amber-200/80 space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs font-semibold text-amber-900 flex items-center gap-1.5">
+                                      <span
+                                        className="w-2.5 h-2.5 rounded-full inline-block border border-black/20"
+                                        style={{ backgroundColor: certificateLayout.dateColor || '#1e293b' }}
+                                      ></span>
+                                      <span>3. วันที่ (DATE)</span>
+                                    </span>
+                                    <span className="text-[10px] font-mono text-amber-800 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">
+                                      Y:{certificateLayout.dateY} | {certificateLayout.dateFontSize}px
+                                    </span>
+                                  </div>
 
-                                    <div className="flex items-center bg-white border border-slate-200 rounded-md overflow-hidden focus-within:border-amber-600 focus-within:ring-1 focus-within:ring-amber-600 h-6">
-                                      <span className="px-1 text-[11px] text-slate-400 font-mono select-none">#</span>
+                                  <div className="space-y-1.5 text-xs">
+                                    <div>
+                                      <div className="flex justify-between text-[11px] text-slate-600 mb-0.5">
+                                        <span>ตำแหน่ง (Y)</span>
+                                        <span className="font-mono text-slate-700">{certificateLayout.dateY}</span>
+                                      </div>
                                       <input
-                                        type="text"
-                                        maxLength={6}
-                                        value={(certificateLayout.dateColor || '#1e293b').replace(/^#/, '')}
-                                        onChange={(e) => {
-                                          const hex = e.target.value.replace(/[^0-9A-Fa-f]/g, '');
-                                          setCertificateLayout(p => ({ ...p, dateColor: '#' + hex }));
-                                        }}
-                                        placeholder="1E293B"
-                                        className="w-16 py-0.5 pr-1 text-[11px] font-mono uppercase text-slate-800 outline-none"
-                                        title="พิมพ์หรือวางรหัสสี HEX"
+                                        type="range"
+                                        min="250"
+                                        max="710"
+                                        step="1"
+                                        value={certificateLayout.dateY}
+                                        onChange={(e) => setCertificateLayout(p => ({ ...p, dateY: Number(e.target.value) }))}
+                                        className="w-full accent-amber-600 cursor-pointer"
                                       />
+                                    </div>
+                                    <div>
+                                      <div className="flex justify-between text-[11px] text-slate-600 mb-0.5">
+                                        <span>ขนาดฟอนต์</span>
+                                        <span className="font-mono text-slate-700">{certificateLayout.dateFontSize}px</span>
+                                      </div>
+                                      <input
+                                        type="range"
+                                        min="10"
+                                        max="32"
+                                        step="1"
+                                        value={certificateLayout.dateFontSize}
+                                        onChange={(e) => setCertificateLayout(p => ({ ...p, dateFontSize: Number(e.target.value) }))}
+                                        className="w-full accent-amber-600 cursor-pointer"
+                                      />
+                                    </div>
+                                  </div>
+
+                                  {/* Color Swatch Box + HEX Text Input */}
+                                  <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between text-xs">
+                                    <span className="text-[11px] text-slate-600 font-medium">สี:</span>
+                                    <div className="flex items-center gap-1.5">
+                                      <label
+                                        className="relative w-5 h-5 rounded-md border border-slate-300 hover:border-slate-400 cursor-pointer overflow-hidden flex items-center justify-center shrink-0"
+                                        style={{ backgroundColor: certificateLayout.dateColor || '#1e293b' }}
+                                        title="คลิกเพื่อเลือกสี"
+                                      >
+                                        <input
+                                          type="color"
+                                          value={isValidHex(certificateLayout.dateColor) ? certificateLayout.dateColor : '#1e293b'}
+                                          onChange={(e) => setCertificateLayout(p => ({ ...p, dateColor: e.target.value }))}
+                                          className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                                        />
+                                      </label>
+                                      <div className="flex items-center bg-white border border-slate-200 rounded overflow-hidden h-5">
+                                        <span className="px-0.5 text-[10px] text-slate-400 font-mono">#</span>
+                                        <input
+                                          type="text"
+                                          maxLength={6}
+                                          value={(certificateLayout.dateColor || '#1e293b').replace(/^#/, '')}
+                                          onChange={(e) => {
+                                            const hex = e.target.value.replace(/[^0-9A-Fa-f]/g, '');
+                                            setCertificateLayout(p => ({ ...p, dateColor: '#' + hex }));
+                                          }}
+                                          placeholder="1E293B"
+                                          className="w-14 text-[10px] font-mono uppercase text-slate-800 outline-none"
+                                        />
+                                      </div>
                                     </div>
                                   </div>
                                 </div>
@@ -1511,67 +1753,21 @@ export default function EditActivityPage({ params }) {
                             </div>
                           </div>
                         ) : (
-                          <p className="text-[11px] text-amber-700 mt-1.5 bg-amber-50 p-2 rounded-lg border border-amber-200">
-                            ⚠️ กรุณาอัปโหลดรูปภาพเทมเพลตเกียรติบัตร (PNG/JPG) ที่ไม่มีชื่อผู้เข้าร่วม เพื่อให้ระบบนำไปสร้างใบประกาศอัตโนมัติ
+                          <p className="text-[11px] text-amber-700 mt-1 bg-amber-50 p-2 rounded-lg border border-amber-200">
+                            ⚠️ กรุณาอัปโหลดรูปภาพเทมเพลตเกียรติบัตร (PNG/JPG)
                           </p>
                         )}
                       </div>
                     </div>
                   ) : (
-                    <div className="text-xs text-slate-500 bg-slate-50 p-2.5 rounded-lg border border-slate-100 font-normal leading-relaxed">
-                      💡 <span className="font-semibold text-slate-700">ลิงก์รายบุคคล:</span> แอดมินสามารถแนบลิงก์เกียรติบัตรของผู้สมัครแต่ละคนได้ในหน้าจัดการผู้ลงทะเบียน หรือนำเข้าจากไฟล์ CSV
+                    <div className="text-xs text-slate-500 bg-slate-50 p-2.5 rounded-lg border border-slate-100 font-normal">
+                      💡 <span className="font-semibold text-slate-700">ลิงก์รายบุคคล:</span> แนบลิงก์รายบุคคลในหน้ารายชื่อผู้ลงทะเบียน หรือนำเข้าจาก CSV
                     </div>
                   )}
                 </div>
-
-                {/* 2. Photo Button Configuration */}
-                <div className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
-                      <span>📷</span>
-                      <span>ปุ่ม Photo (รูปภาพกิจกรรม)</span>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setEnablePhoto(!enablePhoto)}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-normal border transition-colors shrink-0 whitespace-nowrap cursor-pointer ${
-                        enablePhoto
-                          ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                          : 'bg-white text-slate-600 border-slate-300'
-                      }`}
-                    >
-                      {enablePhoto ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}
-                    </button>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-600 font-normal mb-1">
-                      ชื่อปุ่ม (เปลี่ยนได้ตามต้องการ)
-                    </label>
-                    <input
-                      type="text"
-                      value={photoButtonLabel}
-                      onChange={(e) => setPhotoButtonLabel(e.target.value)}
-                      placeholder="Photo (เช่น รูปภาพกิจกรรม, บรรยากาศงาน)"
-                      className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-normal text-slate-800 outline-none focus:border-[#000946]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-600 font-normal mb-1">
-                      ลิงก์อัลบั้มรูปภาพกิจกรรม (ใช้ลิงก์เดียวกันทั้งโครงการ)
-                    </label>
-                    <input
-                      type="url"
-                      value={photoUrl}
-                      onChange={(e) => setPhotoUrl(e.target.value)}
-                      placeholder="https://drive.google.com/... หรือ Google Photos"
-                      className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-normal text-slate-800 outline-none focus:border-[#000946]"
-                    />
-                  </div>
-                </div>
               </div>
             </div>
+          )}
           </div>
 
           {message && (
