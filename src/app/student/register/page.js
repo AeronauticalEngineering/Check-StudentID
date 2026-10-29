@@ -353,7 +353,7 @@ function RegistrationComponent() {
         {hasQuotaConfig && (
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2.5">
             <label className="block text-sm font-bold text-slate-800">
-              ประเภทโควตาที่ต้องการสมัคร
+              ประเภทที่ต้องการสมัคร
             </label>
 
             <div className="relative">
@@ -364,7 +364,7 @@ function RegistrationComponent() {
               >
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-[#000946]"></span>
-                  <span className="font-semibold text-slate-800">{selectedQuota || 'เลือกประเภทโควตา'}</span>
+                  <span className="font-semibold text-slate-800">{selectedQuota || 'เลือกประเภท'}</span>
                 </div>
                 <svg
                   className={`w-4 h-4 text-slate-500 transition-transform duration-200 ${isQuotaDropdownOpen ? 'rotate-180 text-[#000946]' : ''}`}

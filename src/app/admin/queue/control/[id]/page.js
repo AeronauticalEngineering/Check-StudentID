@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, use, useMemo } from 'react';
 import { db } from '../../../../../lib/firebase';
 import {
-    doc, getDoc, collection, query, where, onSnapshot, writeBatch, serverTimestamp, getDocs, limit, updateDoc, orderBy
+    doc, getDoc, collection, query, where, onSnapshot, writeBatch, serverTimestamp, getDocs, limit, updateDoc, orderBy, runTransaction
 } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import { createQueueCallFlex } from '../../../../../lib/flexMessageTemplates';
@@ -228,31 +228,73 @@ export default function QueueControlPage({ params }) {
         return null;
     };
 
-    const callSpecificRegistrant = async (registrant) => {
+    const extractTrailingQueueNum = (reg) => {
+        if (reg?.displayQueueNumber) {
+            const str = String(reg.displayQueueNumber).trim();
+            const afterDash = str.includes('-') ? str.split('-').pop().trim() : str;
+            const match = afterDash.match(/(\d+)\s*$/);
+            if (match) return parseInt(match[1], 10);
+        }
+        const fb = Number(reg?.queueNumber);
+        return !isNaN(fb) && fb > 0 ? fb : 999999;
+    };
+
+    const findChannelActiveRegistrant = () => {
+        if (!channel) return null;
+        if (channel.currentCandidateId) {
+            return registrants.find(r => r.id === channel.currentCandidateId) || null;
+        }
+        const activeQ = channel.currentDisplayQueueNumber || channel.currentQueue;
+        if (!activeQ) return null;
+        return registrants.find(r => {
+            if (r.currentChannelId && String(r.currentChannelId) !== String(channel.id)) return false;
+            if (channel.servingCourse && r.course && r.course !== channel.servingCourse) return false;
+            return r.displayQueueNumber === activeQ;
+        }) || null;
+    };
+
+    const callSpecificRegistrant = async (registrant, options = { silentOnConflict: false }) => {
         try {
-            const batch = writeBatch(db);
-            const channelRef = doc(db, 'queueChannels', channel.id);
-            const timestamp = new Date().getTime();
-
-            batch.update(channelRef, {
-                currentQueueNumber: registrant.queueNumber || null,
-                currentDisplayQueueNumber: registrant.displayQueueNumber || null,
-                currentQueue: registrant.displayQueueNumber || null,
-                currentStudentName: registrant.fullName || null,
-                status: 'calling',
-                lastCalledAt: serverTimestamp(),
-                pingId: timestamp
-            });
-
             const channelExaminersCombined = [channel.examiner1, channel.examiner2].filter(Boolean).join(', ') || examinerName || 'Examiner';
             const channelExaminersArray = [channel.examiner1, channel.examiner2].filter(Boolean);
+            const chName = channel.name || channel.channelName || `โต๊ะที่ ${channel.channelNumber}`;
+            const currentActiveOnChannel = findChannelActiveRegistrant();
+            const prevReg =
+                currentActiveOnChannel && currentActiveOnChannel.id !== registrant.id
+                    ? currentActiveOnChannel
+                    : null;
 
-            // Auto-complete previous candidate on this channel if they were being served
-            if (channel.currentDisplayQueueNumber && channel.currentDisplayQueueNumber !== registrant.displayQueueNumber) {
-                const prevReg = registrants.find(r => r.displayQueueNumber === channel.currentDisplayQueueNumber && r.id !== registrant.id);
+            await runTransaction(db, async (transaction) => {
+                const regRef = doc(db, 'registrations', registrant.id);
+                const regSnap = await transaction.get(regRef);
+                if (!regSnap.exists()) {
+                    throw new Error('ไม่พบข้อมูลผู้สมัครในระบบ');
+                }
+                const liveReg = regSnap.data();
+                const liveStatus = (liveReg.status || '').trim();
+                const liveQueueStatus = (liveReg.queueStatus || '').trim();
+                const claimedChannelId = liveReg.currentChannelId || liveReg.interviewedChannelId;
+                const claimedChannelName = liveReg.currentChannelName || liveReg.interviewedChannelName;
+                const isAlreadyOnThisDesk =
+                    (claimedChannelId && String(claimedChannelId) === String(channel.id)) ||
+                    (!claimedChannelId && claimedChannelName && claimedChannelName === chName);
+
+                const isActivelyInProgress =
+                    liveStatus === 'interviewing' ||
+                    liveStatus === 'calling' ||
+                    liveQueueStatus === 'calling';
+
+                if (isActivelyInProgress && !isAlreadyOnThisDesk) {
+                    throw new Error(`QUEUE_TAKEN:${claimedChannelName || 'โต๊ะอื่น'}`);
+                }
+
+                if (options.requireWaiting && (isActivelyInProgress || Boolean(liveReg.calledAt))) {
+                    throw new Error(`QUEUE_TAKEN:${claimedChannelName || 'โต๊ะอื่น'}`);
+                }
+
                 if (prevReg && prevReg.status !== 'completed' && prevReg.status !== 'evaluated') {
                     const prevRegRef = doc(db, 'registrations', prevReg.id);
-                    batch.update(prevRegRef, {
+                    transaction.update(prevRegRef, {
                         status: 'completed',
                         queueStatus: 'completed',
                         interviewedAt: serverTimestamp(),
@@ -261,16 +303,31 @@ export default function QueueControlPage({ params }) {
                         examiners: channelExaminersArray
                     });
                 }
-            }
 
-            const regRef = doc(db, 'registrations', registrant.id);
-            batch.update(regRef, {
-                calledAt: serverTimestamp(),
-                status: 'interviewing',
-                interviewedBy: channelExaminersCombined,
-                examiners: channelExaminersArray
+                const channelRef = doc(db, 'queueChannels', channel.id);
+                transaction.update(channelRef, {
+                    currentCandidateId: registrant.id,
+                    currentQueueNumber: registrant.queueNumber || null,
+                    currentDisplayQueueNumber: registrant.displayQueueNumber || null,
+                    currentQueue: registrant.displayQueueNumber || null,
+                    currentStudentName: registrant.fullName || null,
+                    status: 'calling',
+                    lastCalledAt: serverTimestamp(),
+                    pingId: Date.now()
+                });
+
+                transaction.update(regRef, {
+                    calledAt: serverTimestamp(),
+                    status: 'interviewing',
+                    queueStatus: 'calling',
+                    currentChannelId: channel.id,
+                    currentChannelName: chName,
+                    interviewedChannelId: channel.id,
+                    interviewedChannelName: chName,
+                    interviewedBy: channelExaminersCombined,
+                    examiners: channelExaminersArray
+                });
             });
-            await batch.commit();
 
             const lineUserId = registrant.lineUserId || await findLineUserId(registrant.nationalId);
             const isRealLineUser = typeof lineUserId === 'string' && /^[UCR][0-9a-fA-F]{32}$/.test(lineUserId.trim());
@@ -293,23 +350,38 @@ export default function QueueControlPage({ params }) {
                     })
                 }).catch(e => console.warn("Line notification skipped or failed:", e));
             }
-
+            return { ok: true };
         } catch (error) {
+            const msg = error?.message || '';
+            if (msg.startsWith('QUEUE_TAKEN:')) {
+                const takenBy = msg.replace('QUEUE_TAKEN:', '');
+                if (!options.silentOnConflict) {
+                    showAlert({
+                        title: 'คิวนี้ถูกเรียกไปแล้ว',
+                        message: `คิว ${registrant.displayQueueNumber} ถูกเรียกโดย "${takenBy}" ไปเมื่อสักครู่นี้แล้ว`,
+                        type: 'warning'
+                    });
+                }
+                return { ok: false, reason: 'conflict' };
+            }
             console.error("Error calling queue:", error);
-            showAlert({
-                title: 'เกิดข้อผิดพลาด',
-                message: `ไม่สามารถเรียกคิวได้: ${error.message}`,
-                type: 'error'
-            });
+            if (!options.silentOnConflict) {
+                showAlert({
+                    title: 'เกิดข้อผิดพลาด',
+                    message: `ไม่สามารถเรียกคิวได้: ${msg}`,
+                    type: 'error'
+                });
+            }
+            return { ok: false, reason: 'error' };
         }
     };
 
     const handleCallNext = async () => {
         const waitingForCourse = registrants
-            .filter(r => (!channel.servingCourse || r.course === channel.servingCourse) && r.status === 'checked-in' && !r.calledAt)
+            .filter(r => (!channel.servingCourse || r.course === channel.servingCourse) && r.status === 'checked-in' && !r.calledAt && (!r.currentChannelId || String(r.currentChannelId) === String(channel.id)))
             .sort((a, b) => {
-                const numA = parseInt(a.displayQueueNumber?.replace(/\D/g, '') || a.queueNumber || '0');
-                const numB = parseInt(b.displayQueueNumber?.replace(/\D/g, '') || b.queueNumber || '0');
+                const numA = extractTrailingQueueNum(a);
+                const numB = extractTrailingQueueNum(b);
                 if (numA !== numB) return numA - numB;
                 const timeA = a.checkedInAt?.toMillis?.() || a.checkedInAt?.seconds || 0;
                 const timeB = b.checkedInAt?.toMillis?.() || b.checkedInAt?.seconds || 0;
@@ -326,15 +398,18 @@ export default function QueueControlPage({ params }) {
             });
             return;
         }
-        const nextInQueue = waitingForCourse[0];
-        await callSpecificRegistrant(nextInQueue);
+        for (let i = 0; i < Math.min(waitingForCourse.length, 8); i++) {
+            const res = await callSpecificRegistrant(waitingForCourse[i], { silentOnConflict: true, requireWaiting: true });
+            if (res?.ok) return;
+            if (res?.reason !== 'conflict') return;
+        }
     };
 
     const handleCompleteCurrent = async () => {
-        if (!channel.currentDisplayQueueNumber) return;
+        if (!channel.currentDisplayQueueNumber && !channel.currentCandidateId) return;
         try {
             const batch = writeBatch(db);
-            const currentReg = registrants.find(r => r.displayQueueNumber === channel.currentDisplayQueueNumber);
+            const currentReg = findChannelActiveRegistrant();
             const channelExaminersCombined = [channel.examiner1, channel.examiner2].filter(Boolean).join(', ') || examinerName || 'Examiner';
             const channelExaminersArray = [channel.examiner1, channel.examiner2].filter(Boolean);
 
@@ -351,6 +426,7 @@ export default function QueueControlPage({ params }) {
             }
             const channelRef = doc(db, 'queueChannels', channel.id);
             batch.update(channelRef, {
+                currentCandidateId: null,
                 currentQueueNumber: null,
                 currentDisplayQueueNumber: null,
                 currentQueue: null,
@@ -367,7 +443,7 @@ export default function QueueControlPage({ params }) {
     };
 
     const handleRecall = async () => {
-        if (!channel.currentDisplayQueueNumber) {
+        if (!channel.currentDisplayQueueNumber && !channel.currentCandidateId) {
             showAlert({
                 title: 'แจ้งเตือน',
                 message: 'ยังไม่มีคิวที่ถูกเรียกในช่องนี้',
@@ -376,9 +452,7 @@ export default function QueueControlPage({ params }) {
             return;
         }
 
-        const currentRegistrant = registrants.find(r =>
-            r.displayQueueNumber === channel.currentDisplayQueueNumber
-        );
+        const currentRegistrant = findChannelActiveRegistrant();
 
         if (!currentRegistrant) {
             showAlert({
@@ -398,10 +472,10 @@ export default function QueueControlPage({ params }) {
     if (!channel) return <div className="text-center p-12 text-slate-500 text-xs font-sans">ไม่พบช่องบริการ</div>;
 
     const waitingRegistrants = registrants
-        .filter(r => (!channel.servingCourse || r.course === channel.servingCourse) && r.status === 'checked-in' && !r.calledAt)
+        .filter(r => (!channel.servingCourse || r.course === channel.servingCourse) && r.status === 'checked-in' && !r.calledAt && (!r.currentChannelId || String(r.currentChannelId) === String(channel.id)))
         .sort((a, b) => {
-            const numA = parseInt(a.displayQueueNumber?.replace(/\D/g, '') || a.queueNumber || '0');
-            const numB = parseInt(b.displayQueueNumber?.replace(/\D/g, '') || b.queueNumber || '0');
+            const numA = extractTrailingQueueNum(a);
+            const numB = extractTrailingQueueNum(b);
             if (numA !== numB) return numA - numB;
             const timeA = a.checkedInAt?.toMillis?.() || a.checkedInAt?.seconds || 0;
             const timeB = b.checkedInAt?.toMillis?.() || b.checkedInAt?.seconds || 0;
@@ -530,29 +604,30 @@ export default function QueueControlPage({ params }) {
                         )}
 
                         {/* Examiner Scoring Button */}
-                        {activity?.enableScoring && (
-                            <button
-                                onClick={() => {
-                                    const currentReg = registrants.find(r => r.displayQueueNumber === channel.currentDisplayQueueNumber);
-                                    if (currentReg) setScoringRegistrant(currentReg);
-                                    else showAlert({ title: 'แจ้งเตือน', message: 'กรุณาเรียกคิวก่อนบันทึกคะแนน', type: 'warning' });
-                                }}
-
-                                disabled={!channel.currentDisplayQueueNumber}
-                                className={`w-full py-2.5 rounded-lg text-xs font-bold transition-all active:scale-95 flex items-center justify-center gap-2 border cursor-pointer ${
-                                    registrants.find(r => r.displayQueueNumber === channel.currentDisplayQueueNumber)?.evaluationScore?.isScored
-                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100'
-                                        : 'bg-teal-50 text-[#166E7C] border-teal-200 hover:bg-teal-100'
-                                } disabled:opacity-40 disabled:cursor-not-allowed`}
-                            >
-                                <span>📝</span>
-                                <span>
-                                    {registrants.find(r => r.displayQueueNumber === channel.currentDisplayQueueNumber)?.evaluationScore?.isScored
-                                        ? `บันทึกคะแนนแล้ว: ${registrants.find(r => r.displayQueueNumber === channel.currentDisplayQueueNumber)?.evaluationScore?.finalTotalScore} (แก้ไข)`
-                                        : 'บันทึกคะแนน / รูปถ่ายหลักฐาน'}
-                                </span>
-                            </button>
-                        )}
+                        {activity?.enableScoring && (() => {
+                            const activeRegForScore = findChannelActiveRegistrant();
+                            return (
+                                <button
+                                    onClick={() => {
+                                        if (activeRegForScore) setScoringRegistrant(activeRegForScore);
+                                        else showAlert({ title: 'แจ้งเตือน', message: 'กรุณาเรียกคิวก่อนบันทึกคะแนน', type: 'warning' });
+                                    }}
+                                    disabled={!channel.currentDisplayQueueNumber && !channel.currentCandidateId}
+                                    className={`w-full py-2.5 rounded-lg text-xs font-bold transition-all active:scale-95 flex items-center justify-center gap-2 border cursor-pointer ${
+                                        activeRegForScore?.evaluationScore?.isScored
+                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100'
+                                            : 'bg-teal-50 text-[#166E7C] border-teal-200 hover:bg-teal-100'
+                                    } disabled:opacity-40 disabled:cursor-not-allowed`}
+                                >
+                                    <span>📝</span>
+                                    <span>
+                                        {activeRegForScore?.evaluationScore?.isScored
+                                            ? `บันทึกคะแนนแล้ว: ${activeRegForScore?.evaluationScore?.finalTotalScore} (แก้ไข)`
+                                            : 'บันทึกคะแนน / รูปถ่ายหลักฐาน'}
+                                    </span>
+                                </button>
+                            );
+                        })()}
 
                         <button
                             onClick={handleRecall}

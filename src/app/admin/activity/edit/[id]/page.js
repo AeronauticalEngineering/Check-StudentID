@@ -268,7 +268,7 @@ export default function EditActivityPage({ params }) {
 
   // Quota Criteria helpers
   const handleAddQuotaGroup = () => {
-    const name = prompt('กรุณาระบุชื่อประเภทโควตา (เช่น เรียนดี, ความสามารถพิเศษ):');
+    const name = prompt('กรุณาระบุชื่อประเภท (เช่น เรียนดี, ความสามารถพิเศษ):');
     if (!name || !name.trim()) return;
     setQuotaCriteriaList([
       ...quotaCriteriaList,
@@ -282,9 +282,9 @@ export default function EditActivityPage({ params }) {
   const handleRemoveQuotaGroup = async (index) => {
     const confirmed = await showConfirm({
       title: 'ยืนยันการลบ',
-      message: 'ต้องการลบกลุ่มโควตานี้ใช่หรือไม่?',
+      message: 'ต้องการลบกลุ่มประเภทนี้ใช่หรือไม่?',
       type: 'danger',
-      confirmText: 'ลบกลุ่มโควตา',
+      confirmText: 'ลบกลุ่มประเภท',
       cancelText: 'ยกเลิก'
     });
     if (confirmed) {
@@ -900,7 +900,7 @@ export default function EditActivityPage({ params }) {
                     ตั้งค่าเกณฑ์คะแนนและเอกสารแนบ
                   </h3>
                   <p className="text-sm text-indigo-700 font-normal mt-0.5">
-                    กำหนดหัวข้อคะแนนทั่วไป, คะแนนเฉพาะตามโควตา, และเอกสารที่นักเรียนต้องแนบ
+                    กำหนดหัวข้อคะแนนทั่วไป, คะแนนเฉพาะตามประเภท, และเอกสารที่นักเรียนต้องแนบ
                   </p>
                 </div>
 
@@ -960,13 +960,13 @@ export default function EditActivityPage({ params }) {
                 {/* 2. Quota-Specific Criteria Section */}
                 <div className="bg-white p-4 rounded-xl border border-indigo-100 space-y-3">
                   <div className="flex items-center justify-between flex-wrap gap-2">
-                    <span className="text-sm font-bold text-slate-800">2. เกณฑ์คะแนนเฉพาะตามโควตา (Quota Criteria)</span>
+                    <span className="text-sm font-bold text-slate-800">2. เกณฑ์คะแนนเฉพาะตามประเภท (Type Criteria)</span>
                     <button
                       type="button"
                       onClick={handleAddQuotaGroup}
                       className="px-3 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-sm font-normal rounded-lg border border-indigo-200 transition-colors"
                     >
-                      + เพิ่มประเภทโควตา
+                      + เพิ่มประเภท
                     </button>
                   </div>
 
@@ -977,7 +977,7 @@ export default function EditActivityPage({ params }) {
                         <div key={qIdx} className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-2.5">
                           <div className="flex items-center justify-between flex-wrap gap-2">
                             <div className="flex items-center gap-2">
-                              <span className="text-sm font-bold text-indigo-900">โควตา: {quotaGroup.quotaName}</span>
+                              <span className="text-sm font-bold text-indigo-900">ประเภท: {quotaGroup.quotaName}</span>
                               <span className="text-sm px-2.5 py-0.5 rounded-full font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
                                 คะแนนเต็มรวม: {quotaMaxSum} คะแนน
                               </span>
@@ -995,7 +995,7 @@ export default function EditActivityPage({ params }) {
                                 onClick={() => handleRemoveQuotaGroup(qIdx)}
                                 className="text-sm text-red-500 hover:underline font-normal"
                               >
-                                ลบโควตานี้
+                                ลบประเภทนี้
                               </button>
                             </div>
                           </div>

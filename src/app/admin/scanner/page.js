@@ -432,7 +432,7 @@ export default function UniversalScannerPage() {
         const parsed = JSON.parse(qrPayload);
         registrationId = parsed.registrationId || parsed.id || qrPayload;
         explicitAction = parsed.action;
-      } catch {}
+      } catch { }
 
       const regRef = doc(db, 'registrations', registrationId);
       const regDoc = await getDoc(regRef);
@@ -576,143 +576,104 @@ export default function UniversalScannerPage() {
         let finalQueueData;
 
         if (activity.type === 'queue') {
-          if (registration.displayQueueNumber) {
-            const result = await runTransaction(db, async (transaction) => {
-              const regRef = doc(db, 'registrations', registration.id);
-              const activityRef = doc(db, 'activities', activity.id);
-              const existingDisplayQueue = registration.displayQueueNumber;
-
-              const activityDoc = await transaction.get(activityRef);
-
-              const registrationsRef = collection(db, 'registrations');
-              const duplicateQuery = query(registrationsRef,
-                where("activityId", "==", activity.id),
-                where("displayQueueNumber", "==", existingDisplayQueue),
-                where("status", "in", ["checked-in", "completed"])
-              );
-              const duplicateSnapshot = await getDocs(duplicateQuery);
-
-              let finalDisplayQueue = existingDisplayQueue;
-              let finalQueueNumber;
-              let needsNewQueue = false;
-
-              if (!duplicateSnapshot.empty) {
-                needsNewQueue = true;
-                const courseName = registration.course;
-                const allRegsQuery = query(registrationsRef,
-                  where("activityId", "==", activity.id),
-                  where("course", "==", courseName)
-                );
-                const allRegsSnapshot = await getDocs(allRegsQuery);
-
-                let maxQueueNumber = 0;
-                allRegsSnapshot.forEach((docSnap) => {
-                  const data = docSnap.data();
-                  if (data.displayQueueNumber) {
-                    const extractedNum = parseInt(data.displayQueueNumber.replace(/\D/g, ''), 10) || 0;
-                    if (extractedNum > maxQueueNumber) {
-                      maxQueueNumber = extractedNum;
-                    }
-                  }
-                  if (data.queueNumber && data.queueNumber > maxQueueNumber) {
-                    maxQueueNumber = data.queueNumber;
-                  }
-                });
-
-                finalQueueNumber = maxQueueNumber + 1;
-                const courseInfo = courseOptions.find(c => c.name === courseName);
-                const prefix = courseInfo?.shortName || '';
-                const paddedNumber = String(finalQueueNumber).padStart(3, '0');
-                finalDisplayQueue = `${prefix}-${paddedNumber}`;
-              } else {
-                finalQueueNumber = parseInt(existingDisplayQueue.replace(/\D/g, ''), 10) || 0;
+          const extractTrailingNum = (dispQ, fallbackNum = 0) => {
+            if (dispQ) {
+              const str = String(dispQ).trim();
+              const afterDash = str.includes('-') ? str.split('-').pop().trim() : str;
+              const match = afterDash.match(/(\d+)\s*$/);
+              if (match) {
+                const parsed = parseInt(match[1], 10);
+                if (!isNaN(parsed) && parsed > 0) return parsed;
               }
+            }
+            const fb = Number(fallbackNum);
+            return !isNaN(fb) && fb > 0 ? fb : 0;
+          };
 
-              transaction.update(regRef, {
-                status: 'checked-in',
-                queueNumber: finalQueueNumber,
-                ...(needsNewQueue && { displayQueueNumber: finalDisplayQueue })
-              });
+          const courseName = registration.course || '';
+          const registrationsRef = collection(db, 'registrations');
+          const allRegsQuery = query(
+            registrationsRef,
+            where("activityId", "==", activity.id),
+            where("course", "==", courseName)
+          );
+          const allRegsSnapshot = await getDocs(allRegsQuery);
 
-              if (activityDoc.exists()) {
-                const activityData = activityDoc.data();
-                const courseName = registration.course;
-                let currentCounters = activityData.queueCounters || {};
+          const result = await runTransaction(db, async (transaction) => {
+            const regRef = doc(db, 'registrations', registration.id);
+            const regDoc = await transaction.get(regRef);
+            if (!regDoc.exists()) throw new Error("ไม่พบข้อมูลผู้ลงทะเบียน");
+            const regData = regDoc.data();
 
-                if (finalQueueNumber > (currentCounters[courseName] || 0)) {
-                  const newCounters = { ...currentCounters, [courseName]: finalQueueNumber };
-                  transaction.update(activityRef, { queueCounters: newCounters });
+            const activityRef = doc(db, 'activities', activity.id);
+            const activityDoc = await transaction.get(activityRef);
+            const activityData = activityDoc.exists() ? activityDoc.data() : {};
+            const currentCounters = activityData.queueCounters || {};
+
+            let maxQueueNumber = 0;
+            const usedQueueNumbers = new Set();
+            let isDuplicateDisplayQueue = false;
+            const existingDisplayQueue = (regData.displayQueueNumber || registration.displayQueueNumber || '').trim();
+
+            allRegsSnapshot.forEach((docSnap) => {
+              if (docSnap.id === registration.id) return;
+              const data = docSnap.data();
+              const extractedNum = extractTrailingNum(data.displayQueueNumber, data.queueNumber);
+              if (extractedNum > 0) {
+                usedQueueNumbers.add(extractedNum);
+                if (extractedNum > maxQueueNumber) {
+                  maxQueueNumber = extractedNum;
                 }
               }
-
-              return { ...registration, queueNumber: finalQueueNumber, displayQueueNumber: finalDisplayQueue };
-            });
-            finalQueueData = result;
-            successMessage = `✅ สำเร็จ! ${finalQueueData.fullName} ได้รับคิว ${finalQueueData.displayQueueNumber} (${finalQueueData.course})`;
-          } else {
-            const result = await runTransaction(db, async (transaction) => {
-              const regRef = doc(db, 'registrations', registration.id);
-              const regDoc = await transaction.get(regRef);
-              if (!regDoc.exists()) throw new Error("ไม่พบข้อมูล");
-              const regData = regDoc.data();
-              if (!regData.course) throw new Error('นักเรียนยังไม่ได้ถูกกำหนดหลักสูตร');
-
-              const courseName = regData.course;
-              const activityRef = doc(db, 'activities', selectedActivity.id);
-              const activityDoc = await transaction.get(activityRef);
-
-              if (!activityDoc.exists()) throw new Error('ไม่พบข้อมูลกิจกรรม');
-
-              const activityData = activityDoc.data();
-              let currentCounters = activityData.queueCounters || {};
-              let nextQueueNumber;
-
-              if (currentCounters[courseName] !== undefined) {
-                nextQueueNumber = currentCounters[courseName] + 1;
-              } else {
-                const registrationsRef = collection(db, 'registrations');
-                const allRegsQuery = query(registrationsRef,
-                  where("activityId", "==", selectedActivity.id),
-                  where("course", "==", courseName)
-                );
-                const allRegsSnapshot = await getDocs(allRegsQuery);
-
-                let maxQueueNumber = 0;
-                allRegsSnapshot.forEach((docSnap) => {
-                  const data = docSnap.data();
-                  if (data.displayQueueNumber) {
-                    const extractedNum = parseInt(data.displayQueueNumber.replace(/\D/g, ''), 10) || 0;
-                    if (extractedNum > maxQueueNumber) {
-                      maxQueueNumber = extractedNum;
-                    }
-                  }
-                  if (data.queueNumber && data.queueNumber > maxQueueNumber) {
-                    maxQueueNumber = data.queueNumber;
-                  }
-                });
-
-                nextQueueNumber = maxQueueNumber + 1;
+              if (
+                existingDisplayQueue &&
+                String(data.displayQueueNumber || '').trim() === existingDisplayQueue &&
+                data.status !== 'registered' &&
+                data.status !== 'cancelled'
+              ) {
+                isDuplicateDisplayQueue = true;
               }
-
-              const courseInfo = courseOptions.find(c => c.name === courseName);
-              const prefix = courseInfo?.shortName || '';
-              const paddedNumber = String(nextQueueNumber).padStart(3, '0');
-              const displayQueueNumber = `${prefix}-${paddedNumber}`;
-
-              const newCounters = { ...currentCounters, [courseName]: nextQueueNumber };
-              transaction.update(activityRef, { queueCounters: newCounters });
-
-              transaction.update(regRef, {
-                status: 'checked-in',
-                queueNumber: nextQueueNumber,
-                displayQueueNumber: displayQueueNumber
-              });
-
-              return { ...regData, queueNumber: nextQueueNumber, displayQueueNumber };
             });
-            finalQueueData = result;
-            successMessage = `✅ สำเร็จ! ${finalQueueData.fullName} ได้รับคิว ${finalQueueData.displayQueueNumber} (${finalQueueData.course})`;
-          }
+
+            const courseInfo = courseOptions.find(c => c.name === (regData.course || courseName));
+            const rawPrefix = (regData.courseCode || courseInfo?.shortName || '').trim();
+
+            let finalQueueNumber;
+            let finalDisplayQueue;
+
+            if (existingDisplayQueue && !isDuplicateDisplayQueue) {
+              finalDisplayQueue = existingDisplayQueue;
+              finalQueueNumber = extractTrailingNum(existingDisplayQueue, regData.queueNumber) || (maxQueueNumber + 1);
+            } else {
+              let candidateNum = Math.max(Number(currentCounters[courseName] || 0), maxQueueNumber) + 1;
+              while (usedQueueNumbers.has(candidateNum)) {
+                candidateNum++;
+              }
+              finalQueueNumber = candidateNum;
+              const paddedNumber = String(finalQueueNumber).padStart(3, '0');
+              finalDisplayQueue = rawPrefix ? `${rawPrefix}-${paddedNumber}` : `Q-${paddedNumber}`;
+            }
+
+            transaction.update(regRef, {
+              status: 'checked-in',
+              queueStatus: 'waiting',
+              checkedIn: true,
+              checkedInAt: serverTimestamp(),
+              queueNumber: finalQueueNumber,
+              displayQueueNumber: finalDisplayQueue
+            });
+
+            if (activityDoc.exists() && courseName) {
+              const updatedCounterVal = Math.max(Number(currentCounters[courseName] || 0), finalQueueNumber, maxQueueNumber);
+              const newCounters = { ...currentCounters, [courseName]: updatedCounterVal };
+              transaction.update(activityRef, { queueCounters: newCounters });
+            }
+
+            return { ...registration, ...regData, queueNumber: finalQueueNumber, displayQueueNumber: finalDisplayQueue };
+          });
+
+          finalQueueData = result;
+          successMessage = `✅ สำเร็จ! ${finalQueueData.fullName} ได้รับคิว ${finalQueueData.displayQueueNumber} (${finalQueueData.course || '-'})`;
 
           await addDoc(collection(db, 'checkInLogs'), {
             activityId: activity.id,
@@ -855,11 +816,10 @@ export default function UniversalScannerPage() {
                 <button
                   type="button"
                   onClick={() => handleModeChange('check-in', 'scan')}
-                  className={`py-2 px-2.5 rounded-lg transition-all flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer ${
-                    scanMode === 'check-in'
+                  className={`py-2 px-2.5 rounded-lg transition-all flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer ${scanMode === 'check-in'
                       ? 'bg-emerald-600 text-white shadow-2xs'
                       : 'text-slate-600 hover:text-slate-900'
-                  }`}
+                    }`}
                 >
                   <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
@@ -871,11 +831,10 @@ export default function UniversalScannerPage() {
                   <button
                     type="button"
                     onClick={() => handleModeChange('station', 'scan')}
-                    className={`py-2 px-2.5 rounded-lg transition-all flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer ${
-                      scanMode === 'station'
+                    className={`py-2 px-2.5 rounded-lg transition-all flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer ${scanMode === 'station'
                         ? 'bg-[#ff741f] text-white shadow-2xs'
                         : 'text-slate-600 hover:text-slate-900'
-                    }`}
+                      }`}
                   >
                     <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
@@ -887,11 +846,10 @@ export default function UniversalScannerPage() {
                 <button
                   type="button"
                   onClick={() => handleModeChange('check-out', 'scan')}
-                  className={`py-2 px-2.5 rounded-lg transition-all flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer ${
-                    scanMode === 'check-out'
+                  className={`py-2 px-2.5 rounded-lg transition-all flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer ${scanMode === 'check-out'
                       ? 'bg-purple-700 text-white shadow-2xs'
                       : 'text-slate-600 hover:text-slate-900'
-                  }`}
+                    }`}
                 >
                   <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
@@ -924,11 +882,10 @@ export default function UniversalScannerPage() {
 
             {/* Feedback Alert Message with Force Checkout */}
             {message && (
-              <div className={`p-3 rounded-xl text-sm font-normal border space-y-2 ${
-                message.includes('✅') || message.includes('สำเร็จ') || message.includes('🏁')
+              <div className={`p-3 rounded-xl text-sm font-normal border space-y-2 ${message.includes('✅') || message.includes('สำเร็จ') || message.includes('🏁')
                   ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
                   : 'bg-red-50 border-red-200 text-red-800'
-              }`}>
+                }`}>
                 <div className="flex items-center gap-2">
                   {message.includes('✅') || message.includes('สำเร็จ') || message.includes('🏁') ? (
                     <svg className="w-5 h-5 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -963,11 +920,10 @@ export default function UniversalScannerPage() {
                 <button
                   type="button"
                   onClick={() => handleModeChange('scan', 'search')}
-                  className={`py-2.5 flex items-center justify-center gap-1.5 transition-all cursor-pointer font-medium ${
-                    searchMode === 'scan'
+                  className={`py-2.5 flex items-center justify-center gap-1.5 transition-all cursor-pointer font-medium ${searchMode === 'scan'
                       ? 'bg-white text-slate-900 font-bold border-b-2 border-[#000946] -mb-[1px]'
                       : 'text-slate-500 hover:text-slate-800'
-                  }`}
+                    }`}
                 >
                   <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
@@ -978,11 +934,10 @@ export default function UniversalScannerPage() {
                 <button
                   type="button"
                   onClick={() => handleModeChange('manual', 'search')}
-                  className={`py-2.5 flex items-center justify-center gap-1.5 transition-all cursor-pointer font-medium ${
-                    searchMode === 'manual'
+                  className={`py-2.5 flex items-center justify-center gap-1.5 transition-all cursor-pointer font-medium ${searchMode === 'manual'
                       ? 'bg-white text-slate-900 font-bold border-b-2 border-[#000946] -mb-[1px]'
                       : 'text-slate-500 hover:text-slate-800'
-                  }`}
+                    }`}
                 >
                   <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -1097,30 +1052,28 @@ export default function UniversalScannerPage() {
                     <button
                       type="button"
                       onClick={resetState}
-                      className={`py-2.5 text-sm font-normal rounded-lg transition-colors cursor-pointer ${
-                        foundData.isCompletedNow || foundData.isAlreadyDone
+                      className={`py-2.5 text-sm font-normal rounded-lg transition-colors cursor-pointer ${foundData.isCompletedNow || foundData.isAlreadyDone
                           ? 'w-full bg-[#000946] text-white hover:bg-[#00125e]'
                           : 'flex-1 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
-                      }`}
+                        }`}
                     >
                       {foundData.isCompletedNow || foundData.isAlreadyDone ? 'เสร็จสิ้น / สแกนคนต่อไป' : 'ยกเลิก'}
                     </button>
                     {!foundData.isCompletedNow && !foundData.isAlreadyDone && (
                       <button
                         type="submit"
-                        className={`flex-1 py-2.5 text-white text-sm font-semibold rounded-lg shadow-sm transition-all active:scale-95 cursor-pointer ${
-                          scanMode === 'check-in'
+                        className={`flex-1 py-2.5 text-white text-sm font-semibold rounded-lg shadow-sm transition-all active:scale-95 cursor-pointer ${scanMode === 'check-in'
                             ? 'bg-emerald-600 hover:bg-emerald-700'
                             : scanMode === 'station'
-                            ? 'bg-[#ff741f] hover:bg-[#e55e0b]'
-                            : 'bg-purple-700 hover:bg-purple-800'
-                        }`}
+                              ? 'bg-[#ff741f] hover:bg-[#e55e0b]'
+                              : 'bg-purple-700 hover:bg-purple-800'
+                          }`}
                       >
                         {scanMode === 'check-in'
                           ? 'ยืนยันการเช็คอิน'
                           : scanMode === 'station'
-                          ? 'ยืนยันผ่านฐานกิจกรรม'
-                          : 'ยืนยันจบกิจกรรม'}
+                            ? 'ยืนยันผ่านฐานกิจกรรม'
+                            : 'ยืนยันจบกิจกรรม'}
                       </button>
                     )}
                   </div>

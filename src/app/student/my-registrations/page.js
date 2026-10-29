@@ -467,7 +467,7 @@ const RegistrationCard = ({ reg, activities, courses, onShowQr, hasEvaluated }) 
             <span className="text-sm text-slate-500 font-normal truncate">{course?.name || reg.course || 'ทั่วไป'}</span>
             {hasValidQuota(reg.quota) && (
               <span className="text-sm bg-indigo-50 text-indigo-700 font-normal px-2.5 py-0.5 rounded-lg border border-indigo-100">
-                โควตา: {String(reg.quota).trim()}
+                ประเภท: {String(reg.quota).trim()}
               </span>
             )}
           </div>
@@ -600,7 +600,7 @@ const CompletedRegistrationCard = ({ reg, activities, courses, hasEvaluated, onS
             <span>{course?.name || reg.course || 'ทั่วไป'}</span>
             {hasValidQuota(reg.quota) && (
               <span className="px-2.5 py-0.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-100 text-sm font-normal">
-                โควตา: {String(reg.quota).trim()}
+                ประเภท: {String(reg.quota).trim()}
               </span>
             )}
           </div>

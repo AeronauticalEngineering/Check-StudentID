@@ -666,3 +666,48 @@ AERO Student is an end-to-end Student Activity Registration, Seating Allocation,
 
 
 
+### 36. Strict Check-In Gate Enforcement for Examiner Queue System (`/station/examiner`)
+- **Incident & Root Cause**:
+  - ผู้สมัครที่มีสถานะเพียง **"ลงทะเบียนแล้ว" (`status: 'registered'`)** และยังไม่ได้มาสแกน QR เช็คอินเข้างาน ปรากฏอยู่ในรายการคิว **"รอเรียก"** และ **"กำลังเรียก"** บนหน้าโต๊ะกรรมการ (`/station/examiner/[activityId]/[channelId]`)
+  - สาเหตุเกิดจาก:
+    1. ฟังก์ชัน `getCandidateQueueStatus` เดิมไม่มีการดักจับสถานะ `registered` เป็นอันดับแรก ทำให้หากผู้สมัครมี `displayQueueNumber` ที่นำเข้าล่วงหน้า หรือมีฟิลด์ `calledAt` / `queueStatus: 'calling'` ค้างอยู่ ระบบจะจัดสถานะเป็น `'waiting'` หรือ `'calling'` ทันทีทั้งที่ยังไม่ได้เช็คอิน
+    2. ตัวกรอง `filteredRegistrations`, `nextWaitingCandidate`, และ `queueCounts` ในหน้าโต๊ะกรรมการ เดิมอนุญาตให้ `qStatus === 'registered'` แสดงรวมอยู่ในแท็บ "รอเรียก" และสามารถกดปุ่ม "เรียกคิวถัดไป" / "เรียกคิว" ได้โดยตรง
+    3. ในหน้าจัดการรายชื่อแอดมิน (`/admin/activity/seats/[id]`) เมื่อเปลี่ยนสถานะกลับเป็น `registered` หรือ `checked-in` เดิมไม่ได้ล้างค่า `calledAt`, `queueStatus`, และ `currentChannelName`
+- **Solution & Implementation**:
+  1. **Strict Check-In Gate (`isCandidateCheckedIn`)**:
+     - เพิ่มฟังก์ชันตรวจสอบการเช็คอินใน `src/app/station/examiner/[activityId]/[channelId]/page.js` โดยผู้สมัครที่มีสถานะ `registered` / `ลงทะเบียนแล้ว` จะถูกคืนค่าสถานะคิวเป็น `'registered'` เสมอ และไม่ถูกนำมาแสดงในแท็บ `รอเรียก` หรือ `กำลังเรียก`
+     - ป้องกัน `nextWaitingCandidate` และ `handleCallQueue` ไม่ให้เรียกคิวผู้สมัครที่ยังไม่ได้สแกนเช็คอินเข้างานโดยเด็ดขาด
+  2. **Self-Healing Stale Queue State**:
+     - หากพบเรคอร์ดที่มีสถานะ `registered` แต่มีค่า `queueStatus: 'calling'` หรือ `calledAt` ค้างอยู่ หรือมีช่องบริการ (`queueChannels`) ค้างสถานะเรียกผู้สมัครที่ยังไม่ได้เช็คอิน ระบบจะทำการล้างค่าที่ค้างอยู่และรีเซ็ตช่องบริการกลับเป็น `available` โดยอัตโนมัติ
+  3. **Admin Status Reset Cleanup**:
+     - อัปเดต `handleUpdateAll` ใน `/admin/activity/seats/[id]` และปุ่มรีเซ็ตคิว `handleResetCalledAt` ใน `/admin/queue/call/[id]` ให้ล้างฟิลด์ `calledAt`, `queueStatus`, และ `currentChannelName` อย่างครบถ้วนเมื่อรีเซ็ตสถานะ
+
+
+### 37. **Examiner Station Concurrency, Single-Device Lock, Written Exam Score & Full Criteria CSV Export (Current Update)**
+   - **1. Single-Device Enforcement & Real-time Channel Sync (`/station/examiner/[activityId]/[channelId]/page.js`)**:
+     - บังคับใช้งาน **1 เครื่องต่อ 1 ลิงก์โต๊ะสัมภาษณ์** ด้วย `activeSessionId` และ `activeSessionLastSeen` (Heartbeat ทุก 15 วินาที, Timeout 45 วินาที) บน `queueChannels/{channelId}`
+     - หากมีการเปิดลิงก์โต๊ะเดียวกันซ้ำจากอุปกรณ์อื่น จะแสดงหน้าจอล็อกป้องกันการกดเรียกคิวหรือบันทึกคะแนนชนกัน พร้อมปุ่ม **"🔄 ยึดสิทธิ์มาใช้งานที่เครื่องนี้แทน (สลับเครื่อง)"**
+     - ซิงค์ `currentCandidate` แบบ Real-time จาก `channel.currentCandidateId` และ `channel.currentDisplayQueueNumber` ใน Firestore เสมอ
+   - **2. ปุ่ม "✅ เสร็จสิ้นคิวนี้ (เคลียร์โต๊ะว่าง)" บนหน้าโต๊ะกรรมการ**:
+     - แก้ไข `getCandidateQueueStatus` ไม่ให้เปลี่ยนสถานะคิวเป็น `completed` ทันทีที่กดบันทึกคะแนน เพื่อให้กรรมการยังมีปุ่ม **"✅ เสร็จสิ้นคิวนี้ (เคลียร์โต๊ะว่าง)"** แสดงอย่างชัดเจนทั้งบน Header และในการ์ดผู้สมัคร (รวมถึงปุ่ม **"✅ บันทึกคะแนน & เสร็จสิ้นคิวนี้ (เคลียร์โต๊ะว่าง)"** ใน `ExaminerScoringModal`) สำหรับจบการสัมภาษณ์และเคลียร์สถานะโต๊ะใน `queueChannels` ให้เป็น `available` (`ว่าง`) เหมือนหน้า Admin
+   - **3. ป้องกันหลายโต๊ะ (เช่น 8 โต๊ะ) แย่งกันเรียกคิวเดียวกัน (เช่น คิว 001) ด้วย Firestore Transaction**:
+     - ใช้ `runTransaction(db, ...)` ใน `/station/examiner/[activityId]/[channelId]`, `/admin/queue/call/[id]`, และ `/admin/queue/control/[id]` เพื่อตรวจสอบสถานะคิวล่าสุดก่อนล็อกคิวให้โต๊ะนั้นๆ
+     - หากกดปุ่ม **"เรียกคิวถัดไป"** (`handleCallNextWaiting`) แล้วคิว `001` เพิ่งถูกโต๊ะอื่นตัดหน้าไปในเสี้ยววินาทีเดียวกัน ระบบจะข้ามไปดึงคิวถัดไปที่ว่างอยู่ (`002`) มาให้โต๊ะนี้อัตโนมัติโดยไม่ชนกัน
+   - **4. จำกัดสิทธิ์แก้ไขเฉพาะคิวที่เข้าสัมภาษณ์โต๊ะตัวเองเท่านั้น (เมื่อเสร็จสิ้นแล้ว)**:
+     - บันทึก `currentChannelId` และ `interviewedChannelId` ลงในเอกสาร `registrations` และ `evaluationScore`
+     - แท็บ **"กำลังเรียก"** และ **"เสร็จแล้ว"** ของหน้าโต๊ะกรรมการจะกรองแสดงเฉพาะผู้สมัครของโต๊ะตนเอง (`isCandidateFromThisDesk`) และป้องกันไม่ให้กดแก้ไขข้อมูลคิวที่สัมภาษณ์จากโต๊ะอื่น
+   - **5. แสดง "คะแนนสอบข้อเขียน" (`writtenExamScore`) ก่อนการสอบสัมภาษณ์**:
+     - รองรับการนำเข้าผ่าน CSV (`writtenExamScore`, `คะแนนสอบข้อเขียน`, `คะแนนข้อเขียน`), การเพิ่ม/แก้ไขในหน้า Admin (`/admin/activity/seats/[id]`) และการดึงคะแนนอัตโนมัติจากกิจกรรมประเภท `exam`
+     - แสดงป้าย **"📝 คะแนนสอบข้อเขียน"** บนการ์ดผู้สมัครในหน้าโต๊ะกรรมการ รายการคิว และใน `ExaminerScoringModal` เพื่อให้กรรมการใช้ประกอบการพิจารณา
+   - **6. เปลี่ยนคำว่า "โควตา" / "โควต้า" เป็น "ประเภท" ทั้งระบบ**:
+     - อัปเดตป้ายกำกับ UI ทั้งหมดในฝั่งนักเรียน กรรมการ และผู้ดูแลระบบ จาก `โควตา` / `ประเภทโควตา` เป็น `ประเภท` และ `เกณฑ์คะแนนเฉพาะตามประเภท` (โดยยังคงรองรับไฟล์ CSV ที่มีหัวตารางทั้ง `ประเภท` และ `โควตา`)
+   - **7. ส่งออกไฟล์ CSV (Export CSV) ครบทุกเกณฑ์การให้คะแนน**:
+     - อัปเดตระบบ Export CSV ใน `/admin/activity/seats/[id]` และ `/admin/registrants/[id]` ให้ส่งออกคะแนนแยกตามหัวข้อครบทุกเกณฑ์ ทั้ง **เกณฑ์คะแนนทั่วไปทุกข้อ**, **รวมคะแนนเกณฑ์ทั่วไป**, **เกณฑ์คะแนนเฉพาะตามประเภททุกข้อ**, **รวมคะแนนเกณฑ์เฉพาะประเภท**, **คะแนนสอบข้อเขียน**, **คะแนนรวมสัมภาษณ์ทั้งหมด**, และ **โต๊ะสัมภาษณ์**
+
+38. **Fix Weird Queue Number Assignment & Cross-Desk Candidate Display on Table 2 (`src/app/station/examiner/[activityId]/[channelId]/page.js`, `src/app/admin/scanner/page.js`, `src/app/station/scanner/[activityId]/page.js`, `src/app/admin/queue/scanner/[id]/page.js`, `src/app/admin/queue/call/[id]/page.js`, `src/app/admin/queue/control/[id]/page.js`, `src/app/admin/activity/seats/[id]/page.js`)**
+   - **การแก้ปัญหา "ให้คิวผิด แปลกๆ" (Trailing Queue Number Extraction & Atomic Queue Allocation)**:
+     - เปลี่ยนวิธีดึงเลขคิวจากเดิมที่ใช้ `.replace(/\D/g, '')` (ซึ่งดึงตัวเลขที่อยู่ในชื่อย่อสาขา เช่น `A1-001` หรือ `TCAS1-002` มารวมเป็น `1001` และ `1002` ทำให้คนถัดไปได้คิว `A1-1002` และ `A1-11003`) มาเป็นการดึงเฉพาะชุดตัวเลขท้ายสุดหลังเครื่องหมาย `-` (`afterDash.match(/(\d+)\s*$/)`) ในทุกจุดของระบบ
+     - ปรับปรุงการออกเลขคิวตอนสแกนเช็คอินทั้ง 3 จุด (`/admin/scanner`, `/station/scanner/[activityId]`, `/admin/queue/scanner/[id]`) ให้ทำงานผ่าน Firestore `runTransaction` โดยตรวจสอบเลขคิวสูงสุดที่มีอยู่จริงในหลักสูตรควบคู่กับ `activity.queueCounters` และข้ามเลขคิวที่มีผู้ใช้งานแล้วเสมอ พร้อมป้องกันการสร้างรหัสคิวที่มีขีดนำหน้า (`-001`) เมื่อหลักสูตรไม่ได้ตั้งชื่อย่อ
+   - **การแก้ปัญหา "link โต๊ะ 2 กดเรียกแล้ว ไปเอาของโต๊ะอื่นมาแสดงบางเคส" (Strict Priority Candidate Matching & Channel Ownership Guard)**:
+     - แก้ไขบั๊กใน `.find(r => (activeCandId && r.id === activeCandId) || (activeQ && ...))` ซึ่งทำให้เมื่อวนลูปเช็คผู้สมัครคนแรกในรายการ (ที่เป็นคิวของโต๊ะ 1 แต่มีเลขคิวรหัสเดียวกันหรือซ้ำกัน) เงื่อนไขแรกเป็นเท็จแล้วไหลไปเข้าเงื่อนไข `|| (activeQ && ...)` จนดึงผู้สมัครของโต๊ะ 1 มาแสดงบนหน้าจอของโต๊ะ 2
+     - เปลี่ยนเป็น **Strict Priority Matching**: หากมี `channel.currentCandidateId` จะจับคู่เฉพาะ `r.id === activeCandId` เท่านั้น และหากใช้ Fallback ค้นหาจากเลขคิว จะต้องตรวจสอบเสมอว่าผู้สมัครไม่ได้ถูกถือครองโดยโต๊ะอื่น (`!r.currentChannelId || String(r.currentChannelId) === String(channelId)`) พร้อมเพิ่ม `callingInFlightRef` ป้องกัน Snapshot เก่ามาเขียนทับขณะกำลังกดเรียกคิว

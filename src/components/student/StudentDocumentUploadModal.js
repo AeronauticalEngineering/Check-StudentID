@@ -103,7 +103,7 @@ export default function StudentDocumentUploadModal({
             </div>
             {registration.quota && String(registration.quota).trim() !== '' && String(registration.quota).trim() !== '-' && String(registration.quota).trim() !== '—' && (
               <span className="px-3 py-1 bg-indigo-50 border border-indigo-100 rounded-lg text-indigo-700 font-normal text-sm shrink-0 shadow-xs">
-                โควตา: {String(registration.quota).trim()}
+                ประเภท: {String(registration.quota).trim()}
               </span>
             )}
           </div>

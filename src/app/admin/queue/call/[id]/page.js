@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, use, useMemo } from 'react';
 import { db } from '../../../../../lib/firebase';
 import {
-    doc, getDoc, collection, query, where, onSnapshot, updateDoc, writeBatch, serverTimestamp, addDoc, deleteDoc, orderBy, limit, getDocs
+    doc, getDoc, collection, query, where, onSnapshot, updateDoc, writeBatch, serverTimestamp, addDoc, deleteDoc, orderBy, limit, getDocs, runTransaction
 } from 'firebase/firestore';
 import Link from 'next/link';
 import { QRCodeSVG } from 'qrcode.react';
@@ -523,34 +523,77 @@ export default function QueueCallPage({ params }) {
         }
     };
 
-    const callSpecificRegistrant = async (channel, registrant) => {
+    const extractTrailingQueueNum = (reg) => {
+        if (reg?.displayQueueNumber) {
+            const str = String(reg.displayQueueNumber).trim();
+            const afterDash = str.includes('-') ? str.split('-').pop().trim() : str;
+            const match = afterDash.match(/(\d+)\s*$/);
+            if (match) return parseInt(match[1], 10);
+        }
+        const fb = Number(reg?.queueNumber);
+        return !isNaN(fb) && fb > 0 ? fb : 999999;
+    };
+
+    const findChannelActiveRegistrant = (channel) => {
+        if (!channel) return null;
+        if (channel.currentCandidateId) {
+            return registrants.find(r => r.id === channel.currentCandidateId) || null;
+        }
+        const activeQ = channel.currentDisplayQueueNumber || channel.currentQueue;
+        if (!activeQ) return null;
+        return registrants.find(r => {
+            if (r.currentChannelId && String(r.currentChannelId) !== String(channel.id)) return false;
+            if (channel.servingCourse && r.course && r.course !== channel.servingCourse) return false;
+            return r.displayQueueNumber === activeQ;
+        }) || null;
+    };
+
+    const callSpecificRegistrant = async (channel, registrant, options = { silentOnConflict: false }) => {
         try {
             const settingsRef = doc(db, 'systemSettings', 'notifications');
             const settingsSnap = await getDoc(settingsRef);
             const settings = settingsSnap.exists() ? settingsSnap.data() : { onQueueCall: true };
 
-            const batch = writeBatch(db);
-            const channelRef = doc(db, 'queueChannels', channel.id);
-            const timestamp = new Date().getTime();
-            batch.update(channelRef, {
-                currentQueueNumber: registrant.queueNumber || null,
-                currentDisplayQueueNumber: registrant.displayQueueNumber || null,
-                currentQueue: registrant.displayQueueNumber || null,
-                currentStudentName: registrant.fullName || null,
-                status: 'calling',
-                lastCalledAt: serverTimestamp(),
-                pingId: timestamp
-            });
-
-            // Automatically complete previous candidate on this channel if they were being interviewed
             const channelExaminersCombined = [channel.examiner1, channel.examiner2].filter(Boolean).join(', ') || examinerName || 'Examiner';
             const channelExaminersArray = [channel.examiner1, channel.examiner2].filter(Boolean);
+            const chName = channel.name || channel.channelName || `โต๊ะที่ ${channel.channelNumber}`;
+            const currentActiveOnChannel = findChannelActiveRegistrant(channel);
+            const prevReg =
+                currentActiveOnChannel && currentActiveOnChannel.id !== registrant.id
+                    ? currentActiveOnChannel
+                    : null;
 
-            if (channel.currentDisplayQueueNumber && channel.currentDisplayQueueNumber !== registrant.displayQueueNumber) {
-                const prevReg = registrants.find(r => r.displayQueueNumber === channel.currentDisplayQueueNumber && r.id !== registrant.id);
+            await runTransaction(db, async (transaction) => {
+                const regRef = doc(db, 'registrations', registrant.id);
+                const regSnap = await transaction.get(regRef);
+                if (!regSnap.exists()) {
+                    throw new Error('ไม่พบข้อมูลผู้สมัครในระบบ');
+                }
+                const liveReg = regSnap.data();
+                const liveStatus = (liveReg.status || '').trim();
+                const liveQueueStatus = (liveReg.queueStatus || '').trim();
+                const claimedChannelId = liveReg.currentChannelId || liveReg.interviewedChannelId;
+                const claimedChannelName = liveReg.currentChannelName || liveReg.interviewedChannelName;
+                const isAlreadyOnThisDesk =
+                    (claimedChannelId && String(claimedChannelId) === String(channel.id)) ||
+                    (!claimedChannelId && claimedChannelName && claimedChannelName === chName);
+
+                const isActivelyInProgress =
+                    liveStatus === 'interviewing' ||
+                    liveStatus === 'calling' ||
+                    liveQueueStatus === 'calling';
+
+                if (isActivelyInProgress && !isAlreadyOnThisDesk) {
+                    throw new Error(`QUEUE_TAKEN:${claimedChannelName || 'โต๊ะอื่น'}`);
+                }
+
+                if (options.requireWaiting && (isActivelyInProgress || Boolean(liveReg.calledAt))) {
+                    throw new Error(`QUEUE_TAKEN:${claimedChannelName || 'โต๊ะอื่น'}`);
+                }
+
                 if (prevReg && prevReg.status !== 'completed' && prevReg.status !== 'evaluated') {
                     const prevRegRef = doc(db, 'registrations', prevReg.id);
-                    batch.update(prevRegRef, {
+                    transaction.update(prevRegRef, {
                         status: 'completed',
                         queueStatus: 'completed',
                         interviewedAt: serverTimestamp(),
@@ -559,18 +602,31 @@ export default function QueueCallPage({ params }) {
                         examiners: channelExaminersArray
                     });
                 }
-            }
 
-            const regRef = doc(db, 'registrations', registrant.id);
-            batch.update(regRef, {
-                calledAt: serverTimestamp(),
-                status: 'interviewing',
-                queueStatus: 'calling',
-                currentChannelName: channel.name || channel.channelName || `โต๊ะที่ ${channel.channelNumber}`,
-                interviewedBy: channelExaminersCombined,
-                examiners: channelExaminersArray
+                const channelRef = doc(db, 'queueChannels', channel.id);
+                transaction.update(channelRef, {
+                    currentCandidateId: registrant.id,
+                    currentQueueNumber: registrant.queueNumber || null,
+                    currentDisplayQueueNumber: registrant.displayQueueNumber || null,
+                    currentQueue: registrant.displayQueueNumber || null,
+                    currentStudentName: registrant.fullName || null,
+                    status: 'calling',
+                    lastCalledAt: serverTimestamp(),
+                    pingId: Date.now()
+                });
+
+                transaction.update(regRef, {
+                    calledAt: serverTimestamp(),
+                    status: 'interviewing',
+                    queueStatus: 'calling',
+                    currentChannelId: channel.id,
+                    currentChannelName: chName,
+                    interviewedChannelId: channel.id,
+                    interviewedChannelName: chName,
+                    interviewedBy: channelExaminersCombined,
+                    examiners: channelExaminersArray
+                });
             });
-            await batch.commit();
 
             const chDisplayName = channel.name || channel.channelName || `ช่องบริการ ${channel.channelNumber}`;
             speakQueueNumber(registrant.displayQueueNumber, chDisplayName);
@@ -600,13 +656,29 @@ export default function QueueCallPage({ params }) {
             } else if (settings.onQueueCall && !isRealLineUser) {
                 console.info('Skipped LINE notification: user has no valid LINE ID or is in PC test mode');
             }
+            return { ok: true };
         } catch (error) {
+            const msg = error?.message || '';
+            if (msg.startsWith('QUEUE_TAKEN:')) {
+                const takenBy = msg.replace('QUEUE_TAKEN:', '');
+                if (!options.silentOnConflict) {
+                    showAlert({
+                        title: 'คิวนี้ถูกเรียกไปแล้ว',
+                        message: `คิว ${registrant.displayQueueNumber} ถูกเรียกโดย "${takenBy}" ไปเมื่อสักครู่นี้แล้ว`,
+                        type: 'warning'
+                    });
+                }
+                return { ok: false, reason: 'conflict' };
+            }
             console.error("Error calling queue:", error);
-            showAlert({
-                title: 'เกิดข้อผิดพลาด',
-                message: `ไม่สามารถเรียกคิวได้: ${error.message}`,
-                type: 'error'
-            });
+            if (!options.silentOnConflict) {
+                showAlert({
+                    title: 'เกิดข้อผิดพลาด',
+                    message: `ไม่สามารถเรียกคิวได้: ${msg}`,
+                    type: 'error'
+                });
+            }
+            return { ok: false, reason: 'error' };
         }
     };
 
@@ -614,12 +686,13 @@ export default function QueueCallPage({ params }) {
         let waitingList = registrants.filter(r =>
             (!channel.servingCourse || r.course === channel.servingCourse) &&
             r.status === 'checked-in' &&
-            !r.calledAt
+            !r.calledAt &&
+            (!r.currentChannelId || String(r.currentChannelId) === String(channel.id))
         );
 
         waitingList.sort((a, b) => {
-            const numA = parseInt(a.displayQueueNumber?.replace(/\D/g, '') || a.queueNumber || '0');
-            const numB = parseInt(b.displayQueueNumber?.replace(/\D/g, '') || b.queueNumber || '0');
+            const numA = extractTrailingQueueNum(a);
+            const numB = extractTrailingQueueNum(b);
             if (numA !== numB) return numA - numB;
             const timeA = a.checkedInAt?.toMillis?.() || a.checkedInAt?.seconds || 0;
             const timeB = b.checkedInAt?.toMillis?.() || b.checkedInAt?.seconds || 0;
@@ -636,15 +709,25 @@ export default function QueueCallPage({ params }) {
             });
             return;
         }
-        const nextInQueue = waitingList[0];
-        await callSpecificRegistrant(channel, nextInQueue);
+
+        for (let i = 0; i < Math.min(waitingList.length, 8); i++) {
+            const res = await callSpecificRegistrant(channel, waitingList[i], { silentOnConflict: true, requireWaiting: true });
+            if (res?.ok) return;
+            if (res?.reason !== 'conflict') return;
+        }
+
+        showAlert({
+            title: 'คิวถูกเรียกพร้อมกัน',
+            message: 'คิวที่รออยู่ถูกโต๊ะอื่นเรียกไปพร้อมกันหมดแล้ว กรุณาลองใหม่อีกครั้ง',
+            type: 'warning'
+        });
     };
 
     const handleCompleteCurrent = async (channel) => {
-        if (!channel.currentDisplayQueueNumber) return;
+        if (!channel.currentDisplayQueueNumber && !channel.currentCandidateId) return;
         try {
             const batch = writeBatch(db);
-            const currentReg = registrants.find(r => r.displayQueueNumber === channel.currentDisplayQueueNumber);
+            const currentReg = findChannelActiveRegistrant(channel);
             const channelExaminersCombined = [channel.examiner1, channel.examiner2].filter(Boolean).join(', ') || examinerName || 'Examiner';
             const channelExaminersArray = [channel.examiner1, channel.examiner2].filter(Boolean);
 
@@ -661,6 +744,7 @@ export default function QueueCallPage({ params }) {
             }
             const channelRef = doc(db, 'queueChannels', channel.id);
             batch.update(channelRef, {
+                currentCandidateId: null,
                 currentQueueNumber: null,
                 currentDisplayQueueNumber: null,
                 currentQueue: null,
@@ -677,7 +761,7 @@ export default function QueueCallPage({ params }) {
     };
 
     const handleRecall = async (channel) => {
-        if (!channel.currentDisplayQueueNumber) {
+        if (!channel.currentDisplayQueueNumber && !channel.currentCandidateId) {
             showAlert({
                 title: 'แจ้งเตือน',
                 message: 'ยังไม่มีคิวที่ถูกเรียกในช่องนี้',
@@ -686,9 +770,7 @@ export default function QueueCallPage({ params }) {
             return;
         }
 
-        const currentRegistrant = registrants.find(r =>
-            r.displayQueueNumber === channel.currentDisplayQueueNumber
-        );
+        const currentRegistrant = findChannelActiveRegistrant(channel);
 
         if (!currentRegistrant) {
             showAlert({
@@ -719,7 +801,11 @@ export default function QueueCallPage({ params }) {
     };
 
     const handleResetCalledAt = async () => {
-        const calledRegistrants = registrants.filter(r => r.status === 'checked-in' && r.calledAt);
+        const calledRegistrants = registrants.filter(r =>
+            r.status !== 'completed' &&
+            r.status !== 'evaluated' &&
+            (Boolean(r.calledAt) || r.status === 'interviewing' || r.status === 'calling' || r.queueStatus === 'calling')
+        );
         if (calledRegistrants.length === 0) {
             showAlert({
                 title: 'แจ้งเตือน',
@@ -731,7 +817,7 @@ export default function QueueCallPage({ params }) {
 
         const confirmed = await showConfirm({
             title: 'ยืนยันการรีเซ็ตคิว',
-            message: `ต้องการรีเซ็ต ${calledRegistrants.length} คิวให้กลับมา "รอ" ใหม่หรือไม่?\n\nคิวทั้งหมดที่ถูกเรียกไปแล้วจะกลับมาอยู่ในรายการรอเรียก`,
+            message: `ต้องการรีเซ็ต ${calledRegistrants.length} คิวที่กำลังเรียก/ถูกเรียกแล้วหรือไม่?\n\nผู้ที่สแกนเช็คอินแล้วจะกลับมารอเรียกใหม่ ส่วนผู้ที่ยังไม่ได้สแกนเช็คอินจะกลับเป็นสถานะลงทะเบียนแล้ว`,
             type: 'warning',
             confirmText: `รีเซ็ต ${calledRegistrants.length} คิว`,
             cancelText: 'ยกเลิก'
@@ -743,12 +829,25 @@ export default function QueueCallPage({ params }) {
             const batch = writeBatch(db);
             calledRegistrants.forEach(reg => {
                 const regRef = doc(db, 'registrations', reg.id);
+                const hasCheckedIn = Boolean(reg.checkedIn || reg.checkedInAt || (reg.status === 'checked-in'));
                 batch.update(regRef, {
                     calledAt: null,
-                    status: 'checked-in',
-                    queueStatus: 'waiting',
+                    status: hasCheckedIn ? 'checked-in' : 'registered',
+                    queueStatus: hasCheckedIn ? 'waiting' : null,
                     currentChannelName: null
                 });
+            });
+            channels.forEach(ch => {
+                if (ch.status === 'calling' || ch.currentDisplayQueueNumber || ch.currentQueue) {
+                    batch.update(doc(db, 'queueChannels', ch.id), {
+                        currentQueueNumber: null,
+                        currentDisplayQueueNumber: null,
+                        currentQueue: null,
+                        currentStudentName: null,
+                        status: 'available',
+                        updatedAt: serverTimestamp()
+                    });
+                }
             });
             await batch.commit();
             showToast({ message: `รีเซ็ต ${calledRegistrants.length} คิวสำเร็จ`, type: 'success' });
@@ -820,11 +919,10 @@ export default function QueueCallPage({ params }) {
 
                     <button
                         onClick={() => setVoiceEnabled(!voiceEnabled)}
-                        className={`px-3 py-1.5 rounded text-xs font-medium transition-colors border flex items-center gap-1.5 ${
-                            voiceEnabled
+                        className={`px-3 py-1.5 rounded text-xs font-medium transition-colors border flex items-center gap-1.5 ${voiceEnabled
                                 ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
                                 : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
-                        }`}
+                            }`}
                         title={voiceEnabled ? 'คลิกเพื่อปิดเสียงอ่านคิว' : 'คลิกเพื่อเปิดเสียงอ่านคิว'}
                     >
                         <span>{voiceEnabled ? '🔊' : '🔇'}</span>
@@ -875,7 +973,7 @@ export default function QueueCallPage({ params }) {
                                     >
                                         <option value="">ทุกหลักสูตร</option>
                                         {courseOptions.map(course => (
-                                             <option key={course} value={course}>{course}</option>
+                                            <option key={course} value={course}>{course}</option>
                                         ))}
                                     </select>
                                 </div>
@@ -998,32 +1096,33 @@ export default function QueueCallPage({ params }) {
 
 
                                     {/* Examiner Scoring Button */}
-                                    {activity?.enableScoring && (
-                                        <button
-                                            onClick={() => {
-                                                const currentReg = registrants.find(r => r.displayQueueNumber === channel.currentDisplayQueueNumber);
-                                                if (currentReg) {
-                                                    setActiveChannelForScoring(channel);
-                                                    setScoringRegistrant(currentReg);
-                                                } else {
-                                                    showAlert({ title: 'แจ้งเตือน', message: 'กรุณาเรียกคิวก่อนบันทึกคะแนน', type: 'warning' });
-                                                }
-                                            }}
-                                            disabled={!channel.currentDisplayQueueNumber}
-                                            className={`w-full py-1.5 text-xs font-bold rounded transition-colors flex items-center justify-center gap-1.5 border ${
-                                                registrants.find(r => r.displayQueueNumber === channel.currentDisplayQueueNumber)?.evaluationScore?.isScored
-                                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100'
-                                                    : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
-                                            } disabled:opacity-40 disabled:cursor-not-allowed`}
-                                        >
-                                            <span>📝</span>
-                                            <span>
-                                                {registrants.find(r => r.displayQueueNumber === channel.currentDisplayQueueNumber)?.evaluationScore?.isScored
-                                                    ? `บันทึกคะแนนแล้ว: ${registrants.find(r => r.displayQueueNumber === channel.currentDisplayQueueNumber)?.evaluationScore?.finalTotalScore} (แก้ไข)`
-                                                    : 'บันทึกคะแนน / รูปถ่ายหลักฐาน'}
-                                            </span>
-                                        </button>
-                                    )}
+                                    {activity?.enableScoring && (() => {
+                                        const activeRegForScore = findChannelActiveRegistrant(channel);
+                                        return (
+                                            <button
+                                                onClick={() => {
+                                                    if (activeRegForScore) {
+                                                        setActiveChannelForScoring(channel);
+                                                        setScoringRegistrant(activeRegForScore);
+                                                    } else {
+                                                        showAlert({ title: 'แจ้งเตือน', message: 'กรุณาเรียกคิวก่อนบันทึกคะแนน', type: 'warning' });
+                                                    }
+                                                }}
+                                                disabled={!channel.currentDisplayQueueNumber && !channel.currentCandidateId}
+                                                className={`w-full py-1.5 text-xs font-bold rounded transition-colors flex items-center justify-center gap-1.5 border ${activeRegForScore?.evaluationScore?.isScored
+                                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100'
+                                                        : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                                                    } disabled:opacity-40 disabled:cursor-not-allowed`}
+                                            >
+                                                <span>📝</span>
+                                                <span>
+                                                    {activeRegForScore?.evaluationScore?.isScored
+                                                        ? `บันทึกคะแนนแล้ว: ${activeRegForScore?.evaluationScore?.finalTotalScore} (แก้ไข)`
+                                                        : 'บันทึกคะแนน / รูปถ่ายหลักฐาน'}
+                                                </span>
+                                            </button>
+                                        );
+                                    })()}
 
                                     <div className="grid grid-cols-2 gap-2">
                                         <button
@@ -1044,120 +1143,120 @@ export default function QueueCallPage({ params }) {
                                     </div>
                                 </div>
 
-                                 {/* Desk Links (Station Examiner No-login & QR) & Delete Channel */}
-                                 <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-1 text-xs">
-                                     <div className="flex items-center gap-2">
-                                         <button
-                                             onClick={() => {
-                                                 const stationUrl = `${window.location.origin}/station/examiner/${activityId}/${channel.id}`;
-                                                 navigator.clipboard.writeText(stationUrl);
-                                                 showToast({ message: `คัดลอกลิงก์โต๊ะกรรมการ (${channel.name}) สำเร็จ 📋`, type: 'success' });
-                                             }}
-                                             className="text-[#166E7C] hover:underline font-semibold flex items-center gap-1 text-[11px]"
-                                             title="คัดลอกลิงก์ให้อาจารย์ผู้สัมภาษณ์ใช้งาน (ไม่ต้อง Login)"
-                                         >
-                                             <span>🔗</span>
-                                             <span>คัดลอกลิงก์โต๊ะกรรมการ</span>
-                                         </button>
-                                         <button
-                                             onClick={() => {
-                                                 const stationUrl = `${window.location.origin}/station/examiner/${activityId}/${channel.id}`;
-                                                 setSharedQrModal({
-                                                     title: `โต๊ะสัมภาษณ์: ${channel.name}`,
-                                                     url: stationUrl,
-                                                     subtitle: 'อาจารย์/กรรมการสัมภาษณ์สามารถใช้มือถือหรือ iPad สแกนเพื่อเข้าใช้งานโต๊ะนี้ได้ทันที (ไม่ต้อง Login)'
-                                                 });
-                                             }}
-                                             className="text-slate-600 hover:text-slate-900 border border-slate-200 px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1"
-                                             title="แสดง QR Code สำหรับให้อาจารย์สแกน"
-                                         >
-                                             <span>📱 QR</span>
-                                         </button>
-                                     </div>
-                                     <button
-                                         onClick={() => handleDeleteChannel(channel.id)}
-                                         className="text-red-500 hover:text-red-700 text-[11px]"
-                                     >
-                                         ✕ ลบช่อง
-                                     </button>
-                                 </div>
-                             </div>
-                         ))}
-                     </div>
-                 </div>
+                                {/* Desk Links (Station Examiner No-login & QR) & Delete Channel */}
+                                <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-1 text-xs">
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={() => {
+                                                const stationUrl = `${window.location.origin}/station/examiner/${activityId}/${channel.id}`;
+                                                navigator.clipboard.writeText(stationUrl);
+                                                showToast({ message: `คัดลอกลิงก์โต๊ะกรรมการ (${channel.name}) สำเร็จ 📋`, type: 'success' });
+                                            }}
+                                            className="text-[#166E7C] hover:underline font-semibold flex items-center gap-1 text-[11px]"
+                                            title="คัดลอกลิงก์ให้อาจารย์ผู้สัมภาษณ์ใช้งาน (ไม่ต้อง Login)"
+                                        >
+                                            <span>🔗</span>
+                                            <span>คัดลอกลิงก์โต๊ะกรรมการ</span>
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                const stationUrl = `${window.location.origin}/station/examiner/${activityId}/${channel.id}`;
+                                                setSharedQrModal({
+                                                    title: `โต๊ะสัมภาษณ์: ${channel.name}`,
+                                                    url: stationUrl,
+                                                    subtitle: 'อาจารย์/กรรมการสัมภาษณ์สามารถใช้มือถือหรือ iPad สแกนเพื่อเข้าใช้งานโต๊ะนี้ได้ทันที (ไม่ต้อง Login)'
+                                                });
+                                            }}
+                                            className="text-slate-600 hover:text-slate-900 border border-slate-200 px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1"
+                                            title="แสดง QR Code สำหรับให้อาจารย์สแกน"
+                                        >
+                                            <span>📱 QR</span>
+                                        </button>
+                                    </div>
+                                    <button
+                                        onClick={() => handleDeleteChannel(channel.id)}
+                                        className="text-red-500 hover:text-red-700 text-[11px]"
+                                    >
+                                        ✕ ลบช่อง
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
 
-                 {/* Right 1 Column: Summary & Waiting List */}
-                 <div className="space-y-3">
-                     <h2 className="text-xs font-bold text-slate-900 uppercase tracking-wide">
-                         ข้อมูลสรุปและจุดบริการ (Station Links)
-                     </h2>
+                {/* Right 1 Column: Summary & Waiting List */}
+                <div className="space-y-3">
+                    <h2 className="text-xs font-bold text-slate-900 uppercase tracking-wide">
+                        ข้อมูลสรุปและจุดบริการ (Station Links)
+                    </h2>
 
-                     {/* Gate Scanner Station Link Card */}
-                     <div className="bg-white p-3.5 rounded-lg border border-slate-200 space-y-2.5 shadow-xs">
-                         <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
-                             <span className="text-xs font-bold text-slate-900">🎫 จุดสแกนเนอร์หน้างาน</span>
-                             <button
-                                 onClick={() => {
-                                     const scannerUrl = `${window.location.origin}/station/scanner/${activityId}`;
-                                     setSharedQrModal({
-                                         title: 'จุดสแกนเนอร์เช็คอินหน้างาน',
-                                         url: scannerUrl,
-                                         subtitle: 'สตาฟหน้าประตูสามารถใช้มือถือหรือ iPad สแกน QR นี้เพื่อเริ่มสแกนเช็คอินนักเรียนได้ทันที (ไม่ต้อง Login)'
-                                     });
-                                 }}
-                                 className="text-[11px] text-[#166E7C] font-semibold hover:underline"
-                             >
-                                 แสดง QR สตาฟ 📱
-                             </button>
-                         </div>
-                         <div className="flex items-center justify-between gap-2">
-                             <div className="text-[11px] text-slate-500">
-                                 ส่งลิงก์ให้สตาฟหน้าประตูสแกนรับนักเรียน
-                             </div>
-                             <button
-                                 onClick={() => {
-                                     const scannerUrl = `${window.location.origin}/station/scanner/${activityId}`;
-                                     navigator.clipboard.writeText(scannerUrl);
-                                     showToast({ message: 'คัดลอกลิงก์จุดสแกนเนอร์หน้างานสำเร็จ 📋', type: 'success' });
-                                 }}
-                                 className="px-2 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded text-xs font-semibold transition-colors flex-shrink-0"
-                             >
-                                 คัดลอกลิงก์ 📋
-                             </button>
-                         </div>
-                     </div>
+                    {/* Gate Scanner Station Link Card */}
+                    <div className="bg-white p-3.5 rounded-lg border border-slate-200 space-y-2.5 shadow-xs">
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                            <span className="text-xs font-bold text-slate-900">🎫 จุดสแกนเนอร์หน้างาน</span>
+                            <button
+                                onClick={() => {
+                                    const scannerUrl = `${window.location.origin}/station/scanner/${activityId}`;
+                                    setSharedQrModal({
+                                        title: 'จุดสแกนเนอร์เช็คอินหน้างาน',
+                                        url: scannerUrl,
+                                        subtitle: 'สตาฟหน้าประตูสามารถใช้มือถือหรือ iPad สแกน QR นี้เพื่อเริ่มสแกนเช็คอินนักเรียนได้ทันที (ไม่ต้อง Login)'
+                                    });
+                                }}
+                                className="text-[11px] text-[#166E7C] font-semibold hover:underline"
+                            >
+                                แสดง QR สตาฟ 📱
+                            </button>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                            <div className="text-[11px] text-slate-500">
+                                ส่งลิงก์ให้สตาฟหน้าประตูสแกนรับนักเรียน
+                            </div>
+                            <button
+                                onClick={() => {
+                                    const scannerUrl = `${window.location.origin}/station/scanner/${activityId}`;
+                                    navigator.clipboard.writeText(scannerUrl);
+                                    showToast({ message: 'คัดลอกลิงก์จุดสแกนเนอร์หน้างานสำเร็จ 📋', type: 'success' });
+                                }}
+                                className="px-2 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded text-xs font-semibold transition-colors flex-shrink-0"
+                            >
+                                คัดลอกลิงก์ 📋
+                            </button>
+                        </div>
+                    </div>
 
 
-                     {/* Public Screen QR & Link */}
-                     <div className="bg-white p-3.5 rounded-lg border border-slate-200 space-y-2.5">
-                         <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
-                             <span className="text-xs font-bold text-slate-900">📺 จอแสดงผลคิวสาธารณะ</span>
-                             <a
-                                 href={publicUrl}
-                                 target="_blank"
-                                 rel="noopener noreferrer"
-                                 className="text-[11px] text-[#166E7C] hover:underline font-semibold"
-                             >
-                                 เปิดจอแยก ↗
-                             </a>
-                         </div>
-                         <div className="flex items-center gap-3">
-                             <div className="p-1 bg-white border border-slate-200 rounded">
-                                 <QRCodeSVG value={publicUrl || 'https://aero.ac.th'} size={64} />
-                             </div>
-                             <div className="min-w-0 space-y-0.5">
-                                 <span className="text-[11px] text-slate-500 block">สแกนเพื่อเปิดจอประชาสัมพันธ์:</span>
-                                 <a
-                                     href={publicUrl}
-                                     target="_blank"
-                                     rel="noopener noreferrer"
-                                     className="text-xs text-[#166E7C] font-mono break-all line-clamp-2 block hover:underline"
-                                 >
-                                     {publicUrl}
-                                 </a>
-                             </div>
-                         </div>
-                     </div>
+                    {/* Public Screen QR & Link */}
+                    <div className="bg-white p-3.5 rounded-lg border border-slate-200 space-y-2.5">
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                            <span className="text-xs font-bold text-slate-900">📺 จอแสดงผลคิวสาธารณะ</span>
+                            <a
+                                href={publicUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[11px] text-[#166E7C] hover:underline font-semibold"
+                            >
+                                เปิดจอแยก ↗
+                            </a>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <div className="p-1 bg-white border border-slate-200 rounded">
+                                <QRCodeSVG value={publicUrl || 'https://aero.ac.th'} size={64} />
+                            </div>
+                            <div className="min-w-0 space-y-0.5">
+                                <span className="text-[11px] text-slate-500 block">สแกนเพื่อเปิดจอประชาสัมพันธ์:</span>
+                                <a
+                                    href={publicUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-xs text-[#166E7C] font-mono break-all line-clamp-2 block hover:underline"
+                                >
+                                    {publicUrl}
+                                </a>
+                            </div>
+                        </div>
+                    </div>
 
 
                     {/* Waiting Counts Summary */}

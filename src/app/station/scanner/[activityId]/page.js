@@ -12,7 +12,8 @@ import {
   where,
   getDocs,
   onSnapshot,
-  serverTimestamp
+  serverTimestamp,
+  runTransaction
 } from 'firebase/firestore';
 import { Html5Qrcode } from 'html5-qrcode';
 import {
@@ -559,50 +560,100 @@ export default function StationScannerPage({ params }) {
       // Check-in update
       const updatePayload = {
         status: 'checked-in',
+        checkedIn: true,
         checkedInAt: serverTimestamp(),
         checkedInBy: staffName || 'Station Staff'
       };
 
-      // If activity has queue system and registration does not have queue number yet, assign next queue
+      // If activity has queue system, assign or validate queue atomically via transaction
       const isQueueActivity = activity?.type === 'queue' || activity?.isQueueType;
       let assignedQueue = regData.queueNumber;
       let finalDisplayQueue = regData.displayQueueNumber;
 
-      if (isQueueActivity && (!assignedQueue || !finalDisplayQueue)) {
-        // Find highest queue number for this course in this activity
+      if (isQueueActivity) {
+        const extractTrailingNum = (dispQ, fallbackNum = 0) => {
+          if (dispQ) {
+            const str = String(dispQ).trim();
+            const afterDash = str.includes('-') ? str.split('-').pop().trim() : str;
+            const match = afterDash.match(/(\d+)\s*$/);
+            if (match) {
+              const parsed = parseInt(match[1], 10);
+              if (!isNaN(parsed) && parsed > 0) return parsed;
+            }
+          }
+          const fb = Number(fallbackNum);
+          return !isNaN(fb) && fb > 0 ? fb : 0;
+        };
+
+        const courseName = regData.course || '';
         const qMax = query(
           collection(db, 'registrations'),
           where('activityId', '==', activityId),
-          where('course', '==', regData.course || '')
+          where('course', '==', courseName)
         );
         const courseRegsSnap = await getDocs(qMax);
-        let maxQ = 0;
-        courseRegsSnap.forEach((d) => {
-          const dData = d.data();
-          if (dData.displayQueueNumber) {
-            const extracted = parseInt(dData.displayQueueNumber.replace(/\D/g, ''), 10) || 0;
-            if (extracted > maxQ) maxQ = extracted;
+
+        await runTransaction(db, async (transaction) => {
+          const activityRef = doc(db, 'activities', activityId);
+          const activityDoc = await transaction.get(activityRef);
+          const activityData = activityDoc.exists() ? activityDoc.data() : {};
+          const currentCounters = activityData.queueCounters || {};
+
+          let maxQ = 0;
+          const usedQueueNumbers = new Set();
+          let isDuplicateDisplayQueue = false;
+          const existingDisplayQueue = (regData.displayQueueNumber || '').trim();
+
+          courseRegsSnap.forEach((d) => {
+            if (d.id === regDoc.id) return;
+            const dData = d.data();
+            const extracted = extractTrailingNum(dData.displayQueueNumber, dData.queueNumber);
+            if (extracted > 0) {
+              usedQueueNumbers.add(extracted);
+              if (extracted > maxQ) maxQ = extracted;
+            }
+            if (
+              existingDisplayQueue &&
+              String(dData.displayQueueNumber || '').trim() === existingDisplayQueue &&
+              dData.status !== 'registered' &&
+              dData.status !== 'cancelled'
+            ) {
+              isDuplicateDisplayQueue = true;
+            }
+          });
+
+          const courseInfo = courseOptions.find(c => c.name === courseName);
+          const rawPrefix = (regData.courseCode || courseInfo?.shortName || '').trim();
+
+          if (existingDisplayQueue && !isDuplicateDisplayQueue) {
+            finalDisplayQueue = existingDisplayQueue;
+            assignedQueue = extractTrailingNum(existingDisplayQueue, regData.queueNumber) || (maxQ + 1);
+          } else {
+            let candidateNum = Math.max(Number(currentCounters[courseName] || 0), maxQ) + 1;
+            while (usedQueueNumbers.has(candidateNum)) {
+              candidateNum++;
+            }
+            assignedQueue = candidateNum;
+            const padded = String(assignedQueue).padStart(3, '0');
+            finalDisplayQueue = rawPrefix ? `${rawPrefix}-${padded}` : `Q-${padded}`;
           }
-          const num = Number(dData.queueNumber || 0);
-          if (num > maxQ) maxQ = num;
+
+          updatePayload.queueNumber = assignedQueue;
+          updatePayload.displayQueueNumber = finalDisplayQueue;
+          updatePayload.queueStatus = 'waiting';
+
+          transaction.update(regRef, updatePayload);
+
+          if (activityDoc.exists() && courseName) {
+            const updatedCounterVal = Math.max(Number(currentCounters[courseName] || 0), assignedQueue, maxQ);
+            transaction.update(activityRef, {
+              queueCounters: { ...currentCounters, [courseName]: updatedCounterVal }
+            });
+          }
         });
-
-        if (!assignedQueue) {
-          assignedQueue = maxQ + 1;
-        }
-
-        if (!finalDisplayQueue) {
-          const courseInfo = courseOptions.find(c => c.name === regData.course);
-          const prefix = regData.courseCode || courseInfo?.shortName || (regData.course ? regData.course.slice(0, 3).toUpperCase() : 'Q');
-          finalDisplayQueue = `${prefix}-${String(assignedQueue).padStart(3, '0')}`;
-        }
-
-        updatePayload.queueNumber = assignedQueue;
-        updatePayload.displayQueueNumber = finalDisplayQueue;
-        updatePayload.queueStatus = 'waiting';
+      } else {
+        await updateDoc(regRef, updatePayload);
       }
-
-      await updateDoc(regRef, updatePayload);
       playBeep('success');
 
       const finalResult = {

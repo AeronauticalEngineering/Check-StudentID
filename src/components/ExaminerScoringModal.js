@@ -53,10 +53,22 @@ export default function ExaminerScoringModal({
   activity,
   onScoreSaved,
   onSaveSuccess,
+  onSaveAndComplete,
   defaultExaminerName,
-  examinerName: examinerNameProp
+  examinerName: examinerNameProp,
+  channelId,
+  channelName,
+  writtenExamScore: writtenExamScoreProp
 }) {
   const registrant = registrantProp || candidate;
+  const resolvedWrittenExamScore =
+    writtenExamScoreProp !== undefined && writtenExamScoreProp !== null && String(writtenExamScoreProp).trim() !== ''
+      ? writtenExamScoreProp
+      : registrant?.writtenExamScore !== undefined && registrant?.writtenExamScore !== null && String(registrant.writtenExamScore).trim() !== ''
+      ? registrant.writtenExamScore
+      : registrant?.examScore !== undefined && registrant?.examScore !== null && String(registrant.examScore).trim() !== ''
+      ? registrant.examScore
+      : null;
 
   const [selectedQuota, setSelectedQuota] = useState('');
   const [generalScores, setGeneralScores] = useState({}); // { [criterionId]: score }
@@ -281,7 +293,7 @@ export default function ExaminerScoringModal({
     setEvidencePhotos(prev => prev.filter((_, idx) => idx !== indexToRemove));
   };
 
-  const handleSave = async () => {
+  const handleSave = async (shouldCompleteAfterSave = false) => {
     const regId = registrant?.id || registrant?.docId;
     if (!regId) return;
     setMessage('');
@@ -332,12 +344,16 @@ export default function ExaminerScoringModal({
       });
 
       const finalQuota = selectedQuota || registrant.quota || null;
+      const resolvedChannelId = channelId || registrant?.evaluationScore?.channelId || registrant?.interviewedChannelId || registrant?.currentChannelId || null;
+      const resolvedChannelName = channelName || registrant?.evaluationScore?.channelName || registrant?.currentChannelName || null;
 
       const evaluationPayload = {
         isScored: true,
         scoredAt: new Date().toISOString(),
         examinerName: trimmedExaminer,
         examiners: examinersList,
+        channelId: resolvedChannelId,
+        channelName: resolvedChannelName,
         quota: finalQuota,
         generalScores: sanitizedGeneralScores,
         quotaScores: sanitizedQuotaScores,
@@ -353,15 +369,23 @@ export default function ExaminerScoringModal({
         notes: notes.trim()
       };
 
-      const regRef = doc(db, 'registrations', regId);
-      await updateDoc(regRef, {
+      const regUpdateFields = {
         evaluationScore: evaluationPayload,
         quota: finalQuota,
         attachedDocuments: finalAttachedDocs,
         attachedBy: 'examiner',
         attachedAt: serverTimestamp(),
         updatedAt: serverTimestamp()
-      });
+      };
+      if (resolvedChannelId) {
+        regUpdateFields.interviewedChannelId = resolvedChannelId;
+      }
+      if (resolvedChannelName) {
+        regUpdateFields.interviewedChannelName = resolvedChannelName;
+      }
+
+      const regRef = doc(db, 'registrations', regId);
+      await updateDoc(regRef, regUpdateFields);
 
       setMessage('✅ บันทึกคะแนนและรูปถ่ายหลักฐานเรียบร้อยแล้ว');
       const updatedPayload = {
@@ -370,7 +394,9 @@ export default function ExaminerScoringModal({
         evaluationScore: evaluationPayload,
         quota: finalQuota,
         attachedDocuments: finalAttachedDocs,
-        attachedBy: 'examiner'
+        attachedBy: 'examiner',
+        ...(resolvedChannelId ? { interviewedChannelId: resolvedChannelId } : {}),
+        ...(resolvedChannelName ? { interviewedChannelName: resolvedChannelName } : {})
       };
       if (onScoreSaved) {
         onScoreSaved(updatedPayload);
@@ -378,9 +404,14 @@ export default function ExaminerScoringModal({
       if (onSaveSuccess) {
         onSaveSuccess(updatedPayload);
       }
-      setTimeout(() => {
+      if (shouldCompleteAfterSave && onSaveAndComplete) {
+        await onSaveAndComplete(updatedPayload);
         onClose();
-      }, 700);
+      } else {
+        setTimeout(() => {
+          onClose();
+        }, 700);
+      }
     } catch (error) {
       console.error(error);
       setMessage(`❌ เกิดข้อผิดพลาด: ${error.message}`);
@@ -427,7 +458,7 @@ export default function ExaminerScoringModal({
           {/* Modal Body */}
           <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 text-sm text-slate-800">
             {/* Top Info Strip */}
-            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-3 text-center">
+            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
               <div className="border-b sm:border-b-0 sm:border-r border-slate-200 pb-2 sm:pb-0 pr-2">
                 <span className="text-sm font-normal text-slate-500 block">หมายเลขคิว</span>
                 <span className="text-xl font-bold text-[#000946]">
@@ -440,10 +471,29 @@ export default function ExaminerScoringModal({
                   {registrant.course || '-'} {registrant.timeSlot ? `(${registrant.timeSlot})` : ''}
                 </span>
               </div>
-              <div>
-                <span className="text-sm font-normal text-slate-500 block">ประเภทโควตา</span>
-                <span className="font-normal text-slate-800 truncate block text-sm mt-0.5">
-                  {registrant.quota || selectedQuota || 'ทั่วไป'}
+              <div className="sm:border-r border-slate-200 pr-2">
+                <span className="text-sm font-normal text-slate-500 block">ประเภท</span>
+                {quotaCriteriaList.length > 0 ? (
+                  <select
+                    value={selectedQuota}
+                    onChange={e => setSelectedQuota(e.target.value)}
+                    className="mt-0.5 px-2 py-1 bg-white border border-slate-300 rounded-lg text-sm font-semibold text-[#000946] outline-none focus:border-[#000946] max-w-full"
+                  >
+                    <option value="">-- เลือกประเภท --</option>
+                    {quotaCriteriaList.map((q, idx) => (
+                      <option key={idx} value={q.quotaName}>{q.quotaName}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="font-semibold text-slate-800 truncate block text-sm mt-0.5">
+                    {registrant.quota || selectedQuota || 'ทั่วไป'}
+                  </span>
+                )}
+              </div>
+              <div className="bg-indigo-50/70 rounded-lg p-1.5 border border-indigo-200/70 flex flex-col justify-center">
+                <span className="text-xs font-medium text-indigo-700 block">📝 คะแนนสอบข้อเขียน</span>
+                <span className="text-base font-bold text-indigo-950 mt-0.5">
+                  {resolvedWrittenExamScore !== null ? `${resolvedWrittenExamScore} คะแนน` : 'ไม่มีข้อมูล'}
                 </span>
               </div>
             </div>
@@ -592,7 +642,7 @@ export default function ExaminerScoringModal({
               <div className="border border-slate-200 rounded-xl p-4 bg-white space-y-3">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
                   <span className="font-bold text-slate-900 text-sm">
-                    2. เกณฑ์คะแนนเฉพาะโควตา: <span className="text-[#000946]">{selectedQuota}</span>
+                    2. เกณฑ์คะแนนเฉพาะประเภท: <span className="text-[#000946]">{selectedQuota}</span>
                   </span>
                   <span className="font-bold text-[#000946] bg-blue-50 px-3 py-1 rounded-xl border border-blue-200 text-sm">
                     รวมคะแนน: {quotaTotal} / {quotaMaxTotal} คะแนน
@@ -692,7 +742,7 @@ export default function ExaminerScoringModal({
               <span>รีเซ็ตคะแนน</span>
             </button>
 
-            <div className="flex items-center gap-2.5">
+            <div className="flex flex-wrap items-center gap-2.5">
               <button
                 type="button"
                 onClick={onClose}
@@ -702,12 +752,22 @@ export default function ExaminerScoringModal({
               </button>
               <button
                 type="button"
-                onClick={handleSave}
+                onClick={() => handleSave(false)}
                 disabled={isSaving}
                 className="px-5 py-2.5 bg-[#000946] hover:bg-[#000946]/90 text-white text-sm font-normal rounded-xl shadow-xs transition-all active:scale-95 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
               >
                 {isSaving ? 'กำลังบันทึก...' : 'บันทึกผลคะแนน'}
               </button>
+              {onSaveAndComplete && (
+                <button
+                  type="button"
+                  onClick={() => handleSave(true)}
+                  disabled={isSaving}
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-xl shadow-xs transition-all active:scale-95 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>✅ บันทึกคะแนน & เสร็จสิ้นคิวนี้ (เคลียร์โต๊ะว่าง)</span>
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -278,18 +278,39 @@ export default function StudentDetailPage({ params }) {
           'รหัสนักศึกษา': reg.studentId || '',
           'เลขบัตรประชาชน': reg.nationalId || '',
           'กิจกรรม': activity?.name || 'Unknown',
-          'ประเภทโควตา': reg.quota || evalScore.quota || '-',
+          'ประเภท': reg.quota || evalScore.quota || '-',
           'หลักสูตร': reg.course || '-',
           'รอบเวลา': reg.timeSlot || '-',
           'ที่นั่ง': reg.seatNumber || '-',
           'คิว': reg.displayQueueNumber || '-',
           'สถานะ': getThaiStatus(reg.status).label,
-          'คะแนนรวม (%)': evalScore.isScored ? `${evalScore.finalTotalScore}` : '-',
-          'สถานะการประเมิน': evalScore.isScored ? 'ประเมินแล้ว' : 'รอประเมิน',
-          'กรรมการผู้ประเมิน': evalScore.examinerName || '-',
-          'ข้อเสนอแนะ': evalScore.notes || '-',
-          'วันที่ลงทะเบียน': reg.registeredAtDate ? reg.registeredAtDate.toLocaleString('th-TH') : ''
+          'คะแนนสอบข้อเขียน': reg.writtenExamScore ?? reg.examScore ?? '-',
         };
+
+        if (activity?.scoringConfig) {
+          (activity.scoringConfig.generalCriteria || []).forEach(g => {
+            const gMax = g.maxScore !== undefined ? g.maxScore : g.weight;
+            row[`[เกณฑ์ทั่วไป] ${g.name} (เต็ม ${gMax})`] = evalScore.generalScores?.[g.id] ?? '-';
+          });
+          row['รวมคะแนนเกณฑ์ทั่วไป'] = evalScore.isScored ? (evalScore.generalTotal ?? evalScore.calculatedGeneralTotal ?? '-') : '-';
+
+          (activity.scoringConfig.quotaCriteriaList || []).forEach(qGroup => {
+            const isMatchingGroup = (reg.quota || evalScore.quota) === qGroup.quotaName;
+            (qGroup.criteria || []).forEach(c => {
+              const cMax = c.maxScore !== undefined ? c.maxScore : c.weight;
+              const raw = evalScore.quotaScores?.[c.id];
+              row[`[ประเภท: ${qGroup.quotaName}] ${c.name} (เต็ม ${cMax})`] = (isMatchingGroup && raw !== undefined) ? raw : (raw !== undefined ? raw : '-');
+            });
+          });
+          row['รวมคะแนนเกณฑ์เฉพาะประเภท'] = evalScore.isScored ? (evalScore.quotaTotal ?? evalScore.calculatedQuotaTotal ?? '-') : '-';
+        }
+
+        row['คะแนนรวมสัมภาษณ์ทั้งหมด'] = evalScore.isScored ? `${evalScore.finalTotalScore}` : '-';
+        row['สถานะการประเมิน'] = evalScore.isScored ? 'ประเมินแล้ว' : 'รอประเมิน';
+        row['โต๊ะสัมภาษณ์'] = reg.interviewedChannelName || evalScore.channelName || reg.currentChannelName || '-';
+        row['กรรมการผู้ประเมิน'] = evalScore.examinerName || reg.interviewedBy || '-';
+        row['ข้อเสนอแนะ'] = evalScore.notes || '-';
+        row['วันที่ลงทะเบียน'] = reg.registeredAtDate ? reg.registeredAtDate.toLocaleString('th-TH') : '';
 
         // Attach evidence photo URLs
         const evidenceUrls = [];
@@ -597,7 +618,7 @@ export default function StudentDetailPage({ params }) {
                         <div className="text-[11px] text-slate-500 mt-0.5 flex flex-wrap items-center gap-2">
                           {activity?.location && <span>• สถานที่: {activity.location}</span>}
                           {reg.quota && String(reg.quota).trim() !== '' && String(reg.quota).trim() !== '-' && String(reg.quota).trim() !== '—' && (
-                            <span className="font-semibold text-indigo-700">• โควตา: {String(reg.quota).trim()}</span>
+                            <span className="font-semibold text-indigo-700">• ประเภท: {String(reg.quota).trim()}</span>
                           )}
                         </div>
                         {/* Score & Document Badges */}

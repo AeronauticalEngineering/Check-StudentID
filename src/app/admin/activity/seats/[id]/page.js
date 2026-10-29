@@ -109,7 +109,7 @@ export default function SeatAssignmentPage({ params }) {
 
 
   const [form, setForm] = useState({
-    fullName: '', fullNameEn: '', studentId: '', nationalId: '', course: '', quota: '', timeSlot: '', displayQueueNumber: '', certificateUrl: '', status: 'registered'
+    fullName: '', fullNameEn: '', studentId: '', nationalId: '', course: '', quota: '', writtenExamScore: '', timeSlot: '', displayQueueNumber: '', certificateUrl: '', status: 'registered'
   });
 
   const [certModal, setCertModal] = useState({
@@ -188,6 +188,7 @@ export default function SeatAssignmentPage({ params }) {
           seatNumber: r.seatNumber || '',
           course: r.course || '',
           quota: r.quota || r.evaluationScore?.quota || '',
+          writtenExamScore: r.writtenExamScore !== undefined && r.writtenExamScore !== null ? String(r.writtenExamScore) : (r.examScore !== undefined && r.examScore !== null ? String(r.examScore) : ''),
           timeSlot: r.timeSlot || '',
           status: r.status || 'registered',
           displayQueueNumber: r.displayQueueNumber || '',
@@ -329,6 +330,10 @@ export default function SeatAssignmentPage({ params }) {
           if (current.quota !== undefined && current.quota !== original?.quota) {
             regUpdatePayload.quota = current.quota.trim();
           }
+          if (current.writtenExamScore !== undefined && current.writtenExamScore !== original?.writtenExamScore) {
+            const trimmedScore = String(current.writtenExamScore).trim();
+            regUpdatePayload.writtenExamScore = trimmedScore !== '' ? trimmedScore : null;
+          }
           if (current.timeSlot !== undefined && current.timeSlot !== original?.timeSlot) {
             regUpdatePayload.timeSlot = current.timeSlot;
           }
@@ -341,6 +346,20 @@ export default function SeatAssignmentPage({ params }) {
             } else if (current.status === 'checked-in') {
               regUpdatePayload.checkedOut = false;
               regUpdatePayload.checkedOutAt = null;
+              regUpdatePayload.completedAt = null;
+              regUpdatePayload.calledAt = null;
+              regUpdatePayload.queueStatus = 'waiting';
+              regUpdatePayload.currentChannelName = null;
+            } else if (current.status === 'registered') {
+              regUpdatePayload.checkedIn = false;
+              regUpdatePayload.checkedInAt = null;
+              regUpdatePayload.checkedOut = false;
+              regUpdatePayload.checkedOutAt = null;
+              regUpdatePayload.completedAt = null;
+              regUpdatePayload.interviewedAt = null;
+              regUpdatePayload.calledAt = null;
+              regUpdatePayload.queueStatus = null;
+              regUpdatePayload.currentChannelName = null;
             }
           }
           if (current.displayQueueNumber !== undefined && current.displayQueueNumber !== original?.displayQueueNumber) {
@@ -618,7 +637,7 @@ export default function SeatAssignmentPage({ params }) {
 
   const handleAddParticipant = async (e) => {
     e.preventDefault();
-    const { fullName, fullNameEn, nationalId, course, quota, timeSlot, studentId, displayQueueNumber, certificateUrl } = form;
+    const { fullName, fullNameEn, nationalId, course, quota, writtenExamScore, timeSlot, studentId, displayQueueNumber, certificateUrl } = form;
     const cleanNat = String(nationalId || '').replace(/\D/g, '');
     const cleanFullNameEn = fullNameEn ? fullNameEn.trim().toUpperCase() : null;
 
@@ -685,6 +704,7 @@ export default function SeatAssignmentPage({ params }) {
         nationalId: cleanNat,
         course: course || null,
         quota: quota || null,
+        writtenExamScore: writtenExamScore && String(writtenExamScore).trim() !== '' ? String(writtenExamScore).trim() : null,
         timeSlot: timeSlot || null,
         status: form.status || 'registered',
         registeredBy: 'admin_manual_add',
@@ -698,7 +718,7 @@ export default function SeatAssignmentPage({ params }) {
       await batch.commit();
 
       setMessage('✅ เพิ่มรายชื่อสำเร็จ!');
-      setForm({ fullName: '', fullNameEn: '', studentId: '', nationalId: '', course: '', quota: '', timeSlot: '', displayQueueNumber: '', certificateUrl: '', status: 'registered' });
+      setForm({ fullName: '', fullNameEn: '', studentId: '', nationalId: '', course: '', quota: '', writtenExamScore: '', timeSlot: '', displayQueueNumber: '', certificateUrl: '', status: 'registered' });
       fetchData();
       setTimeout(() => setMessage(''), 3000);
     } catch (error) {
@@ -1053,11 +1073,19 @@ export default function SeatAssignmentPage({ params }) {
             return 'course';
           }
 
-          // Quota
+          // Type / Quota
           if (
-            clean.includes('โควตา') || clean === 'ประเภทโควตา' || clean === 'quota'
+            clean.includes('โควตา') || clean.includes('โควต้า') || clean === 'ประเภทโควตา' || clean === 'ประเภท' || clean === 'ประเภทผู้สมัคร' || clean === 'quota' || clean === 'applicanttype'
           ) {
             return 'quota';
+          }
+
+          // Written Exam Score
+          if (
+            clean.includes('คะแนนสอบข้อเขียน') || clean.includes('คะแนนข้อเขียน') || clean === 'ข้อเขียน' ||
+            clean === 'writtenexamscore' || clean === 'examscore' || clean === 'writtenscore'
+          ) {
+            return 'writtenExamScore';
           }
 
           // Seat Number
@@ -1255,6 +1283,7 @@ export default function SeatAssignmentPage({ params }) {
               nationalId: cleanNat,
               course: reg.course || null,
               quota: reg.quota || null,
+              writtenExamScore: reg.writtenExamScore !== undefined && reg.writtenExamScore !== null && String(reg.writtenExamScore).trim() !== '' ? String(reg.writtenExamScore).trim() : null,
               seatNumber: reg.seatNumber || null,
               timeSlot: reg.timeSlot || null,
               status: normalizeImportStatus(reg.status),
@@ -1318,6 +1347,7 @@ export default function SeatAssignmentPage({ params }) {
     : Boolean(activity?.enablePostActivity !== false && (activity?.certificateTemplateUrl || activity?.certificateMode === 'individual_link'));
 
   const visibleColumnsCount = 9
+    + (isQueueType || isSeatType ? 1 : 0) // คะแนนข้อเขียน
     + (isQueueType ? 2 : 0)
     + (isSeatType ? 1 : 0)
     + (activity?.enableScoring ? 1 : 0)
@@ -1331,9 +1361,10 @@ export default function SeatAssignmentPage({ params }) {
     { label: "NAME SURNAME (ENG)", key: "fullNameEn" },
     { label: "รหัสผู้สมัคร", key: "studentId" },
     { label: "เลขบัตรประชาชน", key: "nationalId" },
-    { label: "ประเภทโควตา", key: "quota" },
+    { label: "ประเภท", key: "quota" },
     { label: "สถานะ", key: "status" },
     { label: "หลักสูตร", key: "course" },
+    { label: "คะแนนสอบข้อเขียน", key: "writtenExamScore" },
     ...(hasStations ? [
       { label: "ผ่านฐาน (จำนวน)", key: "passedStationsCount" },
       { label: "กิจกรรมฐานทั้งหมด", key: "totalStationsCount" },
@@ -1349,12 +1380,27 @@ export default function SeatAssignmentPage({ params }) {
       { label: "คิว", key: "displayQueueNumber" }
     ] : []),
     ...(activity?.enableScoring && activity?.scoringConfig ? [
-      ...(activity.scoringConfig.generalCriteria || []).map(g => ({
-        label: `คะแนน: ${g.name} (${g.weight}%)`,
-        key: `score_general_${g.id}`
-      })),
-      { label: "คะแนนถ่วงน้ำหนักรวม (%)", key: "finalTotalScore" },
+      ...(activity.scoringConfig.generalCriteria || []).map(g => {
+        const gMax = g.maxScore !== undefined ? g.maxScore : g.weight;
+        return {
+          label: `[เกณฑ์ทั่วไป] ${g.name} (เต็ม ${gMax})`,
+          key: `score_general_${g.id}`
+        };
+      }),
+      { label: "รวมคะแนนเกณฑ์ทั่วไป", key: "generalTotalScore" },
+      ...((activity.scoringConfig.quotaCriteriaList || []).flatMap((qGroup, qIdx) =>
+        (qGroup.criteria || []).map(c => {
+          const cMax = c.maxScore !== undefined ? c.maxScore : c.weight;
+          return {
+            label: `[ประเภท: ${qGroup.quotaName}] ${c.name} (เต็ม ${cMax})`,
+            key: `score_quota_${qIdx}_${c.id}`
+          };
+        })
+      )),
+      { label: "รวมคะแนนเกณฑ์เฉพาะประเภท", key: "quotaTotalScore" },
+      { label: "คะแนนรวมสัมภาษณ์ทั้งหมด", key: "finalTotalScore" },
       { label: "สถานะการประเมิน", key: "scoringStatus" },
+      { label: "โต๊ะสัมภาษณ์", key: "interviewedChannelName" },
       { label: "กรรมการผู้ประเมิน", key: "examinerName" },
       { label: "ข้อเสนอแนะกรรมการ", key: "examinerNotes" },
       { label: "ลิงก์รูปถ่ายหลักฐาน (1)", key: "evidence_0" },
@@ -1371,6 +1417,13 @@ export default function SeatAssignmentPage({ params }) {
     const allStations = activity?.stations || [];
     const passedStations = reg.passedStations || {};
     const passedCount = allStations.filter(s => passedStations[s.id]?.passed).length;
+    const regQuota = reg.quota || evalScore.quota || '-';
+    const writtenScoreVal =
+      reg.writtenExamScore !== undefined && reg.writtenExamScore !== null && String(reg.writtenExamScore).trim() !== ''
+        ? reg.writtenExamScore
+        : reg.examScore !== undefined && reg.examScore !== null && String(reg.examScore).trim() !== ''
+        ? reg.examScore
+        : '-';
 
     const row = {
       index: idx + 1,
@@ -1378,9 +1431,10 @@ export default function SeatAssignmentPage({ params }) {
       fullNameEn: reg.fullNameEn || '',
       studentId: reg.studentId || '',
       nationalId: reg.nationalId || '',
-      quota: reg.quota || evalScore.quota || '-',
+      quota: regQuota,
       status: translateStatus(reg.status),
       course: reg.course || '',
+      writtenExamScore: writtenScoreVal,
       ...(hasStations ? {
         passedStationsCount: passedCount,
         totalStationsCount: allStations.length,
@@ -1395,9 +1449,16 @@ export default function SeatAssignmentPage({ params }) {
       seatNumber: reg.seatNumber || '',
       timeSlot: reg.timeSlot || '',
       displayQueueNumber: reg.displayQueueNumber || '',
+      generalTotalScore: evalScore.isScored
+        ? (evalScore.generalTotal !== undefined ? `${evalScore.generalTotal}` : (evalScore.calculatedGeneralTotal !== undefined ? `${evalScore.calculatedGeneralTotal}` : '-'))
+        : '-',
+      quotaTotalScore: evalScore.isScored
+        ? (evalScore.quotaTotal !== undefined ? `${evalScore.quotaTotal}` : (evalScore.calculatedQuotaTotal !== undefined ? `${evalScore.calculatedQuotaTotal}` : '-'))
+        : '-',
       finalTotalScore: evalScore.isScored ? `${evalScore.finalTotalScore}` : '-',
       scoringStatus: evalScore.isScored ? 'ประเมินแล้ว' : 'รอประเมิน',
-      examinerName: evalScore.examinerName || '-',
+      interviewedChannelName: reg.interviewedChannelName || evalScore.channelName || reg.currentChannelName || '-',
+      examinerName: evalScore.examinerName || reg.interviewedBy || '-',
       examinerNotes: evalScore.notes || '-'
     };
 
@@ -1406,6 +1467,15 @@ export default function SeatAssignmentPage({ params }) {
       (activity.scoringConfig.generalCriteria || []).forEach(g => {
         const raw = evalScore.generalScores?.[g.id];
         row[`score_general_${g.id}`] = raw !== undefined ? raw : '-';
+      });
+
+      // Type (Quota) criteria scores across all groups
+      (activity.scoringConfig.quotaCriteriaList || []).forEach((qGroup, qIdx) => {
+        const isMatchingGroup = regQuota === qGroup.quotaName;
+        (qGroup.criteria || []).forEach(c => {
+          const raw = evalScore.quotaScores?.[c.id];
+          row[`score_quota_${qIdx}_${c.id}`] = (isMatchingGroup && raw !== undefined) ? raw : (raw !== undefined ? raw : '-');
+        });
       });
 
       // Evidence Photo URLs
@@ -1506,22 +1576,25 @@ export default function SeatAssignmentPage({ params }) {
 
     coursesInActivity.forEach(courseName => {
       const queueNumbers = registrants
-        .filter(r => r.course === courseName && r.displayQueueNumber)
-        .map(r => parseInt(r.displayQueueNumber.replace(/\D/g, ''), 10) || 0)
+        .filter(r => r.course === courseName && (r.displayQueueNumber || r.queueNumber))
+        .map(r => {
+          if (r.displayQueueNumber) {
+            const str = String(r.displayQueueNumber).trim();
+            const afterDash = str.includes('-') ? str.split('-').pop().trim() : str;
+            const match = afterDash.match(/(\d+)\s*$/);
+            if (match) return parseInt(match[1], 10) || 0;
+          }
+          return Number(r.queueNumber) || 0;
+        })
         .filter(n => n > 0)
         .sort((a, b) => a - b);
 
-      let nextNumber = 1;
-      for (const num of queueNumbers) {
-        if (num > nextNumber) {
-          break;
-        }
-        nextNumber = num + 1;
-      }
+      const maxNum = queueNumbers.length > 0 ? queueNumbers[queueNumbers.length - 1] : 0;
+      const nextNumber = maxNum + 1;
 
-      resetCounters[courseName] = nextNumber - 1;
+      resetCounters[courseName] = maxNum;
       const courseInfo = courseOptions.find(c => c.name === courseName);
-      const prefix = courseInfo?.shortName || '';
+      const prefix = (courseInfo?.shortName || '').trim() || 'Q';
       summaryLines.push(`${courseName}: ${prefix}-${String(nextNumber).padStart(3, '0')}`);
     });
 
@@ -1617,7 +1690,7 @@ export default function SeatAssignmentPage({ params }) {
                 className="w-full text-xs text-slate-600 file:mr-2 file:py-1 file:px-2.5 file:rounded file:border file:border-slate-200 file:text-xs file:bg-slate-50 file:text-slate-700 hover:file:bg-slate-100 cursor-pointer border border-slate-200 rounded p-1 bg-white"
               />
               <span className="text-[10px] text-slate-400 block mt-1">
-                Header: fullName (ไทย), fullNameEn (อังกฤษ), studentId, nationalId, course, quota{isSeatType ? ', seatNumber' : ''}{isQueueType ? ', timeSlot, displayQueueNumber' : ''}{hasCertificate ? ', certificateApproved (สิทธิ์เกียรติบัตร), certificateUrl' : ''}, status
+                Header: fullName (ไทย), fullNameEn (อังกฤษ), studentId, nationalId, course, ประเภท (quota), คะแนนสอบข้อเขียน (writtenExamScore){isSeatType ? ', seatNumber' : ''}{isQueueType ? ', timeSlot, displayQueueNumber' : ''}{hasCertificate ? ', certificateApproved (สิทธิ์เกียรติบัตร), certificateUrl' : ''}, status
               </span>
             </div>
           </div>
@@ -1736,20 +1809,39 @@ export default function SeatAssignmentPage({ params }) {
               </div>
             </div>
 
-            {quotaOptions.length > 0 && (
+            <div className="grid grid-cols-2 gap-2">
               <div>
-                <select
-                  value={form.quota}
-                  onChange={e => setForm({ ...form, quota: e.target.value })}
-                  className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-700 outline-none"
-                >
-                  <option value="">เลือกประเภทโควตา (เว้นว่างได้)</option>
-                  {quotaOptions.map((q, idx) => (
-                    <option key={idx} value={q.quotaName}>{q.quotaName}</option>
-                  ))}
-                </select>
+                {quotaOptions.length > 0 ? (
+                  <select
+                    value={form.quota}
+                    onChange={e => setForm({ ...form, quota: e.target.value })}
+                    className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-700 outline-none"
+                  >
+                    <option value="">เลือกประเภท (เว้นว่างได้)</option>
+                    {quotaOptions.map((q, idx) => (
+                      <option key={idx} value={q.quotaName}>{q.quotaName}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={form.quota}
+                    onChange={e => setForm({ ...form, quota: e.target.value })}
+                    placeholder="ประเภท (เว้นว่างได้)"
+                    className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-800 outline-none"
+                  />
+                )}
               </div>
-            )}
+              <div>
+                <input
+                  type="text"
+                  value={form.writtenExamScore}
+                  onChange={e => setForm({ ...form, writtenExamScore: e.target.value })}
+                  placeholder="คะแนนสอบข้อเขียน (ถ้ามี)"
+                  className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-800 outline-none focus:border-slate-400"
+                />
+              </div>
+            </div>
 
             {activity?.type === 'queue' && (
               <div className="grid grid-cols-2 gap-2">
@@ -2024,8 +2116,14 @@ export default function SeatAssignmentPage({ params }) {
                   <div className="flex items-center justify-between">หลักสูตร <SortIcon columnKey="course" /></div>
                 </th>
                 <th className="px-3 py-2.5 min-w-[130px] border-r border-slate-200 cursor-pointer hover:text-slate-900" onClick={() => handleSort('quota')}>
-                  <div className="flex items-center justify-between">ประเภทโควตา <SortIcon columnKey="quota" /></div>
+                  <div className="flex items-center justify-between">ประเภท <SortIcon columnKey="quota" /></div>
                 </th>
+
+                {(isQueueType || isSeatType) && (
+                  <th className="px-3 py-2.5 w-28 text-center border-r border-slate-200 cursor-pointer hover:text-slate-900" onClick={() => handleSort('writtenExamScore')}>
+                    <div className="flex items-center justify-between">คะแนนข้อเขียน <SortIcon columnKey="writtenExamScore" /></div>
+                  </th>
+                )}
 
                 {isQueueType && (
                   <>
@@ -2191,7 +2289,7 @@ export default function SeatAssignmentPage({ params }) {
                             onChange={(e) => handleInputChange(reg.id, 'quota', e.target.value)}
                             className="w-full px-1.5 py-0.5 bg-white border border-slate-300 rounded text-xs"
                           >
-                            <option value="">- เลือกโควตา -</option>
+                            <option value="">- เลือกประเภท -</option>
                             {quotaOptions.map((q, qIdx) => (
                               <option key={qIdx} value={q.quotaName}>{q.quotaName}</option>
                             ))}
@@ -2204,7 +2302,7 @@ export default function SeatAssignmentPage({ params }) {
                             type="text"
                             value={editStates[reg.id]?.quota || ''}
                             onChange={(e) => handleInputChange(reg.id, 'quota', e.target.value)}
-                            placeholder="ระบุโควตา"
+                            placeholder="ระบุประเภท"
                             className="w-full px-2 py-0.5 bg-white border border-slate-300 rounded text-xs"
                           />
                         )
@@ -2218,6 +2316,29 @@ export default function SeatAssignmentPage({ params }) {
                         )
                       )}
                     </td>
+
+                    {(isQueueType || isSeatType) && (
+                      <td className="px-3 py-2 text-center border-r border-slate-100">
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            value={editStates[reg.id]?.writtenExamScore || ''}
+                            onChange={(e) => handleInputChange(reg.id, 'writtenExamScore', e.target.value)}
+                            placeholder="คะแนน"
+                            className="w-full px-1.5 py-0.5 bg-white border border-slate-300 rounded text-xs text-center font-semibold"
+                          />
+                        ) : (
+                          (reg.writtenExamScore !== undefined && reg.writtenExamScore !== null && String(reg.writtenExamScore).trim() !== '') ||
+                          (reg.examScore !== undefined && reg.examScore !== null && String(reg.examScore).trim() !== '') ? (
+                            <span className="inline-block px-2 py-0.5 rounded text-xs bg-amber-50 text-amber-800 font-bold border border-amber-200">
+                              {reg.writtenExamScore ?? reg.examScore}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">-</span>
+                          )
+                        )}
+                      </td>
+                    )}
 
                     {isQueueType && (
                       <>

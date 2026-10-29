@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, use } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { db } from '../../../../../lib/firebase';
 import {
-  doc, collection, query, where, getDocs, runTransaction, orderBy, limit, getDoc
+  doc, collection, query, where, getDocs, runTransaction, orderBy, limit, getDoc, serverTimestamp
 } from 'firebase/firestore';
 import Link from 'next/link';
 
@@ -13,6 +13,7 @@ export default function QueueScannerPage({ params }) {
     const activityId = unwrappedParams.id;
 
     const [activity, setActivity] = useState(null);
+    const [courseOptions, setCourseOptions] = useState([]);
     const [mode, setMode] = useState('scan'); // 'scan' or 'manual'
     const [scannerState, setScannerState] = useState('idle');
     const [message, setMessage] = useState('');
@@ -24,10 +25,14 @@ export default function QueueScannerPage({ params }) {
         const fetchActivity = async () => {
             if (!activityId) return;
             try {
-                const actDoc = await getDoc(doc(db, 'activities', activityId));
+                const [actDoc, coursesSnap] = await Promise.all([
+                    getDoc(doc(db, 'activities', activityId)),
+                    getDocs(collection(db, 'courseOptions'))
+                ]);
                 if (actDoc.exists()) {
                     setActivity({ id: actDoc.id, ...actDoc.data() });
                 }
+                setCourseOptions(coursesSnap.docs.map(d => ({ id: d.id, ...d.data() })));
             } catch (err) {
                 console.error("Failed to load activity:", err);
             }
@@ -54,6 +59,31 @@ export default function QueueScannerPage({ params }) {
     const assignQueue = async (registrationId) => {
         setScannerState('submitting');
         try {
+            const extractTrailingNum = (dispQ, fallbackNum = 0) => {
+                if (dispQ) {
+                    const str = String(dispQ).trim();
+                    const afterDash = str.includes('-') ? str.split('-').pop().trim() : str;
+                    const match = afterDash.match(/(\d+)\s*$/);
+                    if (match) {
+                        const parsed = parseInt(match[1], 10);
+                        if (!isNaN(parsed) && parsed > 0) return parsed;
+                    }
+                }
+                const fb = Number(fallbackNum);
+                return !isNaN(fb) && fb > 0 ? fb : 0;
+            };
+
+            const regPreSnap = await getDoc(doc(db, 'registrations', registrationId));
+            if (!regPreSnap.exists() || regPreSnap.data().activityId !== activityId) {
+                throw new Error('ข้อมูลไม่ถูกต้องสำหรับกิจกรรมนี้');
+            }
+            const preCourseName = regPreSnap.data().course || '';
+            const courseRegsSnap = await getDocs(query(
+                collection(db, 'registrations'),
+                where('activityId', '==', activityId),
+                where('course', '==', preCourseName)
+            ));
+
             const result = await runTransaction(db, async (transaction) => {
                 const regRef = doc(db, 'registrations', registrationId);
                 const regDoc = await transaction.get(regRef);
@@ -81,45 +111,69 @@ export default function QueueScannerPage({ params }) {
                 }
 
                 const activityData = activityDoc.data();
-                let currentCounters = activityData.queueCounters || {};
-                let nextQueueNumber;
+                const currentCounters = activityData.queueCounters || {};
 
-                if (currentCounters[courseName] !== undefined) {
-                    nextQueueNumber = currentCounters[courseName] + 1;
-                } else {
-                    const registrationsRef = collection(db, 'registrations');
-                    const q = query(registrationsRef, 
-                        where("activityId", "==", activityId),
-                        where("course", "==", courseName),
-                        where("queueNumber", ">", 0),
-                        orderBy("queueNumber", "desc"),
-                        limit(1)
-                    );
-                    
-                    const latestSnapshot = await getDocs(q);
+                let maxQueue = 0;
+                const usedQueueNumbers = new Set();
+                let isDuplicateDisplayQueue = false;
+                const existingDisplayQueue = (registrationData.displayQueueNumber || '').trim();
 
-                    if (!latestSnapshot.empty) {
-                        const maxQueue = latestSnapshot.docs[0].data().queueNumber;
-                        nextQueueNumber = maxQueue + 1;
-                    } else {
-                        nextQueueNumber = 1;
+                courseRegsSnap.forEach((d) => {
+                    if (d.id === registrationId) return;
+                    const dData = d.data();
+                    const extracted = extractTrailingNum(dData.displayQueueNumber, dData.queueNumber);
+                    if (extracted > 0) {
+                        usedQueueNumbers.add(extracted);
+                        if (extracted > maxQueue) maxQueue = extracted;
                     }
+                    if (
+                        existingDisplayQueue &&
+                        String(dData.displayQueueNumber || '').trim() === existingDisplayQueue &&
+                        dData.status !== 'registered' &&
+                        dData.status !== 'cancelled'
+                    ) {
+                        isDuplicateDisplayQueue = true;
+                    }
+                });
+
+                const courseInfo = courseOptions.find(c => c.name === courseName);
+                const rawPrefix = (registrationData.courseCode || courseInfo?.shortName || '').trim();
+
+                let nextQueueNumber;
+                let finalDisplayQueue;
+
+                if (existingDisplayQueue && !isDuplicateDisplayQueue) {
+                    finalDisplayQueue = existingDisplayQueue;
+                    nextQueueNumber = extractTrailingNum(existingDisplayQueue, registrationData.queueNumber) || (maxQueue + 1);
+                } else {
+                    let candidateNum = Math.max(Number(currentCounters[courseName] || 0), maxQueue) + 1;
+                    while (usedQueueNumbers.has(candidateNum)) {
+                        candidateNum++;
+                    }
+                    nextQueueNumber = candidateNum;
+                    const padded = String(nextQueueNumber).padStart(3, '0');
+                    finalDisplayQueue = rawPrefix ? `${rawPrefix}-${padded}` : `Q-${padded}`;
                 }
 
+                const updatedCounterVal = Math.max(Number(currentCounters[courseName] || 0), nextQueueNumber, maxQueue);
                 const newCounters = {
                     ...currentCounters,
-                    [courseName]: nextQueueNumber
+                    [courseName]: updatedCounterVal
                 };
                 transaction.update(activityRef, { queueCounters: newCounters });
 
                 transaction.update(regRef, { 
-                    status: 'checked-in', 
-                    queueNumber: nextQueueNumber 
+                    status: 'checked-in',
+                    queueStatus: 'waiting',
+                    checkedIn: true,
+                    checkedInAt: serverTimestamp(),
+                    queueNumber: nextQueueNumber,
+                    displayQueueNumber: finalDisplayQueue
                 });
                 
                 return {
                     name: registrationData.fullName,
-                    queue: registrationData.displayQueueNumber || nextQueueNumber,
+                    queue: finalDisplayQueue,
                     course: courseName,
                 };
             });
