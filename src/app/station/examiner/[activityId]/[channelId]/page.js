@@ -133,6 +133,11 @@ export default function StationExaminerPage({ params }) {
   const [registrations, setRegistrations] = useState([]);
   const [courseOptions, setCourseOptions] = useState([]);
   const [currentCandidate, setCurrentCandidate] = useState(null);
+  const currentCandidateRef = useRef(currentCandidate);
+  useEffect(() => {
+    currentCandidateRef.current = currentCandidate;
+  }, [currentCandidate]);
+
   const [isScoringOpen, setIsScoringOpen] = useState(false);
   const [activeFilter, setActiveFilter] = useState('waiting'); // waiting, calling, completed, all
 
@@ -213,7 +218,7 @@ export default function StationExaminerPage({ params }) {
     };
   }, [activityId, channelId]);
 
-  // Real-time listener for registrations
+  // Real-time listener for registrations (stable subscription by activityId)
   useEffect(() => {
     if (!activityId) return;
 
@@ -239,15 +244,28 @@ export default function StationExaminerPage({ params }) {
       });
       setRegistrations(items);
 
-      // Auto update currentCandidate if still in list
-      if (currentCandidate) {
-        const updated = items.find(i => i.id === currentCandidate.id);
-        if (updated) setCurrentCandidate(updated);
+      // Auto update currentCandidate only when relevant fields changed
+      const activeCand = currentCandidateRef.current;
+      if (activeCand) {
+        const updated = items.find(i => i.id === activeCand.id);
+        if (updated) {
+          setCurrentCandidate(prev => {
+            if (!prev || prev.id !== updated.id) return updated;
+            const isScoreChanged = JSON.stringify(prev.evaluationScore) !== JSON.stringify(updated.evaluationScore);
+            const isStatusChanged = prev.status !== updated.status || prev.queueStatus !== updated.queueStatus;
+            const isDocsChanged = JSON.stringify(prev.attachedDocuments) !== JSON.stringify(updated.attachedDocuments)
+              || JSON.stringify(prev.documents) !== JSON.stringify(updated.documents);
+            if (isScoreChanged || isStatusChanged || isDocsChanged) {
+              return updated;
+            }
+            return prev;
+          });
+        }
       }
     });
 
     return () => unsub();
-  }, [activityId, currentCandidate?.id]);
+  }, [activityId]);
 
   // Assigned examiners map across all channels in activity
   const assignedExaminersMap = useMemo(() => {

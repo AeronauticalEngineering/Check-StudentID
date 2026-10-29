@@ -638,6 +638,26 @@ AERO Student is an end-to-end Student Activity Registration, Seating Allocation,
   - **Batch Chunking (Safe Limit)**: แบ่งการ Commit ออกเป็น Chunk ละไม่เกิน 200 รายการ เพื่อไม่ให้เกินข้อจำกัด 500 operations ของ Firestore Batch API
   - ตรวจสอบผ่าน `npm run build` สำเร็จ 100% เรียบร้อย
 
+### 35. Examiner Station Form Stability & Auto-Refresh Resolution + Manual Reset Button
+- **Incident & Problem Statement**:
+  - ได้รับการแจ้งปัญหาว่า เมื่อเปิดหน้าโต๊ะกรรมการสัมภาษณ์ (`/station/examiner/[activityId]/[channelId]`) ทิ้งไว้ มีการรีเฟรชข้อมูลเอง และหากกำลังเปิดฟอร์มกรอกคะแนน/ข้อเสนอแนะทิ้งไว้ ข้อมูลคะแนนที่กำลังเลือกอยู่จะถูกรีเซ็ต/ล้างค่ากลับเป็นค่าเดิม
+- **Root Cause Analysis**:
+  1. **Firebase WebSocket `onSnapshot` Listener**: หน้ารายการผู้สมัครผูก listener กับ collection `registrations` where `activityId == activityId` ทำให้เมื่อมีกิจกรรมใดๆ เกิดขึ้นในระบบ (เช่น จุดสแกนเช็คอินเด็ก หรือโต๊ะอื่นเรียกคิว) ข้อมูลจะถูกดึงเข้ามาใหม่ และสร้าง Array / Object reference ใหม่เสมอ
+  2. **Unnecessary Listener Re-subscriptions**: ใน `page.js` เดิมใส่ `currentCandidate?.id` ไว้ใน dependency array ของ `useEffect` ทำให้ทุกครั้งที่มีการกดเรียกคิวหรือปิดหน้าต่าง listener จะถูก teardown และ subscribe ใหม่ซ้ำซ้อน
+  3. **Scoring Form Auto-Reset Bug**: ใน `ExaminerScoringModal.js` ฟังก์ชัน `useEffect` ใช้ `[registrant, ...]` เป็น dependency เมื่อ object reference ของ `currentCandidate` เปลี่ยน แม้จะเป็นผู้สมัครคนเดิมและไม่มีข้อมูลอะไรเปลี่ยน `useEffect` จะรันใหม่และสั่ง `setGeneralScores(...)`, `setNotes(...)` ล้างคะแนนที่กรรมการกำลังพิมพ์ทิ้ง
+- **Solution & Implementation**:
+  1. **Candidate Identity & Selective Update in `page.js`**:
+     - ใช้ `currentCandidateRef` ภายใน `onSnapshot` และตัด `currentCandidate?.id` ออกจาก dependency array ให้เหลือเฉพาะ `[activityId]`
+     - เช็คความเปลี่ยนแปลงที่เกิดขึ้นจริง (`isScoreChanged`, `isStatusChanged`, `isDocsChanged`) ก่อนอัปเดต `setCurrentCandidate` เพื่อคง Identity ของ Object เดิมไว้ ไม่ให้เกิดการ re-render ส่วนที่ไม่จำเป็น
+  2. **Safe Form Initialization in `ExaminerScoringModal.js`**:
+     - ใช้ `lastLoadedCandidateIdRef` และ `wasOpenRef` ในการควบคุมการโหลดข้อมูลเข้าฟอร์ม
+     - ฟอร์มจะโหลดข้อมูลเริ่มต้นเฉพาะเมื่อเปิด Modal ขึ้นมาใหม่ หรือเมื่อเปลี่ยนตัวผู้สมัคร (`candidateId` เปลี่ยน) เท่านั้น
+     - ขณะที่เปิด Modal ค้างไว้และกำลังให้คะแนน จะไม่มีทางถูก trigger ให้ reset ข้อมูลโดยเด็ดขาด
+  3. **Manual Reset Button (`ปุ่มรีเซ็ตคะแนน`)**:
+     - เพิ่มปุ่ม **"↺ รีเซ็ตคะแนน"** สไตล์ Flat สบายตา ในแถบ Footer ของ `ExaminerScoringModal`
+     - พร้อมกล่องยืนยันป้องกันการกดพลาด (`window.confirm`)
+     - รองรับการรีเซ็ตกลับเป็นค่าที่บันทึกล่าสุด (กรณีผู้สมัครเคยมีคะแนนแล้ว) หรือล้างฟอร์มให้ว่าง (กรณีเป็นคะแนนใหม่) พร้อมแสดงสถานะแจ้งเตือนชัดเจน
+
 
 
 

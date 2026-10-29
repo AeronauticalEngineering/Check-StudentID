@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { db } from '../lib/firebase';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { compressImageToBase64, uploadDocumentImage } from '../lib/storageService';
@@ -76,75 +76,113 @@ export default function ExaminerScoringModal({
   const generalCriteria = scoringConfig.generalCriteria || [];
   const quotaCriteriaList = scoringConfig.quotaCriteriaList || [];
 
-  // Initialize or reset form when registrant or isOpen changes
+  const lastLoadedCandidateIdRef = useRef(null);
+  const wasOpenRef = useRef(false);
+
+  // Initialize or reset form only when modal is newly opened or candidate ID changes
   useEffect(() => {
-    if (!registrant || !isOpen) return;
+    if (!isOpen || !registrant) {
+      if (!isOpen) {
+        lastLoadedCandidateIdRef.current = null;
+        wasOpenRef.current = false;
+      }
+      return;
+    }
 
-    const savedExaminer = typeof window !== 'undefined' ? (localStorage.getItem('aero_examiner_name') || '') : '';
-    const currentActiveExaminer = examinerNameProp || defaultExaminerName || savedExaminer;
+    const candidateId = registrant.id;
+    const isNewOpen = !wasOpenRef.current && isOpen;
+    const isDifferentCandidate = lastLoadedCandidateIdRef.current !== candidateId;
 
-    // Load existing evaluation score if available
-    const existing = registrant.evaluationScore;
+    if (isNewOpen || isDifferentCandidate) {
+      wasOpenRef.current = true;
+      lastLoadedCandidateIdRef.current = candidateId;
+
+      const savedExaminer = typeof window !== 'undefined' ? (localStorage.getItem('aero_examiner_name') || '') : '';
+      const currentActiveExaminer = examinerNameProp || defaultExaminerName || savedExaminer;
+
+      // Load existing evaluation score if available
+      const existing = registrant.evaluationScore;
+      if (existing) {
+        setGeneralScores(existing.generalScores || {});
+        setQuotaScores(existing.quotaScores || {});
+        const resolvedQuota = registrant.quota || existing?.quota || (quotaCriteriaList.length === 1 ? quotaCriteriaList[0]?.quotaName : '') || '';
+        setSelectedQuota(resolvedQuota);
+        
+        if (existing.examinerName) {
+          setExaminerName(existing.examinerName);
+        } else if (currentActiveExaminer) {
+          setExaminerName(currentActiveExaminer);
+        } else {
+          setExaminerName('');
+        }
+        setNotes(existing.notes || '');
+      } else {
+        setGeneralScores({});
+        setQuotaScores({});
+        const resolvedQuota = registrant.quota || (quotaCriteriaList.length === 1 ? quotaCriteriaList[0]?.quotaName : '') || '';
+        setSelectedQuota(resolvedQuota);
+        setExaminerName(currentActiveExaminer || '');
+        setNotes('');
+      }
+
+      // Load existing attached evidence photos comprehensively from all potential locations
+      const candidateSources = [
+        registrant.attachedDocuments,
+        registrant.documents,
+        registrant.evidence,
+        registrant.evidencePhotos,
+        registrant.evaluationScore?.attachedDocuments,
+        registrant.evaluationScore?.evidence,
+        registrant.evaluationScore?.evidencePhotos
+      ];
+
+      const initialPhotos = [];
+      candidateSources.forEach(source => {
+        if (!source) return;
+        if (Array.isArray(source)) {
+          source.forEach(item => {
+            if (typeof item === 'string' && item.trim()) initialPhotos.push(item.trim());
+          });
+        } else if (typeof source === 'object') {
+          Object.values(source).forEach(val => {
+            if (Array.isArray(val)) {
+              val.forEach(item => {
+                if (typeof item === 'string' && item.trim()) initialPhotos.push(item.trim());
+              });
+            } else if (typeof val === 'string' && val.trim()) {
+              initialPhotos.push(val.trim());
+            }
+          });
+        } else if (typeof source === 'string' && source.trim()) {
+          initialPhotos.push(source.trim());
+        }
+      });
+
+      setEvidencePhotos(Array.from(new Set(initialPhotos)));
+      setMessage('');
+      setUploadStatus('');
+    }
+  }, [registrant?.id, isOpen]);
+
+  // Manual Form Reset Action
+  const handleManualReset = () => {
+    if (!window.confirm('คุณต้องการรีเซ็ตค่าคะแนนและข้อเสนอแนะที่กำลังกรอกในฟอร์มนี้ใช่หรือไม่?')) {
+      return;
+    }
+    const existing = registrant?.evaluationScore;
     if (existing) {
       setGeneralScores(existing.generalScores || {});
       setQuotaScores(existing.quotaScores || {});
-      const resolvedQuota = registrant.quota || existing?.quota || (quotaCriteriaList.length === 1 ? quotaCriteriaList[0]?.quotaName : '') || '';
-      setSelectedQuota(resolvedQuota);
-      
-      if (existing.examinerName) {
-        setExaminerName(existing.examinerName);
-      } else if (currentActiveExaminer) {
-        setExaminerName(currentActiveExaminer);
-      } else {
-        setExaminerName('');
-      }
       setNotes(existing.notes || '');
+      setMessage('↺ รีเซ็ตคะแนนกลับเป็นค่าเดิมที่เคยบันทึกไว้เรียบร้อยแล้ว');
     } else {
       setGeneralScores({});
       setQuotaScores({});
-      const resolvedQuota = registrant.quota || (quotaCriteriaList.length === 1 ? quotaCriteriaList[0]?.quotaName : '') || '';
-      setSelectedQuota(resolvedQuota);
-      setExaminerName(currentActiveExaminer || '');
       setNotes('');
+      setMessage('↺ รีเซ็ตและล้างคะแนนในฟอร์มเรียบร้อยแล้ว');
     }
-
-    // Load existing attached evidence photos comprehensively from all potential locations
-    const candidateSources = [
-      registrant.attachedDocuments,
-      registrant.documents,
-      registrant.evidence,
-      registrant.evidencePhotos,
-      registrant.evaluationScore?.attachedDocuments,
-      registrant.evaluationScore?.evidence,
-      registrant.evaluationScore?.evidencePhotos
-    ];
-
-    const initialPhotos = [];
-    candidateSources.forEach(source => {
-      if (!source) return;
-      if (Array.isArray(source)) {
-        source.forEach(item => {
-          if (typeof item === 'string' && item.trim()) initialPhotos.push(item.trim());
-        });
-      } else if (typeof source === 'object') {
-        Object.values(source).forEach(val => {
-          if (Array.isArray(val)) {
-            val.forEach(item => {
-              if (typeof item === 'string' && item.trim()) initialPhotos.push(item.trim());
-            });
-          } else if (typeof val === 'string' && val.trim()) {
-            initialPhotos.push(val.trim());
-          }
-        });
-      } else if (typeof source === 'string' && source.trim()) {
-        initialPhotos.push(source.trim());
-      }
-    });
-
-    setEvidencePhotos(Array.from(new Set(initialPhotos)));
-    setMessage('');
-    setUploadStatus('');
-  }, [registrant, isOpen, quotaCriteriaList, defaultExaminerName, examinerNameProp]);
+    setTimeout(() => setMessage(''), 3500);
+  };
 
   // Current selected quota criteria list
   const activeQuotaCriteria = useMemo(() => {
@@ -640,7 +678,20 @@ export default function ExaminerScoringModal({
           )}
 
           {/* Modal Footer */}
-          <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-3">
+          <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
+            {/* Left side: Manual Reset Button */}
+            <button
+              type="button"
+              onClick={handleManualReset}
+              className="px-3.5 py-2.5 bg-white hover:bg-red-50 text-slate-600 hover:text-red-600 text-sm rounded-xl border border-slate-300 hover:border-red-300 font-normal transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+              title="รีเซ็ตคะแนนที่กำลังกรอกให้กลับเป็นค่าเริ่มต้น"
+            >
+              <svg className="w-4 h-4 text-slate-500 hover:text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span>รีเซ็ตคะแนน</span>
+            </button>
+
             <div className="flex items-center gap-2.5">
               <button
                 type="button"
