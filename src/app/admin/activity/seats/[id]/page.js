@@ -126,6 +126,7 @@ export default function SeatAssignmentPage({ params }) {
   const [isEditMode, setIsEditMode] = useState(false);
   const [courseOptions, setCourseOptions] = useState([]);
   const [timeSlotOptions, setTimeSlotOptions] = useState([]);
+  const [activityChannels, setActivityChannels] = useState([]);
 
   // Sorting state
   const [sortConfig, setSortConfig] = useState({ key: 'importOrder', direction: 'asc' });
@@ -164,6 +165,13 @@ export default function SeatAssignmentPage({ params }) {
       const activityDoc = await getDoc(doc(db, 'activities', activityId));
       if (activityDoc.exists()) {
         setActivity({ id: activityDoc.id, ...activityDoc.data() });
+      }
+
+      try {
+        const chSnap = await getDocs(query(collection(db, 'queueChannels'), where('activityId', '==', activityId)));
+        setActivityChannels(chSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+      } catch (chErr) {
+        console.warn('Failed to load queueChannels for seats page:', chErr);
       }
 
       const q = query(collection(db, 'registrations'), where('activityId', '==', activityId));
@@ -1458,7 +1466,20 @@ export default function SeatAssignmentPage({ params }) {
       finalTotalScore: evalScore.isScored ? `${evalScore.finalTotalScore}` : '-',
       scoringStatus: evalScore.isScored ? 'ประเมินแล้ว' : 'รอประเมิน',
       interviewedChannelName: reg.interviewedChannelName || evalScore.channelName || reg.currentChannelName || '-',
-      examinerName: evalScore.examinerName || reg.interviewedBy || '-',
+      examinerName: (() => {
+        const rawEx = evalScore.examinerName || reg.interviewedBy || '';
+        if (rawEx && rawEx !== 'กรรมการประจำช่องบริการ') {
+          return rawEx;
+        }
+        const chId = reg.interviewedChannelId || evalScore.channelId || reg.currentChannelId;
+        const chName = reg.interviewedChannelName || evalScore.channelName || reg.currentChannelName;
+        const matchedCh = activityChannels.find(c =>
+          (chId && String(c.id) === String(chId)) ||
+          (chName && (c.channelName === chName || c.name === chName))
+        );
+        const chExaminers = [matchedCh?.examiner1, matchedCh?.examiner2].filter(Boolean).join(', ');
+        return chExaminers || (rawEx && rawEx !== 'กรรมการประจำช่องบริการ' ? rawEx : '-');
+      })(),
       examinerNotes: evalScore.notes || '-'
     };
 

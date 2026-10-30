@@ -711,3 +711,13 @@ AERO Student is an end-to-end Student Activity Registration, Seating Allocation,
    - **การแก้ปัญหา "link โต๊ะ 2 กดเรียกแล้ว ไปเอาของโต๊ะอื่นมาแสดงบางเคส" (Strict Priority Candidate Matching & Channel Ownership Guard)**:
      - แก้ไขบั๊กใน `.find(r => (activeCandId && r.id === activeCandId) || (activeQ && ...))` ซึ่งทำให้เมื่อวนลูปเช็คผู้สมัครคนแรกในรายการ (ที่เป็นคิวของโต๊ะ 1 แต่มีเลขคิวรหัสเดียวกันหรือซ้ำกัน) เงื่อนไขแรกเป็นเท็จแล้วไหลไปเข้าเงื่อนไข `|| (activeQ && ...)` จนดึงผู้สมัครของโต๊ะ 1 มาแสดงบนหน้าจอของโต๊ะ 2
      - เปลี่ยนเป็น **Strict Priority Matching**: หากมี `channel.currentCandidateId` จะจับคู่เฉพาะ `r.id === activeCandId` เท่านั้น และหากใช้ Fallback ค้นหาจากเลขคิว จะต้องตรวจสอบเสมอว่าผู้สมัครไม่ได้ถูกถือครองโดยโต๊ะอื่น (`!r.currentChannelId || String(r.currentChannelId) === String(channelId)`) พร้อมเพิ่ม `callingInFlightRef` ป้องกัน Snapshot เก่ามาเขียนทับขณะกำลังกดเรียกคิว
+
+### 39. การบังคับเลือกชื่อกรรมการสอบเป็น Dropdown ให้ครบ 2 ท่าน และยกเลิกข้อความเริ่มต้น "กรรมการประจำช่องบริการ"
+1. **สาเหตุที่ข้อมูลเมื่อวานปรากฏคำว่า `"กรรมการประจำช่องบริการ"` หรือชื่อคนเดียว (`"ชิน"`)**:
+   - เดิมใน `src/components/ExaminerScoringModal.js` ช่องกรอกชื่อกรรมการในหน้าต่างให้คะแนนยังเป็น `<input type="text">` แบบพิมพ์อิสระ และมีโค้ด Fallback ว่า `const trimmedExaminer = examinerName.trim() || 'กรรมการประจำช่องบริการ';`
+   - นอกจากนี้ หน้าโต๊ะกรรมการ (`src/app/station/examiner/[activityId]/[channelId]/page.js`) เก็บชื่อใน `localStorage` คนละคีย์กับ Modal (`aero_station_examiner_name` vs `aero_examiner_name`) และไม่ได้บังคับว่าต้องเลือกกรรมการให้ครบ 2 ท่านก่อนกดบันทึกคะแนน ทำให้โต๊ะที่ไม่ได้กดตั้งค่าชื่อกรรมการด้านบนก่อนถูกบันทึกเป็น `'กรรมการประจำช่องบริการ'` หรือพิมพ์ชื่อคนเดียวลงไป
+2. **การแก้ไข (`src/components/ExaminerScoringModal.js`, `src/app/station/examiner/[activityId]/[channelId]/page.js`, `src/app/admin/activity/seats/[id]/page.js`)**:
+   - เปลี่ยนช่องระบุชื่อกรรมการใน `ExaminerScoringModal.js` จาก Text Input เป็น **Dropdown 2 ช่อง (`กรรมการสอบ คนที่ 1 *` และ `กรรมการสอบ คนที่ 2 *`)** ที่ดึงรายชื่อจากฐานข้อมูล `examiners` พร้อมระบบป้องกันการเลือกชื่อซ้ำกันในโต๊ะเดียวกันหรือซ้ำกับโต๊ะอื่น
+   - **บังคับตรวจสอบ (Validation)** ทั้งในหน้าโต๊ะกรรมการและในหน้าต่างบันทึกคะแนน (`handleSave`) ว่าต้องเลือกกรรมการจาก Dropdown **ครบทั้ง 2 ท่าน** จึงจะบันทึกคะแนนได้ และนำข้อความ Fallback `'กรรมการประจำช่องบริการ'` ออกทั้งหมด
+   - เมื่อเลือกกรรมการครบ 2 ท่านในหน้าต่างให้คะแนน ระบบจะซิงค์รายชื่อกรรมการทั้ง 2 ท่านกลับไปยัง `queueChannels` ของโต๊ะนั้นอัตโนมัติ เพื่อไม่ต้องเลือกใหม่ในคิวถัดไป
+   - ในระบบ Export CSV (`src/app/admin/activity/seats/[id]/page.js`) หากข้อมูลเก่ามีค่า `'กรรมการประจำช่องบริการ'` ระบบจะดึงรายชื่อกรรมการ `examiner1, examiner2` ที่ผูกกับโต๊ะสัมภาษณ์นั้นมาแสดงแทนโดยอัตโนมัติ

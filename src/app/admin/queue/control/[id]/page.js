@@ -696,6 +696,10 @@ export default function QueueControlPage({ params }) {
                 registrant={scoringRegistrant}
                 activity={activity}
                 channel={channel}
+                channelId={channel?.id || channelId}
+                channelName={channel?.name || channel?.channelName || `โต๊ะที่ ${channel?.channelNumber || ''}`}
+                examiners={examiners}
+                allChannels={channels}
                 defaultExaminerName={
                     [channel?.examiner1, channel?.examiner2].filter(Boolean).join(', ') || examinerName
                 }

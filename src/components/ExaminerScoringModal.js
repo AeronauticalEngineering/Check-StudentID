@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { db } from '../lib/firebase';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, collection, query, where, orderBy, getDocs, serverTimestamp } from 'firebase/firestore';
 import { compressImageToBase64, uploadDocumentImage } from '../lib/storageService';
 
 function SafePhotoThumbnail({ src, alt, onClick }) {
@@ -56,8 +56,11 @@ export default function ExaminerScoringModal({
   onSaveAndComplete,
   defaultExaminerName,
   examinerName: examinerNameProp,
+  channel,
   channelId,
   channelName,
+  examiners: examinersProp,
+  allChannels: allChannelsProp,
   writtenExamScore: writtenExamScoreProp
 }) {
   const registrant = registrantProp || candidate;
@@ -73,7 +76,10 @@ export default function ExaminerScoringModal({
   const [selectedQuota, setSelectedQuota] = useState('');
   const [generalScores, setGeneralScores] = useState({}); // { [criterionId]: score }
   const [quotaScores, setQuotaScores] = useState({}); // { [criterionId]: score }
-  const [examinerName, setExaminerName] = useState('');
+  const [examiner1, setExaminer1] = useState('');
+  const [examiner2, setExaminer2] = useState('');
+  const [examinersListMaster, setExaminersListMaster] = useState([]);
+  const [channelsListMaster, setChannelsListMaster] = useState([]);
   const [notes, setNotes] = useState('');
   const [evidencePhotos, setEvidencePhotos] = useState([]); // Array of photo URLs or base64
   const [uploadStatus, setUploadStatus] = useState('');
@@ -90,6 +96,45 @@ export default function ExaminerScoringModal({
 
   const lastLoadedCandidateIdRef = useRef(null);
   const wasOpenRef = useRef(false);
+
+  // Load master examiners list and channels if not passed via props
+  useEffect(() => {
+    if (!isOpen) return;
+    if (Array.isArray(examinersProp) && examinersProp.length > 0) {
+      setExaminersListMaster(examinersProp);
+    } else {
+      getDocs(query(collection(db, 'examiners'), orderBy('name')))
+        .then(snap => setExaminersListMaster(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
+        .catch(err => console.warn('Failed to load examiners in modal:', err));
+    }
+
+    const actId = activity?.id || registrant?.activityId;
+    if (Array.isArray(allChannelsProp) && allChannelsProp.length > 0) {
+      setChannelsListMaster(allChannelsProp);
+    } else if (actId) {
+      getDocs(query(collection(db, 'queueChannels'), where('activityId', '==', actId)))
+        .then(snap => setChannelsListMaster(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
+        .catch(err => console.warn('Failed to load channels in modal:', err));
+    }
+  }, [isOpen, examinersProp, allChannelsProp, activity?.id, registrant?.activityId]);
+
+  const parseExaminerPair = (rawInput, chObj) => {
+    const isPlaceholder = (s) => !s || s === 'กรรมการประจำช่องบริการ' || s === 'Examiner' || s === '-';
+    if (Array.isArray(rawInput)) {
+      const cleaned = rawInput.map(s => String(s || '').trim()).filter(s => !isPlaceholder(s));
+      if (cleaned.length >= 2) return [cleaned[0], cleaned[1]];
+      if (cleaned.length === 1) return [cleaned[0], chObj?.examiner2 && chObj.examiner2 !== cleaned[0] ? chObj.examiner2 : ''];
+    }
+    if (typeof rawInput === 'string' && !isPlaceholder(rawInput.trim())) {
+      const parts = rawInput.split(',').map(s => s.trim()).filter(s => !isPlaceholder(s));
+      if (parts.length >= 2) return [parts[0], parts[1]];
+      if (parts.length === 1) return [parts[0], chObj?.examiner2 && chObj.examiner2 !== parts[0] ? chObj.examiner2 : ''];
+    }
+    if (chObj?.examiner1 || chObj?.examiner2) {
+      return [chObj.examiner1 || '', chObj.examiner2 || ''];
+    }
+    return ['', ''];
+  };
 
   // Initialize or reset form only when modal is newly opened or candidate ID changes
   useEffect(() => {
@@ -109,8 +154,16 @@ export default function ExaminerScoringModal({
       wasOpenRef.current = true;
       lastLoadedCandidateIdRef.current = candidateId;
 
-      const savedExaminer = typeof window !== 'undefined' ? (localStorage.getItem('aero_examiner_name') || '') : '';
-      const currentActiveExaminer = examinerNameProp || defaultExaminerName || savedExaminer;
+      const savedExaminer = typeof window !== 'undefined'
+        ? (localStorage.getItem('aero_station_examiner_name') || localStorage.getItem('aero_examiner_name') || '')
+        : '';
+      const resolvedChId = channel?.id || channelId || registrant?.evaluationScore?.channelId || registrant?.interviewedChannelId || registrant?.currentChannelId;
+      const matchedCh = channel || channelsListMaster.find(c => String(c.id) === String(resolvedChId));
+      const fallbackActiveExaminer =
+        [matchedCh?.examiner1, matchedCh?.examiner2].filter(Boolean).join(', ') ||
+        examinerNameProp ||
+        defaultExaminerName ||
+        savedExaminer;
 
       // Load existing evaluation score if available
       const existing = registrant.evaluationScore;
@@ -119,21 +172,22 @@ export default function ExaminerScoringModal({
         setQuotaScores(existing.quotaScores || {});
         const resolvedQuota = registrant.quota || existing?.quota || (quotaCriteriaList.length === 1 ? quotaCriteriaList[0]?.quotaName : '') || '';
         setSelectedQuota(resolvedQuota);
-        
-        if (existing.examinerName) {
-          setExaminerName(existing.examinerName);
-        } else if (currentActiveExaminer) {
-          setExaminerName(currentActiveExaminer);
-        } else {
-          setExaminerName('');
-        }
+
+        const [initEx1, initEx2] = parseExaminerPair(
+          existing.examiners?.length ? existing.examiners : (existing.examinerName || fallbackActiveExaminer),
+          matchedCh
+        );
+        setExaminer1(initEx1);
+        setExaminer2(initEx2);
         setNotes(existing.notes || '');
       } else {
         setGeneralScores({});
         setQuotaScores({});
         const resolvedQuota = registrant.quota || (quotaCriteriaList.length === 1 ? quotaCriteriaList[0]?.quotaName : '') || '';
         setSelectedQuota(resolvedQuota);
-        setExaminerName(currentActiveExaminer || '');
+        const [initEx1, initEx2] = parseExaminerPair(fallbackActiveExaminer, matchedCh);
+        setExaminer1(initEx1);
+        setExaminer2(initEx2);
         setNotes('');
       }
 
@@ -293,10 +347,71 @@ export default function ExaminerScoringModal({
     setEvidencePhotos(prev => prev.filter((_, idx) => idx !== indexToRemove));
   };
 
+  const getModalExaminerOptions = (slotIndex) => {
+    const currentValue = slotIndex === 1 ? examiner1 : examiner2;
+    const otherSlotValue = slotIndex === 1 ? examiner2 : examiner1;
+    const resolvedChId = channel?.id || channelId || registrant?.evaluationScore?.channelId || registrant?.interviewedChannelId || registrant?.currentChannelId || null;
+
+    const assignedOtherChannelsMap = new Map();
+    channelsListMaster.forEach(ch => {
+      if (resolvedChId && String(ch.id) === String(resolvedChId)) return;
+      const chLabel = `ช่อง ${ch.channelNumber}${ch.channelName ? ` (${ch.channelName})` : ''}`;
+      if (ch.examiner1) assignedOtherChannelsMap.set(ch.examiner1, chLabel);
+      if (ch.examiner2) assignedOtherChannelsMap.set(ch.examiner2, chLabel);
+      if (Array.isArray(ch.examiners)) {
+        ch.examiners.forEach(exName => {
+          if (exName) assignedOtherChannelsMap.set(exName, chLabel);
+        });
+      }
+    });
+
+    const masterNames = new Set(examinersListMaster.map(ex => ex.name));
+    const hasCustomCurrent = currentValue && !masterNames.has(currentValue);
+
+    return (
+      <>
+        <option value="">-- เลือกกรรมการคนที่ {slotIndex} --</option>
+        {hasCustomCurrent && (
+          <option value={currentValue}>{currentValue}</option>
+        )}
+        {examinersListMaster.map(ex => {
+          const isSameDeskOtherSlot = ex.name === otherSlotValue;
+          const otherChannelLabel = assignedOtherChannelsMap.get(ex.name);
+          const isDisabled = isSameDeskOtherSlot || Boolean(otherChannelLabel);
+
+          let suffix = '';
+          if (isSameDeskOtherSlot) {
+            suffix = ' (เลือกในอีกช่องของโต๊ะนี้แล้ว)';
+          } else if (otherChannelLabel) {
+            suffix = ` (ประจำอยู่ที่ ${otherChannelLabel})`;
+          }
+
+          return (
+            <option key={ex.id} value={ex.name} disabled={isDisabled}>
+              {ex.name}{ex.department ? ` (${ex.department})` : ''}{suffix}
+            </option>
+          );
+        })}
+      </>
+    );
+  };
+
   const handleSave = async (shouldCompleteAfterSave = false) => {
     const regId = registrant?.id || registrant?.docId;
     if (!regId) return;
     setMessage('');
+
+    const ex1 = examiner1.trim();
+    const ex2 = examiner2.trim();
+    if (!ex1 || !ex2) {
+      setMessage('⚠️ กรุณาเลือกชื่อกรรมการสอบจากรายการ (Dropdown) ให้ครบทั้ง 2 ท่านก่อนบันทึกคะแนน');
+      return;
+    }
+    if (ex1 === ex2) {
+      setMessage('⚠️ ชื่อกรรมการคนที่ 1 และคนที่ 2 ต้องไม่ซ้ำกัน');
+      return;
+    }
+
     setIsSaving(true);
 
     try {
@@ -324,12 +439,13 @@ export default function ExaminerScoringModal({
       const finalAttachedDocs = uploadedUrls.length > 0 ? { evidence: uploadedUrls } : {};
 
       setUploadStatus('กำลังบันทึกข้อมูล...');
-      const trimmedExaminer = examinerName.trim() || 'กรรมการประจำช่องบริการ';
-      const examinersList = trimmedExaminer.split(',').map(s => s.trim()).filter(Boolean);
+      const examinersList = [ex1, ex2];
+      const trimmedExaminer = examinersList.join(', ');
 
       // Remember examiner name in localStorage for subsequent students
-      if (typeof window !== 'undefined' && examinerName.trim()) {
-        localStorage.setItem('aero_examiner_name', examinerName.trim());
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('aero_examiner_name', trimmedExaminer);
+        localStorage.setItem('aero_station_examiner_name', trimmedExaminer);
       }
 
       // Sanitize scores so any empty/blank field defaults cleanly to 0
@@ -344,8 +460,8 @@ export default function ExaminerScoringModal({
       });
 
       const finalQuota = selectedQuota || registrant.quota || null;
-      const resolvedChannelId = channelId || registrant?.evaluationScore?.channelId || registrant?.interviewedChannelId || registrant?.currentChannelId || null;
-      const resolvedChannelName = channelName || registrant?.evaluationScore?.channelName || registrant?.currentChannelName || null;
+      const resolvedChannelId = channel?.id || channelId || registrant?.evaluationScore?.channelId || registrant?.interviewedChannelId || registrant?.currentChannelId || null;
+      const resolvedChannelName = channel?.channelName || channelName || registrant?.evaluationScore?.channelName || registrant?.currentChannelName || null;
 
       const evaluationPayload = {
         isScored: true,
@@ -371,6 +487,8 @@ export default function ExaminerScoringModal({
 
       const regUpdateFields = {
         evaluationScore: evaluationPayload,
+        interviewedBy: trimmedExaminer,
+        examiners: examinersList,
         quota: finalQuota,
         attachedDocuments: finalAttachedDocs,
         attachedBy: 'examiner',
@@ -386,6 +504,20 @@ export default function ExaminerScoringModal({
 
       const regRef = doc(db, 'registrations', regId);
       await updateDoc(regRef, regUpdateFields);
+
+      // Sync the 2 selected examiners back to the desk channel if not already set
+      if (resolvedChannelId && (!channel?.examiner1 || !channel?.examiner2)) {
+        try {
+          await updateDoc(doc(db, 'queueChannels', resolvedChannelId), {
+            examiner1: ex1,
+            examiner2: ex2,
+            examiners: examinersList,
+            updatedAt: serverTimestamp()
+          });
+        } catch (chErr) {
+          console.warn('Could not sync examiners to channel doc:', chErr);
+        }
+      }
 
       setMessage('✅ บันทึกคะแนนและรูปถ่ายหลักฐานเรียบร้อยแล้ว');
       const updatedPayload = {
@@ -691,24 +823,39 @@ export default function ExaminerScoringModal({
               </div>
             )}
 
-            {/* 4. Examiner Remarks & Name */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="sm:col-span-1 space-y-1.5">
-                <label className="block text-sm font-normal text-slate-700">ชื่อกรรมการผู้ประเมิน (1-2 ท่าน)</label>
-                <input
-                  type="text"
-                  value={examinerName}
-                  onChange={e => {
-                    setExaminerName(e.target.value);
-                    if (typeof window !== 'undefined' && e.target.value.trim()) {
-                      localStorage.setItem('aero_examiner_name', e.target.value.trim());
-                    }
-                  }}
-                  placeholder="เช่น อ.สมชาย ใจดี, อ.วิภาดา รักเรียน"
-                  className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl outline-none focus:border-[#000946] focus:ring-2 focus:ring-[#000946]/10 text-sm font-normal text-slate-900 placeholder:text-slate-400"
-                />
+            {/* 4. Examiner Remarks & Name (2 Dropdowns Required) */}
+            <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/70 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-bold text-slate-800">
+                    กรรมการสอบ คนที่ 1 <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={examiner1}
+                    onChange={e => setExaminer1(e.target.value)}
+                    className={`w-full px-3.5 py-2.5 bg-white border rounded-xl outline-none focus:border-[#000946] focus:ring-2 focus:ring-[#000946]/10 text-sm font-semibold text-slate-900 ${
+                      !examiner1 ? 'border-amber-400 bg-amber-50/30' : 'border-slate-300'
+                    }`}
+                  >
+                    {getModalExaminerOptions(1)}
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-bold text-slate-800">
+                    กรรมการสอบ คนที่ 2 <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={examiner2}
+                    onChange={e => setExaminer2(e.target.value)}
+                    className={`w-full px-3.5 py-2.5 bg-white border rounded-xl outline-none focus:border-[#000946] focus:ring-2 focus:ring-[#000946]/10 text-sm font-semibold text-slate-900 ${
+                      !examiner2 ? 'border-amber-400 bg-amber-50/30' : 'border-slate-300'
+                    }`}
+                  >
+                    {getModalExaminerOptions(2)}
+                  </select>
+                </div>
               </div>
-              <div className="sm:col-span-2 space-y-1.5">
+              <div className="space-y-1.5">
                 <label className="block text-sm font-normal text-slate-700">ข้อเสนอแนะ / ความเห็นเพิ่มเติม</label>
                 <input
                   type="text"

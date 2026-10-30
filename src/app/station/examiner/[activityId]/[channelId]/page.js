@@ -588,28 +588,34 @@ export default function StationExaminerPage({ params }) {
     const ex1 = (tempExaminer1 || '').trim();
     const ex2 = (tempExaminer2 || '').trim();
 
-    if (ex1 && ex2 && ex1 === ex2) {
+    if (!ex1 || !ex2) {
+      alert('กรุณาเลือกชื่อกรรมการสอบจากรายการ (Dropdown) ให้ครบทั้ง 2 ท่าน');
+      return;
+    }
+
+    if (ex1 === ex2) {
       alert('กรรมการคนที่ 1 และคนที่ 2 ต้องไม่ใช่บุคคลเดียวกัน');
       return;
     }
 
-    const combined = [ex1, ex2].filter(Boolean).join(', ');
+    const combined = [ex1, ex2].join(', ');
     setExaminerName(combined);
     if (typeof window !== 'undefined' && combined) {
       localStorage.setItem('aero_station_examiner_name', combined);
+      localStorage.setItem('aero_examiner_name', combined);
     }
 
     try {
       if (channel?.id) {
         await updateDoc(doc(db, 'queueChannels', channel.id), {
-          examiner1: ex1 || null,
-          examiner2: ex2 || null,
-          examiners: [ex1, ex2].filter(Boolean),
+          examiner1: ex1,
+          examiner2: ex2,
+          examiners: [ex1, ex2],
           updatedAt: serverTimestamp()
         });
       }
       setIsSettingExaminer(false);
-      setMessage('บันทึกรายชื่อกรรมการประจำโต๊ะเรียบร้อยแล้ว');
+      setMessage('บันทึกรายชื่อกรรมการประจำโต๊ะ (ครบ 2 ท่าน) เรียบร้อยแล้ว');
       setTimeout(() => setMessage(''), 3000);
     } catch (err) {
       console.error('Error saving channel examiners:', err);
@@ -950,6 +956,11 @@ export default function StationExaminerPage({ params }) {
     const qText = getCandidateQueueDisplay(targetCand, courseOptions);
 
     try {
+      const resolvedExaminersText =
+        targetCand?.evaluationScore?.examinerName && targetCand.evaluationScore.examinerName !== 'กรรมการประจำช่องบริการ'
+          ? targetCand.evaluationScore.examinerName
+          : examinerName || [channel?.examiner1, channel?.examiner2].filter(Boolean).join(', ') || chName;
+
       await updateDoc(doc(db, 'registrations', targetCand.id), {
         queueStatus: 'completed',
         status: 'completed',
@@ -959,7 +970,7 @@ export default function StationExaminerPage({ params }) {
         interviewedChannelName: chName,
         interviewedAt: serverTimestamp(),
         completedAt: serverTimestamp(),
-        interviewedBy: examinerName || chName
+        interviewedBy: resolvedExaminersText
       });
 
       // Clear channel active queue to 'available' (ว่าง)
@@ -1721,8 +1732,11 @@ export default function StationExaminerPage({ params }) {
           activityName={activity?.name}
           courseOptions={courseOptions}
           examinerName={examinerName}
+          channel={channel}
           channelId={channelId}
           channelName={channel?.name || channel?.channelName || `โต๊ะสัมภาษณ์ ${channel?.channelNumber || 1}`}
+          examiners={examiners}
+          allChannels={allChannels}
           writtenExamScore={getWrittenExamScore(currentCandidate)}
           onScoreSaved={(updated) => {
             setCurrentCandidate(prev => ({ ...prev, ...updated }));
